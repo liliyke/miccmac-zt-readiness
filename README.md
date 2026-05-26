@@ -125,11 +125,93 @@ Scoring and tier thresholds are documented, and can be tuned, in
 
 ## Project status
 
-This repository is an **alpha scaffold**. The framework, scoring engine,
-control mappings, reporting, and CLI are complete and working. The individual
-device checks in `miccmac/checks/` are stubbed (`NOT_IMPLEMENTED`) and ready
-for real detection logic for Windows, Linux, macOS, and cloud platforms.
-Contributions are very welcome -- see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+This repository is an **alpha scaffold** — v0.1.0. The framework, scoring
+engine, control mappings, reporting, and CLI are complete and working. The
+individual device checks in `miccmac/checks/` are stubbed
+(`NOT_IMPLEMENTED`) and ready for real detection logic.
+
+### What works today
+
+| Component | State |
+|---|---|
+| CLI (`miccmac assess <target>`) | Working — Python 3.9+, stdlib only |
+| Engine, scoring, readiness tiers | Working |
+| Text / Markdown / JSON renderers | Working |
+| 7 property modules with 26 named checks | Defined, with control references |
+| Per-check NIST 800-207 / 800-53 / CIS v8 mappings | Complete (see [`data/control-mappings.yaml`](data/control-mappings.yaml)) |
+
+### What does not ship yet
+
+- **No target connector.** Nothing connects to a real host. The `target`
+  argument is currently a label printed in the report header.
+- **No OS detection or branching.** Each check is a single function that
+  doesn't know whether the target is Windows, Linux, macOS, or cloud.
+- **No check bodies.** All 26 checks return `Status.NOT_IMPLEMENTED`.
+- **No inventory or EDR / MDM / cloud API clients.**
+
+Running the smoke test (`python -m miccmac assess test-device`) therefore
+prints the *structure* of a real assessment without actually inspecting
+anything. That structure — properties, checks, control references, scoring,
+tiers — is the contribution. The detection mechanics are environment-specific.
+
+### Architecture (OS-agnostic by design)
+
+`engine.run_assessment(target, context)` passes a free-form `context` dict
+to every check module. From the docstring:
+
+> *a free-form dict passed to each check module. Use it to supply connection
+> details, collected device facts, API clients, etc.*
+
+That `context` is the extensibility seam. A real implementation collects facts
+about the target *upstream* of the engine and passes them in:
+
+```python
+from miccmac.engine import run_assessment
+
+facts = {
+    "os":       "windows",
+    "hostname": "wks-12",
+    "sysmon":   {"installed": True, "version": "15.14"},
+    "edr":      {"vendor": "defender", "healthy": True},
+    "patches":  {"latest_install_date": "2026-05-20"},
+    # ... whatever your fact-collector produces
+}
+assessment = run_assessment("wks-12", context={"facts": facts})
+```
+
+Each check then branches on `facts["os"]` (or whichever fact schema you
+choose) and calls platform-specific detection logic. Where a check genuinely
+doesn't apply to a given platform, return `Status.NOT_APPLICABLE` so it's
+excluded from scoring rather than failed.
+
+### Roadmap to a real implementation
+
+| Layer | What to add | Where it goes |
+|---|---|---|
+| **Target connector** | SSH / WinRM / EDR API / MDM API / "run locally" client | A new `miccmac/connectors/` package |
+| **OS detector** | Detect platform, populate `context["facts"]["os"]` | Inside the connector, before calling `run_assessment` |
+| **Per-OS check bodies** | Replace `NOT_IMPLEMENTED` stubs with real evaluations | Inside each `miccmac/checks/*.py` |
+| **Inventory / asset lookups** | Query your CMDB (ServiceNow, Snipe-IT, Intune, etc.) | Connector layer feeds facts |
+| **Cloud variants** | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access | Separate cloud-aware connectors |
+
+### Lowest-effort first concrete target
+
+Pick whichever environment you already have a lab in. Reasonable first targets:
+
+- **Linux + osquery** — implement `INV-01..04` via `osquery` queries against
+  `system_info`, `os_version`, and `programs`; implement `MON-01..04` by
+  inspecting `/etc/rsyslog.d/`, `auditctl -l`, and the EDR agent's PID.
+- **Windows + Sysmon + Defender** — implement `MON-03` by checking the
+  Sysmon driver and parsed config; `INV-03` via `Get-Package` over WinRM;
+  `CUR-01` via Windows Update history (`Get-HotFix`).
+- **macOS + Jamf / Kandji** — implement `INV-*` via the MDM API; `CTL-*` by
+  inspecting configuration profiles.
+
+Implement one property's worth of checks for one platform (e.g. all four
+`monitored` checks for Linux), ship a v0.2.0, then grow from there.
+
+Contributions for any platform are very welcome — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Repository layout
 
