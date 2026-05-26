@@ -1,0 +1,146 @@
+# MICCMAC Zero Trust Device Readiness -- Control Mappings
+#
+# Each of the seven MICCMAC properties (Monitored, Inventoried, Controlled,
+# Claimed, Minimized, Assessed, Current) is mapped to the recognized control
+# frameworks it draws on:
+#   - NIST SP 800-207  Zero Trust Architecture (tenets / logical components)
+#   - NIST SP 800-53 Rev 5  Security and Privacy Controls
+#   - CIS Critical Security Controls v8
+#
+# This file is the authoritative mapping referenced by the toolkit and by the
+# accompanying paper. It is useful as a standalone resource even without the
+# Python tooling.
+#
+# MICCMAC is the set of defensible-system properties described in Richard
+# Bejtlich's Defensible Network Architecture 2.0. The Zero Trust extension and
+# this mapping are the work of Isaac Ojeh (ECCWS 2025, DOI
+# 10.34190/eccws.24.1.3531) and are independent of, and not endorsed by,
+# Mr. Bejtlich.
+
+version: "0.1.0"
+framework: "MICCMAC Zero Trust Device Readiness"
+
+properties:
+
+  - key: monitored
+    letter: M
+    title: Monitored
+    intent: >
+      The device's security-relevant activity is logged, retained, and
+      continuously monitored so that compromise can be detected.
+    nist_800_207:
+      - "Tenet 5: The enterprise monitors and measures the integrity and
+         security posture of all owned and associated assets."
+      - "Continuous diagnostics and mitigation (CDM) feeds the policy engine."
+    nist_800_53:
+      - "AU-2  Event Logging"
+      - "AU-6  Audit Record Review, Analysis, and Reporting"
+      - "SI-4  System Monitoring"
+      - "CA-7  Continuous Monitoring"
+    cis_v8:
+      - "Control 8  Audit Log Management"
+      - "Control 13 Network Monitoring and Defense"
+
+  - key: inventoried
+    letter: I
+    title: Inventoried
+    intent: >
+      The device is known to the organization and tracked in an authoritative
+      hardware and software inventory.
+    nist_800_207:
+      - "An asset cannot be protected or have policy applied to it unless it is
+         identified; resource identification underpins the policy engine."
+    nist_800_53:
+      - "CM-8  System Component Inventory"
+      - "PM-5  System Inventory"
+    cis_v8:
+      - "Control 1  Inventory and Control of Enterprise Assets"
+      - "Control 2  Inventory and Control of Software Assets"
+
+  - key: controlled
+    letter: C
+    title: Controlled
+    intent: >
+      Configuration and access to the device are centrally governed by
+      enforced policy, not left to local discretion.
+    nist_800_207:
+      - "Tenet 4: Access to resources is determined by dynamic policy."
+      - "Tenet 7: Per-session access; the Policy Enforcement Point governs
+         every connection."
+    nist_800_53:
+      - "AC-3  Access Enforcement"
+      - "AC-6  Least Privilege"
+      - "CM-2  Baseline Configuration"
+      - "CM-6  Configuration Settings"
+      - "IA-2  Identification and Authentication (Organizational Users)"
+    cis_v8:
+      - "Control 4  Secure Configuration of Enterprise Assets and Software"
+      - "Control 5  Account Management"
+      - "Control 6  Access Control Management"
+
+  - key: claimed
+    letter: C
+    title: Claimed
+    intent: >
+      The device has a known, accountable owner and administrator, and a
+      documented business purpose and data classification.
+    nist_800_207:
+      - "Subjects and assets must be identifiable and accountable for trust
+         decisions to be meaningful."
+    nist_800_53:
+      - "CM-8  System Component Inventory (ownership attributes)"
+      - "PS-2  Position Risk Designation"
+      - "RA-2  Security Categorization"
+    cis_v8:
+      - "Control 1  Inventory and Control of Enterprise Assets (asset owner)"
+      - "Control 3  Data Protection (data classification and ownership)"
+
+  - key: minimized
+    letter: M
+    title: Minimized
+    intent: >
+      The device's attack surface is reduced to the minimum required for its
+      documented purpose.
+    nist_800_207:
+      - "Reduce implicit trust zones and minimize the attack surface available
+         to an adversary that reaches the asset."
+    nist_800_53:
+      - "CM-7  Least Functionality"
+      - "AC-6  Least Privilege"
+      - "SC-7  Boundary Protection"
+    cis_v8:
+      - "Control 4  Secure Configuration of Enterprise Assets and Software"
+      - "Control 12 Network Infrastructure Management"
+
+  - key: assessed
+    letter: A
+    title: Assessed
+    intent: >
+      The device is regularly and authoritatively assessed for vulnerabilities
+      and configuration weakness.
+    nist_800_207:
+      - "Continuous diagnostics and mitigation continuously evaluate asset
+         posture and feed the policy engine."
+    nist_800_53:
+      - "RA-5  Vulnerability Monitoring and Scanning"
+      - "CA-2  Control Assessments"
+      - "CA-7  Continuous Monitoring"
+    cis_v8:
+      - "Control 7  Continuous Vulnerability Management"
+
+  - key: current
+    letter: C
+    title: Current
+    intent: >
+      The device is kept in its most secure state: patched, updated, and free
+      of expired cryptographic material.
+    nist_800_207:
+      - "Assets are kept in their most secure state consistent with their
+         function; patching maintains asset trustworthiness."
+    nist_800_53:
+      - "SI-2   Flaw Remediation"
+      - "MA-2   Controlled Maintenance"
+      - "SC-12  Cryptographic Key Establishment and Management"
+    cis_v8:
+      - "Control 7  Continuous Vulnerability Management (remediation)"
+      - "Control 4  Secure Configuration of Enterprise Assets and Software"

@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+title: "MICCMAC Zero Trust Device Readiness Toolkit"
+message: "If you use this software, please cite both the software and the paper it implements."
+type: software
+authors:
+  - family-names: Ojeh
+    given-names: Isaac
+version: 0.1.0
+license: Apache-2.0
+repository-code: "https://github.com/liliyke/miccmac-zt-readiness"
+keywords:
+  - zero trust
+  - MICCMAC
+  - defensible architecture
+  - device readiness
+  - security assessment
+references:
+  - type: conference-paper
+    title: "Getting Devices Ready for Zero Trust Architecture by Complying with Richard Bejtlich's MICCMAC Framework"
+    authors:
+      - family-names: Ojeh
+        given-names: Isaac
+    collection-title: "Proceedings of the 24th European Conference on Cyber Warfare and Security (ECCWS 2025)"
+    year: 2025
+    doi: "10.34190/eccws.24.1.3531"

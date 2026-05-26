@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "miccmac-zt-readiness"
+version = "0.1.0"
+description = "Assess device readiness for Zero Trust Architecture using the MICCMAC defensible-system properties."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Isaac Ojeh" }]
+keywords = ["zero-trust", "miccmac", "security-assessment", "defensible-architecture", "dfir", "device-readiness"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/liliyke/miccmac-zt-readiness"
+Paper = "https://doi.org/10.34190/eccws.24.1.3531"
+
+[project.scripts]
+miccmac = "miccmac.cli:main"
+
+[tool.setuptools]
+packages = ["miccmac", "miccmac.checks"]

@@ -1,0 +1,5 @@
+# Runtime dependencies.
+# The core toolkit runs on the Python 3.9+ standard library only.
+# Add packages here as you implement real check logic, for example:
+#   pyyaml        # if you parse data/control-mappings.yaml at runtime
+#   requests      # if a check queries an MDM / SIEM / inventory API
