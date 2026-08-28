@@ -7,12 +7,15 @@ import sys
 
 from miccmac import __version__
 from miccmac.config import Config, ConfigError
+from miccmac.connectors.base import ConnectorError
 from miccmac.engine import enabled_check_ids, run_assessment
 from miccmac.metadata import MappingsError
 from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
 from miccmac.report import render as render_assessment
 from miccmac.risk_register import build_risk_register
 from miccmac.risk_register import render as render_risk_register
+
+CONNECTORS = ("ssh-osquery",)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +43,17 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Path to a YAML config file (excluded_checks, custom_checks_dir).")
     p_assess.add_argument("--risk-register", action="store_true",
                           help="Append the CIS IG / FAIR-inspired risk register to the output.")
+    p_assess.add_argument("--connector", default=None, choices=CONNECTORS,
+                          help="Collect real facts from the target instead of the NOT_IMPLEMENTED stub.")
+    p_assess.add_argument("--ssh-user", default=None,
+                          help="SSH username (required with --connector ssh-osquery).")
+    p_assess.add_argument("--ssh-key", default=None,
+                          help="Path to the SSH private key (required with --connector ssh-osquery).")
+    p_assess.add_argument("--ssh-port", type=int, default=22,
+                          help="SSH port (default: 22).")
+    p_assess.add_argument("--inventory-record", default=None,
+                          help="Path to a JSON file with an external inventory-system record "
+                               "for this device (feeds INV-01/INV-04).")
 
     p_checks = sub.add_parser(
         "list-checks",
@@ -75,9 +89,36 @@ def _render_output(assessment, entries, fmt: str) -> str:
     return output
 
 
+def _build_context(args) -> dict:
+    context = {}
+
+    if args.connector == "ssh-osquery":
+        if not args.ssh_user or not args.ssh_key:
+            raise ConfigError("--connector ssh-osquery requires --ssh-user and --ssh-key")
+        from miccmac.connectors.ssh_osquery import SSHOsqueryConnector
+        connector = SSHOsqueryConnector(
+            ssh_user=args.ssh_user, ssh_key_path=args.ssh_key, port=args.ssh_port,
+        )
+        context["facts"] = connector.collect_facts(args.target)
+
+    if args.inventory_record:
+        try:
+            with open(args.inventory_record, encoding="utf-8") as fh:
+                context["inventory_record"] = json.load(fh)
+        except OSError as exc:
+            raise ConfigError(f"cannot read --inventory-record file: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"--inventory-record file is not valid JSON: {exc}") from exc
+
+    return context
+
+
 def _run_assess(args) -> str:
     config = _load_config(args.config)
-    assessment = run_assessment(args.target, config=config, methodology_name=args.methodology)
+    context = _build_context(args)
+    assessment = run_assessment(
+        args.target, context=context, config=config, methodology_name=args.methodology,
+    )
     entries = build_risk_register(assessment) if args.risk_register else None
     return _render_output(assessment, entries, args.format)
 
@@ -103,7 +144,7 @@ def main(argv=None) -> int:
             output = _run_assess(args)
         else:
             output = _run_list_checks(args)
-    except (ConfigError, MappingsError) as exc:
+    except (ConfigError, MappingsError, ConnectorError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

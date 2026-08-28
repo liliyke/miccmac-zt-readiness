@@ -195,7 +195,52 @@ than being dropped.
 
 Implementation: `miccmac/risk_register.py`.
 
-## 10. Extending the toolkit
+## 10. Target connectors and real detection logic
+
+As of this release, one property has real, working detection logic against a
+live target: **Inventoried** (INV-01..04), proven end-to-end against a real
+Ubuntu 26.04 LTS VM. The remaining 22 checks are still `NOT_IMPLEMENTED`
+scaffolding; this section documents the pattern the rest will follow.
+
+**Connector architecture** (`miccmac/connectors/`): a connector's only job is
+to collect facts about a target and return them as `context["facts"]` --
+check modules never talk to a target directly. `miccmac/connectors/base.py`
+defines the `Connector` protocol (`collect_facts(target) -> dict`).
+`miccmac/connectors/ssh_osquery.py` implements it: the tool runs on the
+assessor's machine and SSHes out to run `osqueryi --json` against the
+target, which is the realistic pattern for assessing a fleet device (vs.
+requiring miccmac to be installed on every target). Enable it with
+`miccmac assess <host> --connector ssh-osquery --ssh-user <user> --ssh-key
+<path>`.
+
+**External data, not just device facts.** Two of the four Inventoried checks
+(INV-01, INV-04) are NOT derivable from the device alone -- whether a device
+is tracked in an authoritative asset inventory, and when that record was
+last reviewed, are facts about an *external* system (a CMDB), not something
+osquery can query on the box. Rather than faking these as device checks,
+they read `context["inventory_record"]` (via `--inventory-record
+<path-to-json>`), and correctly report `NOT_APPLICABLE` -- not a false
+`FAIL` -- when no such integration is configured. This is a deliberate
+design choice, not a gap: a check should say what it can and cannot
+determine, honestly.
+
+**Backward compatibility.** Every check with real logic starts with a guard:
+if `context` has no `"facts"` key at all (the default, no-`--connector`
+invocation), it falls back to the identical `NOT_IMPLEMENTED` stub behavior.
+This is why `miccmac assess <target>` with no flags has stayed byte-for-byte
+identical to the original Alpha scaffold's output through every pass of
+this architecture work -- verified by diffing against the original commit,
+not just by inspection.
+
+**A real finding from live testing:** INV-02 (hardware attributes recorded)
+reliably FAILs against a stock VMware VM, because osquery's `system_info`
+table reads hardware vendor/model/serial from `/sys/class/dmi/id/`, which
+requires root on most Linux distributions -- and the connector intentionally
+does not require or request root over SSH. This is a legitimate, evidence-
+backed finding (least-privilege fact collection has real coverage
+trade-offs), not a bug in the check logic.
+
+## 11. Extending the toolkit
 
 To implement a check, edit the relevant module in `miccmac/checks/` and replace
 the `NOT_IMPLEMENTED` stub with real detection logic that sets `status`,

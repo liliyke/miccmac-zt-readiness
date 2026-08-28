@@ -18,7 +18,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
 ]
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "paramiko>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/liliyke/miccmac-zt-readiness"
@@ -28,4 +28,9 @@ Paper = "https://doi.org/10.34190/eccws.24.1.3531"
 miccmac = "miccmac.cli:main"
 
 [tool.setuptools]
-packages = ["miccmac", "miccmac.checks"]
+packages = ["miccmac", "miccmac.checks", "miccmac.connectors"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a live target (see tests/test_integration_vm.py); auto-skipped unless MICCMAC_TEST_VM_* env vars are set",
+]

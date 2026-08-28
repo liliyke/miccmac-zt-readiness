@@ -2,6 +2,7 @@
 and the list-checks subcommand. Run entirely in-process via cli.main();
 no target/network dependency (target is always the label 'test-device')."""
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -75,6 +76,72 @@ def test_assess_with_risk_register_flag_appends_section(capsys):
     assert "RISK REGISTER" in out
     # scaffold has no FAIL/PARTIAL checks yet -- register should say so, not error
     assert "nothing to remediate" in out.lower()
+
+
+def test_assess_ssh_osquery_connector_requires_user_and_key(capsys):
+    rc = main(["assess", "10.0.0.5", "--connector", "ssh-osquery"])
+    assert rc == 2
+    assert "--ssh-user" in capsys.readouterr().err
+
+
+def test_assess_with_ssh_osquery_connector_uses_collected_facts(capsys):
+    fake_facts = {
+        "os": {"platform": "ubuntu", "name": "Ubuntu", "version": "26.04", "codename": "resolute"},
+        "system_info": {"hardware_vendor": "VMware, Inc.", "hardware_model": "VMware Virtual Platform",
+                        "hardware_serial": "VMware-1"},
+        "deb_packages": [{"name": "bash", "version": "5.2"}],
+    }
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
+        rc = main([
+            "assess", "10.0.0.5", "--format", "json",
+            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+        ])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    inv = next(p for p in data["properties"] if p["key"] == "inventoried")
+    inv02 = next(c for c in inv["checks"] if c["check_id"] == "INV-02")
+    assert inv02["status"] == "PASS"
+
+
+def test_assess_with_inventory_record_feeds_inv01_and_inv04(tmp_path, capsys):
+    import datetime
+    record = {"device_id": "dev-1", "tracked": True,
+              "last_reviewed": datetime.date.today().isoformat()}
+    record_path = tmp_path / "inventory.json"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    fake_facts = {"os": {}, "system_info": {}, "deb_packages": []}
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
+        rc = main([
+            "assess", "10.0.0.5", "--format", "json",
+            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--inventory-record", str(record_path),
+        ])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    inv = next(p for p in data["properties"] if p["key"] == "inventoried")
+    inv01 = next(c for c in inv["checks"] if c["check_id"] == "INV-01")
+    assert inv01["status"] == "PASS"
+
+
+def test_assess_with_bad_inventory_record_json_errors_cleanly(tmp_path, capsys):
+    record_path = tmp_path / "inventory.json"
+    record_path.write_text("{not valid json", encoding="utf-8")
+    rc = main(["assess", "test-device", "--inventory-record", str(record_path)])
+    assert rc == 2
+    assert "not valid json" in capsys.readouterr().err.lower()
+
+
+def test_assess_connector_error_surfaces_as_exit_2(capsys):
+    from miccmac.connectors.base import ConnectorError
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts",
+               side_effect=ConnectorError("could not SSH to 10.0.0.5: timed out")):
+        rc = main([
+            "assess", "10.0.0.5",
+            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+        ])
+    assert rc == 2
+    assert "could not SSH" in capsys.readouterr().err
 
 
 def test_assess_with_risk_register_and_json(capsys):

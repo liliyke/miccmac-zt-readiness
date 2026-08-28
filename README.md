@@ -161,20 +161,24 @@ individual device checks in `miccmac/checks/` are stubbed
 | Pluggable CMMI / CISA ZTMM scoring methodologies | Working (`--methodology`) |
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
+| SSH + osquery target connector | Working (`--connector ssh-osquery`), proven against a live Ubuntu 26.04 LTS VM |
+| Inventoried property (INV-01..04) real detection logic | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
 
-- **No target connector.** Nothing connects to a real host. The `target`
-  argument is currently a label printed in the report header.
-- **No OS detection or branching.** Each check is a single function that
-  doesn't know whether the target is Windows, Linux, macOS, or cloud.
-- **No check bodies.** All 26 checks return `Status.NOT_IMPLEMENTED`.
-- **No inventory or EDR / MDM / cloud API clients.**
+- **6 of 7 properties still stubbed.** Only Inventoried (INV-01..04) has real
+  detection logic; the other 22 checks return `Status.NOT_IMPLEMENTED`.
+- **One connector, one platform proven.** `ssh-osquery` is implemented and
+  tested end-to-end against Ubuntu Desktop; Windows (WinRM) and macOS
+  connectors, and OS-conditional branching within checks, are not yet built.
+- **No inventory or EDR / MDM / cloud API clients** beyond the
+  `--inventory-record` file-based input for INV-01/INV-04.
 
-Running the smoke test (`python -m miccmac assess test-device`) therefore
-prints the *structure* of a real assessment without actually inspecting
-anything. That structure — properties, checks, control references, scoring,
-tiers — is the contribution. The detection mechanics are environment-specific.
+Running `python -m miccmac assess <target>` with no `--connector` flag still
+prints the *structure* of a real assessment without inspecting anything —
+byte-identical to the original scaffold's output, verified by diffing
+against it directly. Add `--connector ssh-osquery --ssh-user <u> --ssh-key
+<path>` to get real, evidence-backed results for the Inventoried property.
 
 ### Architecture (OS-agnostic by design)
 
@@ -216,21 +220,34 @@ excluded from scoring rather than failed.
 | **Inventory / asset lookups** | Query your CMDB (ServiceNow, Snipe-IT, Intune, etc.) | Connector layer feeds facts |
 | **Cloud variants** | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access | Separate cloud-aware connectors |
 
-### Lowest-effort first concrete target
+### Lowest-effort first concrete target — done for Linux + osquery / Inventoried
 
-Pick whichever environment you already have a lab in. Reasonable first targets:
+The first vertical slice is implemented and proven end-to-end against a live
+Ubuntu 26.04 LTS VM: `miccmac/connectors/ssh_osquery.py` collects
+`system_info`, `os_version`, and `deb_packages` over SSH, and
+`miccmac/checks/inventoried.py` has real detection logic for all four
+`INV-*` checks (two of which — INV-01, INV-04 — correctly draw on an
+external `--inventory-record` input rather than the device itself; see
+[`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic)
+for why).
 
-- **Linux + osquery** — implement `INV-01..04` via `osquery` queries against
-  `system_info`, `os_version`, and `programs`; implement `MON-01..04` by
-  inspecting `/etc/rsyslog.d/`, `auditctl -l`, and the EDR agent's PID.
-- **Windows + Sysmon + Defender** — implement `MON-03` by checking the
-  Sysmon driver and parsed config; `INV-03` via `Get-Package` over WinRM;
-  `CUR-01` via Windows Update history (`Get-HotFix`).
+```bash
+miccmac assess 192.168.1.50 --connector ssh-osquery \
+    --ssh-user miccmac --ssh-key ~/.ssh/miccmac_vm_key \
+    --inventory-record inventory-record.json --risk-register
+```
+
+Remaining reasonable next targets, following the same pattern:
+
+- **Linux + osquery, Monitored** — `MON-01..04` by inspecting
+  `/etc/rsyslog.d/`, `auditctl -l`, and the EDR agent's PID via osquery's
+  `processes` table.
+- **Windows + Sysmon + Defender** — a `WinRMConnector` alongside
+  `SSHOsqueryConnector`; implement `MON-03` by checking the Sysmon driver and
+  parsed config; `INV-03` via `Get-Package`; `CUR-01` via Windows Update
+  history (`Get-HotFix`).
 - **macOS + Jamf / Kandji** — implement `INV-*` via the MDM API; `CTL-*` by
   inspecting configuration profiles.
-
-Implement one property's worth of checks for one platform (e.g. all four
-`monitored` checks for Linux), ship a v0.2.0, then grow from there.
 
 Contributions for any platform are very welcome — see
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
