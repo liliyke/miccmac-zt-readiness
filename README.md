@@ -123,7 +123,9 @@ in [`docs/methodology.md`](docs/methodology.md).
   ...
 ```
 
-A full sample report is in [`examples/sample-report.md`](examples/sample-report.md).
+A full sample report is in [`examples/sample-report.md`](examples/sample-report.md), and an
+illustrative HTML scorecard rendering (from a real assessment against a live Ubuntu target) is in
+[`examples/sample-scorecard.html`](examples/sample-scorecard.html).
 
 ## How scoring works
 

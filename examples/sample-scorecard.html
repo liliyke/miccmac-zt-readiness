@@ -1,0 +1,743 @@
+<!doctype html>
+<!--
+  Illustrative HTML scorecard rendering, built from a real assessment run
+  against a live target (miccmac-ubuntu, 192.168.48.136, Ubuntu 26.04.1
+  LTS) via `miccmac assess ... --methodology cmmi --risk-register`. This is
+  a one-off visual presentation of that assessment's real check results and
+  risk register, not something the CLI generates directly -- the CLI's own
+  text/markdown/json renderers are in miccmac/report.py and
+  miccmac/risk_register.py (see examples/sample-report.md for their output
+  format, including the legend both renderers now include).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MICCMAC Readiness Scorecard</title>
+<style>
+  :root {
+    --bg: #F4F5F7;
+    --surface: #FFFFFF;
+    --surface-2: #ECEEF1;
+    --ink: #1A2029;
+    --ink-muted: #5B6472;
+    --ink-faint: #8891A0;
+    --accent: #2B6E76;
+    --accent-ink: #14464C;
+    --accent-soft: #DCEAEA;
+    --good: #2F7A52;
+    --good-soft: #E3F1E9;
+    --warn: #B8842E;
+    --warn-soft: #FAEFDC;
+    --bad: #B23B3B;
+    --bad-soft: #F8E4E4;
+    --neutral: #7A8494;
+    --neutral-soft: #ECEEF1;
+    --border: #DADFE5;
+    --shadow: 0 1px 2px rgba(20, 26, 33, 0.04), 0 8px 24px rgba(20, 26, 33, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161C;
+      --surface: #1A1F27;
+      --surface-2: #212833;
+      --ink: #E7EAEE;
+      --ink-muted: #97A1AF;
+      --ink-faint: #6C7787;
+      --accent: #63B0B7;
+      --accent-ink: #CFEBEC;
+      --accent-soft: #1E3538;
+      --good: #5BBE87;
+      --good-soft: #1B3226;
+      --warn: #E0AC55;
+      --warn-soft: #362A16;
+      --bad: #E37070;
+      --bad-soft: #3A2020;
+      --neutral: #8A93A2;
+      --neutral-soft: #232A34;
+      --border: #2B323D;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12161C;
+    --surface: #1A1F27;
+    --surface-2: #212833;
+    --ink: #E7EAEE;
+    --ink-muted: #97A1AF;
+    --ink-faint: #6C7787;
+    --accent: #63B0B7;
+    --accent-ink: #CFEBEC;
+    --accent-soft: #1E3538;
+    --good: #5BBE87;
+    --good-soft: #1B3226;
+    --warn: #E0AC55;
+    --warn-soft: #362A16;
+    --bad: #E37070;
+    --bad-soft: #3A2020;
+    --neutral: #8A93A2;
+    --neutral-soft: #232A34;
+    --border: #2B323D;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    line-height: 1.55;
+    padding: clamp(20px, 4vw, 56px);
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  .mono {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  }
+
+  .eyebrow {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+  /* ---------- Header ---------- */
+
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 28px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-lead h1 {
+    font-size: clamp(1.7rem, 3vw, 2.35rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .header-lead p {
+    margin: 8px 0 0;
+    color: var(--ink-muted);
+    font-size: 1rem;
+    max-width: 46ch;
+  }
+
+  .target-line {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    font-size: 0.88rem;
+  }
+
+  .target-line dt {
+    display: inline;
+    color: var(--ink-faint);
+  }
+  .target-line dd {
+    display: inline;
+    margin: 0 0 0 6px;
+    color: var(--ink);
+  }
+  .target-line > div { white-space: nowrap; }
+
+  .score-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 22px 28px;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .score-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+
+  .score-number {
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    font-size: 2.6rem;
+    font-weight: 600;
+    color: var(--accent-ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .score-scale { color: var(--ink-faint); font-size: 1rem; }
+
+  .tier-pill {
+    align-self: flex-start;
+    font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 100px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  .cmmi-block { display: flex; flex-direction: column; gap: 6px; }
+
+  .cmmi-label {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 8px;
+    row-gap: 2px;
+    align-items: baseline;
+    font-size: 0.82rem;
+  }
+  .cmmi-label .lvl-name { color: var(--ink); font-weight: 600; font-family: Georgia, serif; }
+  .cmmi-label .lvl-pct { font-family: ui-monospace, monospace; color: var(--ink-faint); font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+
+  .segbar { display: flex; gap: 3px; }
+  .segbar span {
+    height: 7px;
+    flex: 1;
+    border-radius: 2px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .segbar span.filled { background: var(--accent); border-color: var(--accent); }
+
+  /* ---------- Section headers ---------- */
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 40px 0 16px;
+  }
+  .section-head h2 {
+    font-size: 1.05rem;
+    font-family: ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-muted);
+    font-weight: 600;
+  }
+  .section-note { color: var(--ink-faint); font-size: 0.84rem; font-style: italic; }
+
+  /* ---------- Property grid ---------- */
+
+  .property-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .prop-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .prop-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .prop-badge {
+    font-family: ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 1.05rem;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    flex-shrink: 0;
+  }
+
+  .prop-title-wrap { flex: 1; min-width: 0; }
+  .prop-title-wrap h3 {
+    font-size: 1.08rem;
+    font-weight: 700;
+  }
+  .prop-score {
+    font-family: ui-monospace, monospace;
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .checklist { display: flex; flex-direction: column; gap: 10px; }
+
+  .check-row { display: flex; gap: 10px; align-items: flex-start; }
+
+  .chip {
+    flex-shrink: 0;
+    font-family: ui-monospace, monospace;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 4px;
+    line-height: 1.5;
+    margin-top: 1px;
+  }
+  .chip.pass { background: var(--good-soft); color: var(--good); }
+  .chip.fail { background: var(--bad-soft); color: var(--bad); }
+  .chip.partial { background: var(--warn-soft); color: var(--warn); }
+  .chip.na { background: var(--neutral-soft); color: var(--neutral); }
+
+  .check-body { min-width: 0; }
+  .check-id {
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    margin-right: 6px;
+  }
+  .check-name { font-size: 0.88rem; font-weight: 600; }
+  .check-detail {
+    margin: 3px 0 0;
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+    font-style: italic;
+  }
+
+  /* ---------- Risk register ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    background: var(--surface);
+  }
+
+  table { border-collapse: collapse; width: 100%; min-width: 900px; }
+
+  thead th {
+    text-align: left;
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-2);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.risk-cell { white-space: nowrap; }
+  .risk-chip {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 3px 9px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .risk-chip.critical { background: var(--bad); color: #fff; }
+  .risk-chip.high { background: var(--bad-soft); color: var(--bad); }
+  .risk-chip.moderate { background: var(--warn-soft); color: var(--warn); }
+  .risk-chip.low { background: var(--neutral-soft); color: var(--neutral); }
+
+  td.id-cell { font-family: ui-monospace, monospace; font-size: 0.82rem; color: var(--ink-muted); white-space: nowrap; }
+  td.name-cell { font-weight: 600; min-width: 220px; }
+  td.detail-cell { color: var(--ink-muted); font-style: italic; min-width: 220px; }
+  td.fix-cell { color: var(--accent-ink); min-width: 260px; }
+  td.meta-cell { font-family: ui-monospace, monospace; font-size: 0.78rem; color: var(--ink-faint); white-space: nowrap; }
+
+  /* ---------- Legend ---------- */
+
+  .legend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .legend-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+  }
+
+  .legend-card h3 {
+    font-family: ui-monospace, monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+
+  .legend-rows { display: flex; flex-direction: column; gap: 8px; }
+  .legend-row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 0.84rem;
+  }
+  .legend-key {
+    flex-shrink: 0;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1px 7px;
+    min-width: 42px;
+    text-align: center;
+  }
+  .legend-val { color: var(--ink-muted); }
+  .legend-val b { color: var(--ink); font-weight: 600; }
+
+  .letters-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    font-size: 0.86rem;
+  }
+  .letters-row span.badge {
+    font-family: ui-monospace, monospace;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-right: 6px;
+  }
+
+  .prose {
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+    margin: 0 0 14px;
+  }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--ink-faint);
+    font-size: 0.82rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  a { color: var(--accent-ink); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .prop-card, .score-panel { transition: box-shadow 0.15s ease; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-lead">
+    <p class="eyebrow">Zero Trust Device Readiness &middot; MICCMAC Framework</p>
+    <h1>Readiness Scorecard</h1>
+    <p>Automated assessment of the device's compliance with Richard Bejtlich's seven defensible-system properties &mdash; Monitored, Inventoried, Controlled, Claimed, Minimized, Assessed, Current &mdash; collected live via SSH + osquery, an inventory record, and an organizational attestation.</p>
+    <dl class="target-line">
+      <div><dt>Target</dt><dd class="mono">miccmac-ubuntu</dd></div>
+      <div><dt>Address</dt><dd class="mono">192.168.48.136</dd></div>
+      <div><dt>Platform</dt><dd>Ubuntu 26.04.1 LTS</dd></div>
+      <div><dt>Assessed</dt><dd class="mono">2026-08-28</dd></div>
+    </dl>
+  </div>
+
+  <div class="score-panel">
+    <div class="score-row">
+      <span class="score-number">72.0</span>
+      <span class="score-scale">/ 100</span>
+    </div>
+    <span class="tier-pill">Defensible</span>
+    <div class="cmmi-block">
+      <div class="cmmi-label">
+        <span class="lvl-name">CMMI &middot; Quantitatively Managed</span>
+        <span class="lvl-pct">Level 4/5</span>
+      </div>
+      <div class="segbar">
+        <span class="filled"></span><span class="filled"></span><span class="filled"></span><span class="filled"></span><span></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="section-head">
+  <h2>Seven Properties</h2>
+  <span class="section-note">M &middot; I &middot; C &middot; C &middot; M &middot; A &middot; C &mdash; the property order spells the framework's name</span>
+</div>
+
+<div class="property-grid" id="property-grid"></div>
+
+<div class="section-head">
+  <h2>Risk Register</h2>
+  <span class="section-note">CIS Implementation Group + FAIR-inspired rating &middot; sorted by exposure, highest first &mdash; work top to bottom</span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Risk</th>
+        <th>Check</th>
+        <th>Finding</th>
+        <th>Detail</th>
+        <th>CIS IG</th>
+        <th>FAIR freq / mag</th>
+        <th>Recommended fix</th>
+      </tr>
+    </thead>
+    <tbody id="risk-body"></tbody>
+  </table>
+</div>
+
+<div class="section-head">
+  <h2>Legend &amp; Scoring Reference</h2>
+  <span class="section-note">what the labels above mean, and how each score maps to a tier or level</span>
+</div>
+
+<div class="legend-grid">
+  <div class="legend-card">
+    <h3>MICCMAC properties</h3>
+    <div class="letters-row">
+      <div><span class="badge">M</span>Monitored</div>
+      <div><span class="badge">I</span>Inventoried</div>
+      <div><span class="badge">C</span>Controlled</div>
+      <div><span class="badge">C</span>Claimed</div>
+      <div><span class="badge">M</span>Minimized</div>
+      <div><span class="badge">A</span>Assessed</div>
+      <div><span class="badge">C</span>Current</div>
+    </div>
+  </div>
+
+  <div class="legend-card">
+    <h3>Check status</h3>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="chip pass" style="min-width:48px;text-align:center;">PASS</span><span class="legend-val">control fully satisfied</span></div>
+      <div class="legend-row"><span class="chip partial" style="min-width:48px;text-align:center;">PART</span><span class="legend-val">control partially satisfied</span></div>
+      <div class="legend-row"><span class="chip fail" style="min-width:48px;text-align:center;">FAIL</span><span class="legend-val">control not satisfied</span></div>
+      <div class="legend-row"><span class="chip na" style="min-width:48px;text-align:center;">N/A</span><span class="legend-val">excluded, or not applicable to this device</span></div>
+    </div>
+  </div>
+
+  <div class="legend-card">
+    <h3>Overall score &rarr; readiness tier</h3>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="legend-key">90-100</span><span class="legend-val"><b>Zero Trust Ready</b> &mdash; meets readiness preconditions</span></div>
+      <div class="legend-row"><span class="legend-key">70-89</span><span class="legend-val"><b>Defensible</b> &mdash; broadly sound, specific gaps to close</span></div>
+      <div class="legend-row"><span class="legend-key">40-69</span><span class="legend-val"><b>Developing</b> &mdash; material gaps</span></div>
+      <div class="legend-row"><span class="legend-key">0-39</span><span class="legend-val"><b>Not Ready</b> &mdash; should not be trusted as-is</span></div>
+    </div>
+  </div>
+
+  <div class="legend-card">
+    <h3>CMMI maturity levels <span style="font-weight:400;text-transform:none;letter-spacing:0;">(Capability Maturity Model Integration)</span></h3>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="legend-key">0-19</span><span class="legend-val">L1 <b>Initial</b></span></div>
+      <div class="legend-row"><span class="legend-key">20-39</span><span class="legend-val">L2 <b>Managed</b></span></div>
+      <div class="legend-row"><span class="legend-key">40-69</span><span class="legend-val">L3 <b>Defined</b></span></div>
+      <div class="legend-row"><span class="legend-key">70-89</span><span class="legend-val">L4 <b>Quantitatively Managed</b></span></div>
+      <div class="legend-row"><span class="legend-key">90-100</span><span class="legend-val">L5 <b>Optimizing</b></span></div>
+    </div>
+  </div>
+
+  <div class="legend-card">
+    <h3>CIS Implementation Group</h3>
+    <p class="prose" style="margin-bottom:10px;">Who is expected to have this control in place.</p>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="legend-key">IG1</span><span class="legend-val">basic cyber hygiene, expected of every organization</span></div>
+      <div class="legend-row"><span class="legend-key">IG2</span><span class="legend-val">needs more maturity (centralized tooling, scheduled processes, identity integration)</span></div>
+      <div class="legend-row"><span class="legend-key">IG3</span><span class="legend-val">sophisticated/targeted-threat controls (none built-in; custom checks may add one)</span></div>
+    </div>
+  </div>
+
+  <div class="legend-card">
+    <h3>FAIR-inspired risk rating</h3>
+    <p class="prose" style="margin-bottom:10px;">Frequency (how often exploited in the wild) &times; magnitude (blast radius) &mdash; simplified/qualitative, not quantitative FAIR/Monte Carlo.</p>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="risk-chip critical">CRITICAL</span><span class="legend-val">HIGH+HIGH &mdash; fix immediately</span></div>
+      <div class="legend-row"><span class="risk-chip high">HIGH</span><span class="legend-val">HIGH+MED or MED+HIGH &mdash; fix this cycle</span></div>
+      <div class="legend-row"><span class="risk-chip moderate">MODERATE</span><span class="legend-val">MED+MED, LOW+HIGH, HIGH+LOW &mdash; normal backlog</span></div>
+      <div class="legend-row"><span class="risk-chip low">LOW</span><span class="legend-val">LOW+LOW, LOW+MED, MED+LOW &mdash; track, not urgent</span></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>miccmac-zt-readiness &middot; github.com/liliyke/miccmac-zt-readiness</span>
+  <span>Ojeh, I. (2025). ECCWS 2025 &middot; DOI 10.34190/eccws.24.1.3531</span>
+</footer>
+
+<script>
+  const properties = [
+    { key: "monitored", letter: "M", title: "Monitored", score: 50.0,
+      cmmi: { level: 3, label: "Defined", pct: 50.0 },
+      checks: [
+        { id: "MON-01", status: "PASS", name: "Endpoint security logging enabled", detail: "systemd-journald and a syslog daemon (rsyslog/syslog-ng) are both active." },
+        { id: "MON-02", status: "FAIL", name: "Logs forwarded to a centralized SIEM / log platform", detail: "No remote forwarding destination found in rsyslog configuration; logs are not leaving the device." },
+        { id: "MON-03", status: "PASS", name: "EDR / endpoint telemetry agent installed and healthy", detail: "osqueryd (endpoint telemetry agent) is installed and active." },
+        { id: "MON-04", status: "FAIL", name: "Audit policy covers authentication, privilege, and process events", detail: "auditd is not installed; authentication/privilege/process audit events are not being captured." }
+      ]
+    },
+    { key: "inventoried", letter: "I", title: "Inventoried", score: 75.0,
+      cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+      checks: [
+        { id: "INV-01", status: "PASS", name: "Device present in the authoritative asset inventory", detail: "Device 'miccmac-ubuntu-01' present and tracked in the supplied inventory record." },
+        { id: "INV-02", status: "FAIL", name: "Hardware attributes recorded (make, model, serial)", detail: "No hardware attributes (vendor/model/serial) reported by osquery system_info." },
+        { id: "INV-03", status: "PASS", name: "Installed-software inventory maintained for the device", detail: "1500 installed packages enumerated via osquery deb_packages." },
+        { id: "INV-04", status: "PASS", name: "Inventory record reviewed within the policy interval", detail: "Inventory record last reviewed 27 day(s) ago (policy: 90)." }
+      ]
+    },
+    { key: "controlled", letter: "C", title: "Controlled", score: 25.0,
+      cmmi: { level: 2, label: "Managed", pct: 25.0 },
+      checks: [
+        { id: "CTL-01", status: "FAIL", name: "Device enrolled in central configuration management / MDM", detail: "No central configuration management / MDM agent (puppet, chef, ansible, salt-minion, landscape-client) found installed." },
+        { id: "CTL-02", status: "PASS", name: "Administrative privileges restricted (least privilege)", detail: "root account is locked (no direct password login); privilege elevation is via sudo for 1 named account(s): miccmac." },
+        { id: "CTL-03", status: "FAIL", name: "Access governed by identity-aware / conditional-access policy", detail: "Attestation states identity-aware / conditional-access policy is NOT enforced." },
+        { id: "CTL-04", status: "FAIL", name: "Configuration baseline enforced and drift-monitored", detail: "No recognized hardening-baseline tool (usg, openscap-scanner) found installed." }
+      ]
+    },
+    { key: "claimed", letter: "C", title: "Claimed", score: 100.0,
+      cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+      checks: [
+        { id: "CLM-01", status: "PASS", name: "Accountable business owner assigned and recorded", detail: "Business owner recorded: 'Isaac Ojeh'." },
+        { id: "CLM-02", status: "PASS", name: "Responsible system administrator identified", detail: "Responsible system administrator identified: 'Isaac Ojeh'." },
+        { id: "CLM-03", status: "PASS", name: "Business purpose and data classification documented", detail: "Business purpose documented; data classification: 'internal-research'." }
+      ]
+    },
+    { key: "minimized", letter: "M", title: "Minimized", score: 87.5,
+      cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+      checks: [
+        { id: "MIN-01", status: "PASS", name: "Unnecessary services and daemons disabled", detail: "No legacy/insecure services (telnet, rsh, rpcbind, tftp, NIS) found active." },
+        { id: "MIN-02", status: "PASS", name: "Unused or unauthorized software removed", detail: "No legacy/insecure packages (telnetd, rsh-server, nis, xinetd, tftpd-hpa, rpcbind) found installed." },
+        { id: "MIN-03", status: "PASS", name: "Host firewall enabled; unused network ports closed", detail: "Host firewall (ufw) is active; only the expected minimal ports are listening." },
+        { id: "MIN-04", status: "PARTIAL", name: "Recognized hardening baseline (e.g. CIS Benchmark) applied", detail: "2/4 sampled hardening-baseline kernel parameters match; not hardened: fs.suid_dumpable, net.ipv4.conf.all.rp_filter." }
+      ]
+    },
+    { key: "assessed", letter: "A", title: "Assessed", score: 66.7,
+      cmmi: { level: 3, label: "Defined", pct: 50.0 },
+      checks: [
+        { id: "ASM-01", status: "PASS", name: "Authenticated vulnerability scanning performed on schedule", detail: "Vulnerability scanning last performed 27 day(s) ago (policy: 30)." },
+        { id: "ASM-02", status: "FAIL", name: "Configuration / compliance assessment performed on schedule", detail: "Attestation states Compliance assessment is not performed." },
+        { id: "ASM-03", status: "PASS", name: "Findings tracked to remediation against defined SLAs", detail: "Attestation confirms findings are tracked to remediation against a 30-day SLA." }
+      ]
+    },
+    { key: "current", letter: "C", title: "Current", score: 100.0,
+      cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+      checks: [
+        { id: "CUR-01", status: "PASS", name: "Operating-system patch level within policy", detail: "apt-daily-upgrade.timer active; last successful apt update 0 day(s) ago." },
+        { id: "CUR-02", status: "NA", name: "Third-party software updated within policy", detail: "No third-party apt repositories configured; no third-party software to have an update policy for." },
+        { id: "CUR-03", status: "PASS", name: "Firmware / BIOS current", detail: "Attestation confirms firmware/BIOS is current." },
+        { id: "CUR-04", status: "PASS", name: "Certificates and cryptographic material valid and unexpired", detail: "No expired certificates found in the system trust store." }
+      ]
+    }
+  ];
+
+  const riskRegister = [
+    { rating: "CRITICAL", id: "CTL-01", name: "Device enrolled in central configuration management / MDM", detail: "No central configuration management / MDM agent found installed.", ig: "IG1", fair: "HIGH / HIGH", fix: "Enroll the device in the organization's central configuration-management/MDM platform." },
+    { rating: "HIGH", id: "CTL-03", name: "Access governed by identity-aware / conditional-access policy", detail: "Attestation states this policy is NOT enforced.", ig: "IG2", fair: "MEDIUM / HIGH", fix: "Place the device behind an identity-aware proxy or conditional-access policy tied to the organization's IdP." },
+    { rating: "MODERATE", id: "CTL-04", name: "Configuration baseline enforced and drift-monitored", detail: "No recognized hardening-baseline tool found installed.", ig: "IG2", fair: "MEDIUM / MEDIUM", fix: "Assign the device a configuration baseline (e.g. GPO/Ansible/Intune profile) and enable drift detection/auto-remediation." },
+    { rating: "MODERATE", id: "MIN-04", name: "Recognized hardening baseline (e.g. CIS Benchmark) applied", detail: "2/4 sampled kernel parameters hardened; suid_dumpable and rp_filter are not.", ig: "IG2", fair: "MEDIUM / MEDIUM", fix: "Apply a recognized hardening baseline (e.g. a CIS Benchmark) appropriate to the device's OS." },
+    { rating: "MODERATE", id: "MON-02", name: "Logs forwarded to a centralized SIEM / log platform", detail: "No remote forwarding destination configured; logs stay on the device.", ig: "IG2", fair: "MEDIUM / MEDIUM", fix: "Deploy a log-forwarding agent and point it at the organization's centralized SIEM/log platform so this device's logs are retained off-host." },
+    { rating: "MODERATE", id: "MON-04", name: "Audit policy covers authentication, privilege, process events", detail: "auditd is not installed.", ig: "IG2", fair: "MEDIUM / MEDIUM", fix: "Apply the organization's baseline audit policy (or auditd rules) so authentication, privilege-use, and process-creation events are captured." },
+    { rating: "LOW", id: "INV-02", name: "Hardware attributes recorded (make, model, serial)", detail: "osquery cannot read DMI data without root.", ig: "IG1", fair: "LOW / LOW", fix: "Populate hardware make/model/serial (e.g. via DMI/SMBIOS) so osquery's system_info table returns non-empty vendor/model/serial values." },
+    { rating: "LOW", id: "ASM-02", name: "Configuration / compliance assessment performed on schedule", detail: "Attestation states this assessment is not performed.", ig: "IG2", fair: "LOW / MEDIUM", fix: "Enroll the device in a recurring configuration/compliance assessment (e.g. CIS-CAT, SCAP)." }
+  ];
+
+  const statusMeta = {
+    PASS: { chip: "pass", label: "PASS" },
+    FAIL: { chip: "fail", label: "FAIL" },
+    PARTIAL: { chip: "partial", label: "PART" },
+    NA: { chip: "na", label: "N/A" }
+  };
+
+  const grid = document.getElementById("property-grid");
+  properties.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "prop-card";
+
+    const segs = Array.from({ length: 5 }, (_, i) =>
+      `<span class="${i < p.cmmi.level ? "filled" : ""}"></span>`
+    ).join("");
+
+    card.innerHTML = `
+      <div class="prop-head">
+        <span class="prop-badge">${p.letter}</span>
+        <div class="prop-title-wrap">
+          <h3>${p.title}</h3>
+          <div class="prop-score">${p.score.toFixed(1)} / 100 &middot; CMMI L${p.cmmi.level} &mdash; ${p.cmmi.label}</div>
+        </div>
+      </div>
+      <div class="segbar">${segs}</div>
+      <div class="checklist">
+        ${p.checks.map(c => {
+          const meta = statusMeta[c.status];
+          return `<div class="check-row">
+            <span class="chip ${meta.chip}">${meta.label}</span>
+            <div class="check-body">
+              <span><span class="check-id">${c.id}</span><span class="check-name">${c.name}</span></span>
+              <p class="check-detail">${c.detail}</p>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  const riskBody = document.getElementById("risk-body");
+  riskRegister.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="risk-cell"><span class="risk-chip ${r.rating.toLowerCase()}">${r.rating}</span></td>
+      <td class="id-cell">${r.id}</td>
+      <td class="name-cell">${r.name}</td>
+      <td class="detail-cell">${r.detail}</td>
+      <td class="meta-cell">${r.ig}</td>
+      <td class="meta-cell">${r.fair}</td>
+      <td class="fix-cell">${r.fix}</td>
+    `;
+    riskBody.appendChild(tr);
+  });
+</script>
+
+</body>
+</html>
