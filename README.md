@@ -162,12 +162,13 @@ individual device checks in `miccmac/checks/` are stubbed
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
 | SSH + osquery target connector | Working (`--connector ssh-osquery`), proven against a live Ubuntu 26.04 LTS VM |
-| Inventoried property (INV-01..04) real detection logic | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
+| Inventoried (INV-01..04) and Monitored (MON-01..04) real detection logic | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
 
-- **6 of 7 properties still stubbed.** Only Inventoried (INV-01..04) has real
-  detection logic; the other 22 checks return `Status.NOT_IMPLEMENTED`.
+- **5 of 7 properties still stubbed.** Only Inventoried (INV-01..04) and
+  Monitored (MON-01..04) have real detection logic; the other 18 checks
+  return `Status.NOT_IMPLEMENTED`.
 - **One connector, one platform proven.** `ssh-osquery` is implemented and
   tested end-to-end against Ubuntu Desktop; Windows (WinRM) and macOS
   connectors, and OS-conditional branching within checks, are not yet built.
@@ -220,16 +221,23 @@ excluded from scoring rather than failed.
 | **Inventory / asset lookups** | Query your CMDB (ServiceNow, Snipe-IT, Intune, etc.) | Connector layer feeds facts |
 | **Cloud variants** | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access | Separate cloud-aware connectors |
 
-### Lowest-effort first concrete target — done for Linux + osquery / Inventoried
+### Lowest-effort first concrete targets — done for Linux + osquery / Inventoried + Monitored
 
-The first vertical slice is implemented and proven end-to-end against a live
-Ubuntu 26.04 LTS VM: `miccmac/connectors/ssh_osquery.py` collects
-`system_info`, `os_version`, and `deb_packages` over SSH, and
-`miccmac/checks/inventoried.py` has real detection logic for all four
-`INV-*` checks (two of which — INV-01, INV-04 — correctly draw on an
-external `--inventory-record` input rather than the device itself; see
+Two vertical slices are implemented and proven end-to-end against a live
+Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
+
+- **Inventoried** (`miccmac/checks/inventoried.py`) — all four `INV-*`
+  checks; two of which (INV-01, INV-04) correctly draw on an external
+  `--inventory-record` input rather than the device itself.
+- **Monitored** (`miccmac/checks/monitored.py`) — all four `MON-*` checks,
+  via osquery's `systemd_units` table (journald/rsyslog/syslog-ng/osqueryd/
+  auditd service state) plus one raw-command fact for rsyslog forwarding
+  config (osquery's SQL surface doesn't expose file content).
+
+See
 [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic)
-for why).
+for the design rationale and real findings from live testing (e.g. why
+INV-02 and MON-04 legitimately FAIL on a stock install).
 
 ```bash
 miccmac assess 192.168.1.50 --connector ssh-osquery \
@@ -239,15 +247,14 @@ miccmac assess 192.168.1.50 --connector ssh-osquery \
 
 Remaining reasonable next targets, following the same pattern:
 
-- **Linux + osquery, Monitored** — `MON-01..04` by inspecting
-  `/etc/rsyslog.d/`, `auditctl -l`, and the EDR agent's PID via osquery's
-  `processes` table.
 - **Windows + Sysmon + Defender** — a `WinRMConnector` alongside
   `SSHOsqueryConnector`; implement `MON-03` by checking the Sysmon driver and
   parsed config; `INV-03` via `Get-Package`; `CUR-01` via Windows Update
   history (`Get-HotFix`).
 - **macOS + Jamf / Kandji** — implement `INV-*` via the MDM API; `CTL-*` by
   inspecting configuration profiles.
+- **Controlled, Claimed, Assessed, Current on Linux** — continue the same
+  osquery + connector pattern for the remaining properties.
 
 Contributions for any platform are very welcome — see
 [`CONTRIBUTING.md`](CONTRIBUTING.md).

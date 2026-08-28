@@ -24,7 +24,23 @@ QUERIES = {
     "os_version": "SELECT name, version, platform, platform_like, codename "
                    "FROM os_version;",
     "deb_packages": "SELECT name, version FROM deb_packages;",
+    # Service state for the Monitored (M) checks: journald/rsyslog/syslog-ng
+    # (MON-01), osqueryd as the endpoint telemetry agent (MON-03), auditd
+    # (MON-04). One query, filtered to only the units checks care about.
+    "systemd_units": "SELECT id, active_state, sub_state, load_state FROM systemd_units "
+                      "WHERE id IN ('systemd-journald.service', 'rsyslog.service', "
+                      "'syslog-ng.service', 'osqueryd.service', 'auditd.service');",
 }
+
+# osquery's SQL surface exposes file *metadata* (the `file` table) but not
+# file *content* -- there is no stock table for "does this config file
+# contain X". MON-02 (log forwarding) needs to read rsyslog's config for a
+# remote destination, so this one fact is collected via a plain shell
+# command instead of osqueryi. It's still local read-only fact collection,
+# just outside osquery's table set for this one gap.
+RSYSLOG_FORWARDING_CHECK_COMMAND = (
+    "grep -rhE '^[^#]*@' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null; true"
+)
 
 
 class SSHOsqueryConnector:
@@ -53,6 +69,14 @@ class SSHOsqueryConnector:
         except json.JSONDecodeError as exc:
             raise ConnectorError(f"osqueryi returned non-JSON output: {exc}") from exc
 
+    def _run_raw(self, client: paramiko.SSHClient, command: str) -> str:
+        """Run a plain shell command and return its stdout. Does not raise on
+        a non-zero exit -- used only for commands like grep where "no match"
+        (exit 1) is a normal, meaningful result, not a failure."""
+        stdin, stdout, stderr = client.exec_command(command, timeout=self.timeout)
+        stdout.channel.recv_exit_status()
+        return stdout.read().decode("utf-8", errors="replace")
+
     def collect_facts(self, target: str) -> dict:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -71,6 +95,7 @@ class SSHOsqueryConnector:
             results = {}
             for key, query in QUERIES.items():
                 results[key] = self._run_osquery(client, query)
+            rsyslog_forwarding_raw = self._run_raw(client, RSYSLOG_FORWARDING_CHECK_COMMAND)
         finally:
             client.close()
 
@@ -82,9 +107,12 @@ class SSHOsqueryConnector:
             "codename": os_rows[0].get("codename") if os_rows else None,
         }
         system_info = results["system_info"][0] if results["system_info"] else {}
+        systemd_units = {row["id"]: row for row in results["systemd_units"]}
 
         return {
             "os": os_facts,
             "system_info": system_info,
             "deb_packages": results["deb_packages"],
+            "systemd_units": systemd_units,
+            "rsyslog_forwarding_configured": bool(rsyslog_forwarding_raw.strip()),
         }

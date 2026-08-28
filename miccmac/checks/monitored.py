@@ -2,10 +2,16 @@
 
 Intent: The device's security-relevant activity is logged, retained, and continuously monitored so that compromise can be detected.
 
-Each check below is a SCAFFOLD. Replace the body of ``_run_checks`` with real
-detection logic (local collection, agent query, API call, config parse, etc.)
-and set each CheckResult's ``status``, ``detail``, and ``evidence`` accordingly.
-The methodology and scoring rules are described in docs/methodology.md.
+Real detection logic reads osquery facts from context["facts"] (see
+miccmac/connectors/ssh_osquery.py) -- specifically facts["systemd_units"]
+(active_state/sub_state/load_state for journald, rsyslog, syslog-ng,
+osqueryd, auditd) and facts["rsyslog_forwarding_configured"] (whether
+rsyslog's config declares a remote destination).
+
+When no connector was used at all (context has no "facts" key -- the
+scaffold/default invocation), all four checks fall back to the original
+NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
+unchanged from the Alpha scaffold.
 """
 from __future__ import annotations
 
@@ -15,51 +21,122 @@ KEY = "monitored"
 LETTER = "M"
 TITLE = "Monitored"
 
+_CONTROL_REFS = {
+    "MON-01": ["NIST 800-53 AU-2", "CIS v8 8.2"],
+    "MON-02": ["NIST 800-53 AU-6", "CIS v8 8.9"],
+    "MON-03": ["NIST 800-53 SI-4", "CIS v8 13.7"],
+    "MON-04": ["NIST 800-53 AU-2", "CIS v8 8.5"],
+}
+
+_NAMES = {
+    "MON-01": "Endpoint security logging enabled",
+    "MON-02": "Logs forwarded to a centralized SIEM / log platform",
+    "MON-03": "EDR / endpoint telemetry agent installed and healthy",
+    "MON-04": "Audit policy covers authentication, privilege, and process events",
+}
+
+
+def _stub_result(check_id: str) -> CheckResult:
+    return CheckResult(
+        check_id=check_id,
+        name=_NAMES[check_id],
+        status=Status.NOT_IMPLEMENTED,
+        detail="Check not yet implemented.",
+        control_refs=_CONTROL_REFS[check_id],
+    )
+
+
+def _stub_checks() -> list[CheckResult]:
+    return [_stub_result(cid) for cid in ("MON-01", "MON-02", "MON-03", "MON-04")]
+
+
+def _active(units: dict, unit_id: str) -> bool:
+    return units.get(unit_id, {}).get("active_state") == "active"
+
+
+def _check_mon01(units: dict) -> CheckResult:
+    journald = _active(units, "systemd-journald.service")
+    syslog = _active(units, "rsyslog.service") or _active(units, "syslog-ng.service")
+
+    if journald and syslog:
+        status = Status.PASS
+        detail = "systemd-journald and a syslog daemon (rsyslog/syslog-ng) are both active."
+    elif journald:
+        status = Status.PARTIAL
+        detail = "systemd-journald is active, but no traditional syslog daemon (rsyslog/syslog-ng) was found active."
+    else:
+        status = Status.FAIL
+        detail = "systemd-journald is not active; no baseline logging service found."
+
+    return CheckResult(
+        check_id="MON-01", name=_NAMES["MON-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-01"],
+    )
+
+
+def _check_mon02(rsyslog_forwarding_configured: bool) -> CheckResult:
+    if rsyslog_forwarding_configured:
+        status = Status.PASS
+        detail = "rsyslog configuration declares a remote forwarding destination (@/@@)."
+    else:
+        status = Status.FAIL
+        detail = "No remote forwarding destination found in rsyslog configuration; logs are not leaving the device."
+
+    return CheckResult(
+        check_id="MON-02", name=_NAMES["MON-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-02"],
+    )
+
+
+def _check_mon03(units: dict) -> CheckResult:
+    if _active(units, "osqueryd.service"):
+        status = Status.PASS
+        detail = "osqueryd (endpoint telemetry agent) is installed and active."
+    else:
+        status = Status.FAIL
+        detail = "osqueryd is not active; no endpoint telemetry agent detected."
+
+    return CheckResult(
+        check_id="MON-03", name=_NAMES["MON-03"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-03"],
+    )
+
+
+def _check_mon04(units: dict) -> CheckResult:
+    auditd = units.get("auditd.service", {})
+    if auditd.get("active_state") == "active":
+        # Confirms the daemon is running; does not yet verify specific rule
+        # coverage (watches on auth/privilege/process events) -- a
+        # deliberately simpler first pass, refinable later.
+        status = Status.PASS
+        detail = "auditd is active (specific rule coverage not yet verified by this check)."
+    elif auditd.get("load_state") == "not-found":
+        status = Status.FAIL
+        detail = "auditd is not installed; authentication/privilege/process audit events are not being captured."
+    else:
+        status = Status.FAIL
+        detail = "auditd is installed but not active."
+
+    return CheckResult(
+        check_id="MON-04", name=_NAMES["MON-04"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-04"],
+    )
+
 
 def _run_checks(target: str, context: dict) -> list[CheckResult]:
-    """Return one CheckResult per check for this property.
+    facts = context.get("facts")
+    if facts is None:
+        return _stub_checks()
 
-    TODO(implementer): replace the NOT_IMPLEMENTED stubs below with real
-    evaluations. A check should set:
-        status   -> Status.PASS / PARTIAL / FAIL / NOT_APPLICABLE
-        detail   -> short human-readable finding
-        evidence -> command output, file path, API response id, etc.
-    """
-    results: list[CheckResult] = []
-    # --- MON-01: Endpoint security logging enabled ---
-    results.append(CheckResult(
-        check_id="MON-01",
-        name="Endpoint security logging enabled",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 AU-2', 'CIS v8 8.2'],
-    ))
-    # --- MON-02: Logs forwarded to a centralized SIEM / log platform ---
-    results.append(CheckResult(
-        check_id="MON-02",
-        name="Logs forwarded to a centralized SIEM / log platform",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 AU-6', 'CIS v8 8.9'],
-    ))
-    # --- MON-03: EDR / endpoint telemetry agent installed and healthy ---
-    results.append(CheckResult(
-        check_id="MON-03",
-        name="EDR / endpoint telemetry agent installed and healthy",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 SI-4', 'CIS v8 13.7'],
-    ))
-    # --- MON-04: Audit policy covers authentication, privilege, and process events ---
-    results.append(CheckResult(
-        check_id="MON-04",
-        name="Audit policy covers authentication, privilege, and process events",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 AU-2', 'CIS v8 8.5'],
-    ))
+    units = facts.get("systemd_units") or {}
+    rsyslog_forwarding_configured = bool(facts.get("rsyslog_forwarding_configured"))
 
-    return results
+    return [
+        _check_mon01(units),
+        _check_mon02(rsyslog_forwarding_configured),
+        _check_mon03(units),
+        _check_mon04(units),
+    ]
 
 
 def evaluate(target: str, context: dict) -> PropertyResult:

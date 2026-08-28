@@ -17,11 +17,19 @@ def _mock_channel_file(text: str, exit_status: int = 0):
     return mock_file
 
 
-def _make_client(query_responses: dict, exit_status: int = 0, stderr_text: str = ""):
-    """query_responses: dict of SQL substring -> JSON-encodable rows list."""
+def _make_client(query_responses: dict, exit_status: int = 0, stderr_text: str = "",
+                 rsyslog_forwarding_output: str = ""):
+    """query_responses: dict of SQL substring -> JSON-encodable rows list.
+    Any command not matching an osqueryi query substring (i.e. the raw
+    rsyslog-forwarding grep) returns rsyslog_forwarding_output as plain text,
+    exit 0, never treated as a query-failure."""
     client = MagicMock()
 
     def exec_command(command, timeout=None):
+        if "osqueryi" not in command:
+            stdout = _mock_channel_file(rsyslog_forwarding_output, 0)
+            stderr = _mock_channel_file("")
+            return MagicMock(), stdout, stderr
         matched = next((rows for q, rows in query_responses.items() if q in command), [])
         stdout = _mock_channel_file(json.dumps(matched), exit_status)
         stderr = _mock_channel_file(stderr_text)
@@ -40,6 +48,8 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
                          "hardware_model": "VMware Virtual Platform", "hardware_serial": "VMware-1",
                          "cpu_brand": "Intel", "physical_memory": "4294967296"}],
         "deb_packages": [{"name": "bash", "version": "5.2"}, {"name": "curl", "version": "8.5"}],
+        "systemd_units": [{"id": "osqueryd.service", "active_state": "active",
+                          "sub_state": "running", "load_state": "loaded"}],
     }
     mock_client = _make_client(responses)
     mock_ssh_client_cls.return_value = mock_client
@@ -51,13 +61,15 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
     assert facts["os"]["codename"] == "resolute"
     assert facts["system_info"]["hardware_vendor"] == "VMware, Inc."
     assert len(facts["deb_packages"]) == 2
+    assert facts["systemd_units"]["osqueryd.service"]["active_state"] == "active"
+    assert facts["rsyslog_forwarding_configured"] is False
     mock_client.connect.assert_called_once()
     mock_client.close.assert_called_once()
 
 
 @patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
 def test_collect_facts_handles_empty_os_version(mock_ssh_client_cls):
-    responses = {"os_version": [], "system_info": [], "deb_packages": []}
+    responses = {"os_version": [], "system_info": [], "deb_packages": [], "systemd_units": []}
     mock_ssh_client_cls.return_value = _make_client(responses)
 
     connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
@@ -66,6 +78,31 @@ def test_collect_facts_handles_empty_os_version(mock_ssh_client_cls):
     assert facts["os"] == {"platform": None, "name": None, "version": None, "codename": None}
     assert facts["system_info"] == {}
     assert facts["deb_packages"] == []
+    assert facts["systemd_units"] == {}
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_rsyslog_forwarding_configured_true_when_grep_matches(mock_ssh_client_cls):
+    responses = {"os_version": [], "system_info": [], "deb_packages": [], "systemd_units": []}
+    mock_client = _make_client(responses, rsyslog_forwarding_output="*.* @@siem.example.com:514\n")
+    mock_ssh_client_cls.return_value = mock_client
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["rsyslog_forwarding_configured"] is True
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_rsyslog_forwarding_configured_false_when_grep_finds_nothing(mock_ssh_client_cls):
+    responses = {"os_version": [], "system_info": [], "deb_packages": [], "systemd_units": []}
+    mock_client = _make_client(responses, rsyslog_forwarding_output="")
+    mock_ssh_client_cls.return_value = mock_client
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["rsyslog_forwarding_configured"] is False
 
 
 @patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")

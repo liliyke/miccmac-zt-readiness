@@ -197,10 +197,11 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, one property has real, working detection logic against a
-live target: **Inventoried** (INV-01..04), proven end-to-end against a real
-Ubuntu 26.04 LTS VM. The remaining 22 checks are still `NOT_IMPLEMENTED`
-scaffolding; this section documents the pattern the rest will follow.
+As of this release, two properties have real, working detection logic
+against a live target: **Inventoried** (INV-01..04) and **Monitored**
+(MON-01..04), both proven end-to-end against a real Ubuntu 26.04 LTS VM. The
+remaining 18 checks are still `NOT_IMPLEMENTED` scaffolding; this section
+documents the pattern the rest will follow.
 
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
@@ -240,7 +241,29 @@ does not require or request root over SSH. This is a legitimate, evidence-
 backed finding (least-privilege fact collection has real coverage
 trade-offs), not a bug in the check logic.
 
-## 11. Extending the toolkit
+**When osquery's SQL surface doesn't cover a fact:** osquery exposes file
+*metadata* (the `file` table) but not file *content*, and MON-02 (log
+forwarding) needs to read whether rsyslog's config declares a remote
+destination. Rather than force-fitting this into an osquery query that
+doesn't exist, the connector runs one small, explicit raw shell command
+(`grep` against `/etc/rsyslog.conf` and `/etc/rsyslog.d/*.conf`) over the
+same SSH session. This is still local, read-only fact collection within the
+connector's stated job -- it's a documented, narrow exception, not a
+precedent for arbitrary shell access.
+
+**Two more real findings from live testing (Monitored):** MON-03 (EDR /
+endpoint telemetry agent) legitimately PASSes because `osqueryd` -- the same
+agent the connector uses to collect facts -- is itself the telemetry agent
+being evaluated; this is honest, not circular, since the check verifies the
+*systemd service* is enabled and running continuously, not merely that a
+one-off query succeeded. MON-04 (audit policy) FAILs on a stock Ubuntu
+Desktop install because `auditd` is not installed by default -- a real,
+common gap, and the check currently only verifies the daemon is active, not
+that its rules cover authentication/privilege/process events specifically;
+deepening that check (parsing `auditctl -l` / `/etc/audit/rules.d/`) is a
+natural next refinement, not required for this pass.
+
+## 12. Extending the toolkit
 
 To implement a check, edit the relevant module in `miccmac/checks/` and replace
 the `NOT_IMPLEMENTED` stub with real detection logic that sets `status`,
