@@ -19,6 +19,14 @@ def _fmt_score(score) -> str:
     return "n/a" if score is None else f"{score:.1f}/100"
 
 
+def _fmt_level(level_result) -> str:
+    """Format a methodology.LevelResult for display, e.g.
+    'Level 4 - Quantitatively Managed (75.0%)' or 'Unassessed'."""
+    if level_result is None or level_result.level is None:
+        return level_result.level_label if level_result else "Unassessed"
+    return f"Level {level_result.level}/{level_result.max_level} - {level_result.level_label} ({level_result.percentage:.1f}%)"
+
+
 def to_json(assessment: Assessment) -> str:
     return json.dumps(assessment.to_dict(), indent=2)
 
@@ -31,10 +39,16 @@ def to_text(assessment: Assessment) -> str:
     lines.append(f"  Target          : {assessment.target}")
     lines.append(f"  Overall score   : {_fmt_score(assessment.overall_score)}")
     lines.append(f"  Readiness tier  : {assessment.readiness_tier}")
+    if assessment.methodology is not None:
+        lines.append(f"  {assessment.methodology.name.upper():<16}: {_fmt_level(assessment.methodology.overall)}")
     lines.append("=" * 64)
     for prop in assessment.properties:
         lines.append("")
-        lines.append(f"  {prop.letter}  {prop.title}  ({_fmt_score(prop.score)})")
+        level_suffix = ""
+        if assessment.methodology is not None:
+            level_result = assessment.methodology.properties.get(prop.key)
+            level_suffix = f"  [{assessment.methodology.name.upper()}: {_fmt_level(level_result)}]"
+        lines.append(f"  {prop.letter}  {prop.title}  ({_fmt_score(prop.score)}){level_suffix}")
         lines.append("  " + "-" * 60)
         for c in prop.checks:
             glyph = _STATUS_GLYPH.get(c.status, "[ ?? ]")
@@ -58,9 +72,16 @@ def to_markdown(assessment: Assessment) -> str:
     md.append("# MICCMAC Zero Trust Device Readiness Assessment\n")
     md.append(f"- **Target:** {assessment.target}")
     md.append(f"- **Overall score:** {_fmt_score(assessment.overall_score)}")
-    md.append(f"- **Readiness tier:** {assessment.readiness_tier}\n")
+    md.append(f"- **Readiness tier:** {assessment.readiness_tier}")
+    if assessment.methodology is not None:
+        md.append(f"- **{assessment.methodology.name.upper()}:** {_fmt_level(assessment.methodology.overall)}")
+    md.append("")
     for prop in assessment.properties:
-        md.append(f"## {prop.letter} &mdash; {prop.title} ({_fmt_score(prop.score)})\n")
+        level_suffix = ""
+        if assessment.methodology is not None:
+            level_result = assessment.methodology.properties.get(prop.key)
+            level_suffix = f" &mdash; {assessment.methodology.name.upper()}: {_fmt_level(level_result)}"
+        md.append(f"## {prop.letter} &mdash; {prop.title} ({_fmt_score(prop.score)}){level_suffix}\n")
         md.append("| Check | Name | Status | Detail |")
         md.append("|---|---|---|---|")
         for c in prop.checks:
