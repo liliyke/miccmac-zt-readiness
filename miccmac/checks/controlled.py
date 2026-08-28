@@ -2,10 +2,19 @@
 
 Intent: Configuration and access to the device are centrally governed by enforced policy, not left to local discretion.
 
-Each check below is a SCAFFOLD. Replace the body of ``_run_checks`` with real
-detection logic (local collection, agent query, API call, config parse, etc.)
-and set each CheckResult's ``status``, ``detail``, and ``evidence`` accordingly.
-The methodology and scoring rules are described in docs/methodology.md.
+Real detection logic reads osquery facts from context["facts"] (see
+miccmac/connectors/ssh_osquery.py): facts["deb_packages"] (config-mgmt /
+hardening tool presence), facts["root_locked"] and facts["sudo_users"]
+(least-privilege elevation). CTL-03 is NOT derivable from the device --
+identity-aware / conditional-access policy is enforced by a cloud identity
+provider (Azure AD, Okta, etc.), not something visible on the box itself --
+so it reads context["attestation"] (via --attestation) instead, following
+the same external-fact pattern as INV-01/INV-04's --inventory-record.
+
+When no connector was used at all (context has no "facts" key -- the
+scaffold/default invocation), all four checks fall back to the original
+NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
+unchanged from the Alpha scaffold.
 """
 from __future__ import annotations
 
@@ -15,51 +24,133 @@ KEY = "controlled"
 LETTER = "C"
 TITLE = "Controlled"
 
+_CONTROL_REFS = {
+    "CTL-01": ["NIST 800-53 CM-2", "CIS v8 4.1"],
+    "CTL-02": ["NIST 800-53 AC-6", "CIS v8 5.4"],
+    "CTL-03": ["NIST 800-207 Tenet 4", "NIST 800-53 AC-3", "CIS v8 6.7"],
+    "CTL-04": ["NIST 800-53 CM-6", "CIS v8 4.2"],
+}
+
+_NAMES = {
+    "CTL-01": "Device enrolled in central configuration management / MDM",
+    "CTL-02": "Administrative privileges restricted (least privilege)",
+    "CTL-03": "Access governed by identity-aware / conditional-access policy",
+    "CTL-04": "Configuration baseline enforced and drift-monitored",
+}
+
+# Package-name substrings that indicate central configuration management /
+# fleet enrollment on a Debian/Ubuntu host.
+_CONFIG_MGMT_PACKAGES = ("puppet", "chef", "ansible", "salt-minion", "landscape-client")
+# Package-name substrings that indicate a hardening-baseline tool is present.
+_HARDENING_PACKAGES = ("usg", "openscap")
+
+
+def _stub_result(check_id: str) -> CheckResult:
+    return CheckResult(
+        check_id=check_id,
+        name=_NAMES[check_id],
+        status=Status.NOT_IMPLEMENTED,
+        detail="Check not yet implemented.",
+        control_refs=_CONTROL_REFS[check_id],
+    )
+
+
+def _stub_checks() -> list[CheckResult]:
+    return [_stub_result(cid) for cid in ("CTL-01", "CTL-02", "CTL-03", "CTL-04")]
+
+
+def _package_installed(deb_packages: list, name_substrings: tuple) -> str | None:
+    """Return the matching package name if any installed package's name
+    contains one of name_substrings, else None."""
+    for pkg in deb_packages:
+        name = pkg.get("name", "")
+        if any(sub in name for sub in name_substrings):
+            return name
+    return None
+
+
+def _check_ctl01(deb_packages: list) -> CheckResult:
+    match = _package_installed(deb_packages, _CONFIG_MGMT_PACKAGES)
+    if match:
+        status = Status.PASS
+        detail = f"Central configuration management agent found installed: {match!r}."
+    else:
+        status = Status.FAIL
+        detail = "No central configuration management / MDM agent (puppet, chef, ansible, salt-minion, landscape-client) found installed."
+    return CheckResult(
+        check_id="CTL-01", name=_NAMES["CTL-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-01"],
+    )
+
+
+def _check_ctl02(root_locked: bool, sudo_users: list) -> CheckResult:
+    if root_locked and sudo_users:
+        status = Status.PASS
+        detail = (f"root account is locked (no direct password login); privilege elevation is "
+                  f"via sudo for {len(sudo_users)} named account(s): {', '.join(sudo_users)}.")
+    elif root_locked:
+        status = Status.PARTIAL
+        detail = "root account is locked, but no accounts hold sudo -- there is no elevation path at all."
+    else:
+        status = Status.FAIL
+        detail = "root account is NOT locked; direct root login is possible, bypassing named-account elevation."
+    return CheckResult(
+        check_id="CTL-02", name=_NAMES["CTL-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-02"],
+    )
+
+
+def _check_ctl03(attestation: dict | None) -> CheckResult:
+    if attestation is None or "identity_aware_access" not in attestation:
+        return CheckResult(
+            check_id="CTL-03", name=_NAMES["CTL-03"], status=Status.NOT_APPLICABLE,
+            detail="No --attestation supplied for identity_aware_access; conditional-access "
+                   "policy is enforced by a cloud identity provider and is not observable "
+                   "from the device itself.",
+            control_refs=_CONTROL_REFS["CTL-03"],
+        )
+    enabled = bool(attestation["identity_aware_access"].get("enabled")) \
+        if isinstance(attestation["identity_aware_access"], dict) else bool(attestation["identity_aware_access"])
+    if enabled:
+        status, detail = Status.PASS, "Attestation confirms identity-aware / conditional-access policy is enforced."
+    else:
+        status, detail = Status.FAIL, "Attestation states identity-aware / conditional-access policy is NOT enforced."
+    return CheckResult(
+        check_id="CTL-03", name=_NAMES["CTL-03"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-03"],
+    )
+
+
+def _check_ctl04(deb_packages: list) -> CheckResult:
+    match = _package_installed(deb_packages, _HARDENING_PACKAGES)
+    if match:
+        status = Status.PASS
+        detail = f"Hardening-baseline tool found installed: {match!r}."
+    else:
+        status = Status.FAIL
+        detail = "No recognized hardening-baseline tool (usg, openscap-scanner) found installed."
+    return CheckResult(
+        check_id="CTL-04", name=_NAMES["CTL-04"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-04"],
+    )
+
 
 def _run_checks(target: str, context: dict) -> list[CheckResult]:
-    """Return one CheckResult per check for this property.
+    facts = context.get("facts")
+    if facts is None:
+        return _stub_checks()
 
-    TODO(implementer): replace the NOT_IMPLEMENTED stubs below with real
-    evaluations. A check should set:
-        status   -> Status.PASS / PARTIAL / FAIL / NOT_APPLICABLE
-        detail   -> short human-readable finding
-        evidence -> command output, file path, API response id, etc.
-    """
-    results: list[CheckResult] = []
-    # --- CTL-01: Device enrolled in central configuration management / MDM ---
-    results.append(CheckResult(
-        check_id="CTL-01",
-        name="Device enrolled in central configuration management / MDM",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 CM-2', 'CIS v8 4.1'],
-    ))
-    # --- CTL-02: Administrative privileges restricted (least privilege) ---
-    results.append(CheckResult(
-        check_id="CTL-02",
-        name="Administrative privileges restricted (least privilege)",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 AC-6', 'CIS v8 5.4'],
-    ))
-    # --- CTL-03: Access governed by identity-aware / conditional-access policy ---
-    results.append(CheckResult(
-        check_id="CTL-03",
-        name="Access governed by identity-aware / conditional-access policy",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-207 Tenet 4', 'NIST 800-53 AC-3', 'CIS v8 6.7'],
-    ))
-    # --- CTL-04: Configuration baseline enforced and drift-monitored ---
-    results.append(CheckResult(
-        check_id="CTL-04",
-        name="Configuration baseline enforced and drift-monitored",
-        status=Status.NOT_IMPLEMENTED,  # TODO: implement detection logic
-        detail="Check not yet implemented.",
-        control_refs=['NIST 800-53 CM-6', 'CIS v8 4.2'],
-    ))
+    deb_packages = facts.get("deb_packages") or []
+    root_locked = bool(facts.get("root_locked"))
+    sudo_users = facts.get("sudo_users") or []
+    attestation = context.get("attestation")
 
-    return results
+    return [
+        _check_ctl01(deb_packages),
+        _check_ctl02(root_locked, sudo_users),
+        _check_ctl03(attestation),
+        _check_ctl04(deb_packages),
+    ]
 
 
 def evaluate(target: str, context: dict) -> PropertyResult:

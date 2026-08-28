@@ -150,3 +150,46 @@ def test_assess_with_risk_register_and_json(capsys):
     assert "assessment" in data
     assert "risk_register" in data
     assert data["risk_register"] == []
+
+
+def test_assess_with_attestation_feeds_ctl03(tmp_path, capsys):
+    attestation = {"identity_aware_access": {"enabled": True}}
+    attestation_path = tmp_path / "attestation.json"
+    attestation_path.write_text(json.dumps(attestation), encoding="utf-8")
+
+    fake_facts = {"os": {}, "system_info": {}, "deb_packages": [], "systemd_units": {},
+                  "rsyslog_forwarding_configured": False, "root_locked": True, "sudo_users": ["miccmac"]}
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
+        rc = main([
+            "assess", "10.0.0.5", "--format", "json",
+            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--attestation", str(attestation_path),
+        ])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    ctl = next(p for p in data["properties"] if p["key"] == "controlled")
+    ctl03 = next(c for c in ctl["checks"] if c["check_id"] == "CTL-03")
+    assert ctl03["status"] == "PASS"
+
+
+def test_assess_without_attestation_ctl03_not_applicable(capsys):
+    fake_facts = {"os": {}, "system_info": {}, "deb_packages": [], "systemd_units": {},
+                  "rsyslog_forwarding_configured": False, "root_locked": True, "sudo_users": ["miccmac"]}
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
+        rc = main([
+            "assess", "10.0.0.5", "--format", "json",
+            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+        ])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    ctl = next(p for p in data["properties"] if p["key"] == "controlled")
+    ctl03 = next(c for c in ctl["checks"] if c["check_id"] == "CTL-03")
+    assert ctl03["status"] == "NOT_APPLICABLE"
+
+
+def test_assess_with_bad_attestation_json_errors_cleanly(tmp_path, capsys):
+    attestation_path = tmp_path / "attestation.json"
+    attestation_path.write_text("{not valid json", encoding="utf-8")
+    rc = main(["assess", "test-device", "--attestation", str(attestation_path)])
+    assert rc == 2
+    assert "not valid json" in capsys.readouterr().err.lower()

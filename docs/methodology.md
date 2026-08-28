@@ -197,11 +197,12 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, two properties have real, working detection logic
-against a live target: **Inventoried** (INV-01..04) and **Monitored**
-(MON-01..04), both proven end-to-end against a real Ubuntu 26.04 LTS VM. The
-remaining 18 checks are still `NOT_IMPLEMENTED` scaffolding; this section
-documents the pattern the rest will follow.
+As of this release, three properties have real, working detection logic
+against a live target: **Inventoried** (INV-01..04), **Monitored**
+(MON-01..04), and **Controlled** (CTL-01..04), all proven end-to-end against
+a real Ubuntu 26.04 LTS VM. The remaining 14 checks are still
+`NOT_IMPLEMENTED` scaffolding; this section documents the pattern the rest
+will follow.
 
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
@@ -224,6 +225,16 @@ they read `context["inventory_record"]` (via `--inventory-record
 `FAIL` -- when no such integration is configured. This is a deliberate
 design choice, not a gap: a check should say what it can and cannot
 determine, honestly.
+
+The same pattern generalizes as **`--attestation <path-to-json>`**
+(`context["attestation"]`), for organizational facts that aren't
+device-observable at all -- not because there's no external record to check
+against (as with `inventory_record`), but because the control is enforced
+somewhere the device can't see, e.g. CTL-03 (identity-aware / conditional-
+access policy), which lives in a cloud identity provider (Azure AD,
+Okta, ...), not on the box. `inventory_record` and `attestation` stay
+separate, purpose-named inputs rather than one generic bag, so each check's
+data dependency stays self-documenting from the flag name alone.
 
 **Backward compatibility.** Every check with real logic starts with a guard:
 if `context` has no `"facts"` key at all (the default, no-`--connector`
@@ -262,6 +273,15 @@ common gap, and the check currently only verifies the daemon is active, not
 that its rules cover authentication/privilege/process events specifically;
 deepening that check (parsing `auditctl -l` / `/etc/audit/rules.d/`) is a
 natural next refinement, not required for this pass.
+
+**Findings from live testing (Controlled):** CTL-02 (least privilege) is
+checked via osquery's `shadow` table, which is readable by an unprivileged
+user for the `password_status` (lock state) column specifically -- this
+avoids the connector needing root just to confirm root login is disabled,
+matching the least-privilege design used throughout. On the test VM, root is
+locked and exactly one account holds sudo, so CTL-02 PASSes; CTL-01 (no
+config-management agent) and CTL-04 (no hardening-baseline tool) both FAIL
+on a stock install, which is accurate -- neither ships by default.
 
 ## 12. Extending the toolkit
 

@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_assess.add_argument("--inventory-record", default=None,
                           help="Path to a JSON file with an external inventory-system record "
                                "for this device (feeds INV-01/INV-04).")
+    p_assess.add_argument("--attestation", default=None,
+                          help="Path to a JSON file attesting organizational facts that "
+                               "aren't observable from the device itself, e.g. "
+                               "identity-aware access policy (feeds CTL-03 and similar).")
 
     p_checks = sub.add_parser(
         "list-checks",
@@ -89,6 +93,16 @@ def _render_output(assessment, entries, fmt: str) -> str:
     return output
 
 
+def _load_json_file(path: str, flag_name: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except OSError as exc:
+        raise ConfigError(f"cannot read {flag_name} file: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{flag_name} file is not valid JSON: {exc}") from exc
+
+
 def _build_context(args) -> dict:
     context = {}
 
@@ -102,13 +116,10 @@ def _build_context(args) -> dict:
         context["facts"] = connector.collect_facts(args.target)
 
     if args.inventory_record:
-        try:
-            with open(args.inventory_record, encoding="utf-8") as fh:
-                context["inventory_record"] = json.load(fh)
-        except OSError as exc:
-            raise ConfigError(f"cannot read --inventory-record file: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise ConfigError(f"--inventory-record file is not valid JSON: {exc}") from exc
+        context["inventory_record"] = _load_json_file(args.inventory_record, "--inventory-record")
+
+    if args.attestation:
+        context["attestation"] = _load_json_file(args.attestation, "--attestation")
 
     return context
 

@@ -30,6 +30,17 @@ QUERIES = {
     "systemd_units": "SELECT id, active_state, sub_state, load_state FROM systemd_units "
                       "WHERE id IN ('systemd-journald.service', 'rsyslog.service', "
                       "'syslog-ng.service', 'osqueryd.service', 'auditd.service');",
+    # Controlled (C): whether direct root login is possible. Readable without
+    # root -- password_status reflects /etc/shadow's lock state, not the hash
+    # itself, and osqueryi (run as an unprivileged user here) can read it.
+    "shadow_root": "SELECT username, password_status FROM shadow WHERE username='root';",
+    # Controlled (C): who can elevate via sudo -- least-privilege pairs with
+    # a locked root account (above): elevation should be possible via sudo,
+    # by named accounts, not via direct root login.
+    "sudo_users": "SELECT u.username FROM users u "
+                   "JOIN user_groups ug ON u.uid = ug.uid "
+                   "JOIN groups g ON ug.gid = g.gid "
+                   "WHERE g.groupname = 'sudo';",
 }
 
 # osquery's SQL surface exposes file *metadata* (the `file` table) but not
@@ -108,6 +119,8 @@ class SSHOsqueryConnector:
         }
         system_info = results["system_info"][0] if results["system_info"] else {}
         systemd_units = {row["id"]: row for row in results["systemd_units"]}
+        shadow_root_rows = results["shadow_root"]
+        root_locked = bool(shadow_root_rows) and shadow_root_rows[0].get("password_status") == "locked"
 
         return {
             "os": os_facts,
@@ -115,4 +128,6 @@ class SSHOsqueryConnector:
             "deb_packages": results["deb_packages"],
             "systemd_units": systemd_units,
             "rsyslog_forwarding_configured": bool(rsyslog_forwarding_raw.strip()),
+            "root_locked": root_locked,
+            "sudo_users": [row["username"] for row in results["sudo_users"]],
         }

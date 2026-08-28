@@ -17,12 +17,20 @@ def _mock_channel_file(text: str, exit_status: int = 0):
     return mock_file
 
 
+_DEFAULT_RESPONSES = {
+    "system_info": [], "os_version": [], "deb_packages": [], "systemd_units": [],
+    "shadow": [], "sudo": [],
+}
+
+
 def _make_client(query_responses: dict, exit_status: int = 0, stderr_text: str = "",
                  rsyslog_forwarding_output: str = ""):
-    """query_responses: dict of SQL substring -> JSON-encodable rows list.
-    Any command not matching an osqueryi query substring (i.e. the raw
-    rsyslog-forwarding grep) returns rsyslog_forwarding_output as plain text,
-    exit 0, never treated as a query-failure."""
+    """query_responses: dict of SQL substring -> JSON-encodable rows list,
+    merged over _DEFAULT_RESPONSES so tests only need to specify what they
+    care about. Any command not matching an osqueryi query substring (i.e.
+    the raw rsyslog-forwarding grep) returns rsyslog_forwarding_output as
+    plain text, exit 0, never treated as a query-failure."""
+    responses = {**_DEFAULT_RESPONSES, **query_responses}
     client = MagicMock()
 
     def exec_command(command, timeout=None):
@@ -30,7 +38,7 @@ def _make_client(query_responses: dict, exit_status: int = 0, stderr_text: str =
             stdout = _mock_channel_file(rsyslog_forwarding_output, 0)
             stderr = _mock_channel_file("")
             return MagicMock(), stdout, stderr
-        matched = next((rows for q, rows in query_responses.items() if q in command), [])
+        matched = next((rows for q, rows in responses.items() if q in command), [])
         stdout = _mock_channel_file(json.dumps(matched), exit_status)
         stderr = _mock_channel_file(stderr_text)
         return MagicMock(), stdout, stderr
@@ -50,6 +58,8 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
         "deb_packages": [{"name": "bash", "version": "5.2"}, {"name": "curl", "version": "8.5"}],
         "systemd_units": [{"id": "osqueryd.service", "active_state": "active",
                           "sub_state": "running", "load_state": "loaded"}],
+        "shadow": [{"username": "root", "password_status": "locked"}],
+        "sudo": [{"username": "miccmac"}],
     }
     mock_client = _make_client(responses)
     mock_ssh_client_cls.return_value = mock_client
@@ -63,6 +73,8 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
     assert len(facts["deb_packages"]) == 2
     assert facts["systemd_units"]["osqueryd.service"]["active_state"] == "active"
     assert facts["rsyslog_forwarding_configured"] is False
+    assert facts["root_locked"] is True
+    assert facts["sudo_users"] == ["miccmac"]
     mock_client.connect.assert_called_once()
     mock_client.close.assert_called_once()
 
@@ -79,6 +91,30 @@ def test_collect_facts_handles_empty_os_version(mock_ssh_client_cls):
     assert facts["system_info"] == {}
     assert facts["deb_packages"] == []
     assert facts["systemd_units"] == {}
+    assert facts["root_locked"] is False
+    assert facts["sudo_users"] == []
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_root_locked_false_when_shadow_status_is_not_locked(mock_ssh_client_cls):
+    responses = {"shadow": [{"username": "root", "password_status": "empty"}]}
+    mock_ssh_client_cls.return_value = _make_client(responses)
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["root_locked"] is False
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_sudo_users_lists_multiple_accounts(mock_ssh_client_cls):
+    responses = {"sudo": [{"username": "alice"}, {"username": "bob"}]}
+    mock_ssh_client_cls.return_value = _make_client(responses)
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["sudo_users"] == ["alice", "bob"]
 
 
 @patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
