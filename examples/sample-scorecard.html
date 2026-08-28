@@ -821,7 +821,7 @@
   allChecks.forEach(c => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="prop-cell"><span class="prop-badge" style="width:26px;height:26px;font-size:0.85rem;">${c.letter}</span></td>
+      <td class="prop-cell"><span class="prop-badge" style="width:auto;height:26px;padding:0 8px;font-size:0.78rem;">${c.id.split("-")[0]}</span></td>
       <td class="id-cell">${c.id}</td>
       <td class="name-cell">${c.name}</td>
       <td class="refs-cell">${c.refs.map(r => `<span class="ref-tag">${r}</span>`).join("")}</td>
