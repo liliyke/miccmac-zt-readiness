@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -34,6 +34,10 @@ class CheckMetadata:
     cis_ig: str
     fair_frequency: str
     fair_magnitude: str
+    # Recommended fix for a FAIL/PARTIAL result, shown in the risk register.
+    # Optional (defaults to None) so existing custom-check plugins that don't
+    # declare one keep working -- see miccmac/config.py.
+    remediation: Optional[str] = None
 
 
 def load_raw_mappings(path: Path | str = DEFAULT_MAPPINGS_PATH) -> dict:
@@ -97,12 +101,20 @@ def load_check_metadata(path: Path | str = DEFAULT_MAPPINGS_PATH) -> Dict[str, C
                 f"must be one of {VALID_FAIR_LEVELS}"
             )
 
+        remediation = entry.get("remediation")
+        if not isinstance(remediation, str) or not remediation.strip():
+            raise MappingsError(
+                f"{path}: {check_id} missing a non-empty remediation string -- every "
+                f"built-in check must recommend a fix for its risk register entry"
+            )
+
         result[check_id] = CheckMetadata(
             check_id=check_id,
             property_key=property_key,
             cis_ig=cis_ig,
             fair_frequency=fair_frequency,
             fair_magnitude=fair_magnitude,
+            remediation=remediation,
         )
     return result
 

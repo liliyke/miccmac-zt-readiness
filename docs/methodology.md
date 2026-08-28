@@ -64,6 +64,12 @@ Thresholds are intentionally simple. Organizations may tune them in
 `miccmac/engine.py` (`READINESS_TIERS`) to match their own risk appetite, and
 should record any change here.
 
+Every text/markdown scorecard render (`miccmac/report.py`) ends with a legend
+reprinting this table, the MICCMAC property-letter meanings, the check-status
+glyphs, and -- when `--methodology` is used -- the selected methodology's own
+score-to-level chart, so the scorecard is self-explanatory without this doc
+open alongside it.
+
 ## 6. Design choices and limitations
 
 - **Equal property weighting.** The default treats all seven properties
@@ -153,8 +159,11 @@ same way a built-in check does, rather than always sorting last as
 `UNRATED`; `fair_frequency`/`fair_magnitude` are optional on top of the
 required `cis_ig` -- omit them and the check still gets its CIS IG shown and
 used for sort-tiebreaking, but its `risk_rating` stays `UNRATED` since a
-rating needs both FAIR axes. See `examples/custom_checks/acme_extra_checks.py`
-and `examples/miccmac-config.example.yaml` for a worked example.
+rating needs both FAIR axes. `remediation` (a recommended-fix string shown
+as the register entry's "Recommended fix" line) is also optional -- omit it
+and that line reads "n/a" for the check. See
+`examples/custom_checks/acme_extra_checks.py` and
+`examples/miccmac-config.example.yaml` for a worked example.
 
 **Fairness control.** When comparing the tool's automated output against a
 manual/human assessment (or against a different methodology run), both sides
@@ -192,6 +201,11 @@ section, with:
   unmanaged endpoint, unrestricted local admin, no host firewall, unpatched
   software) are rated HIGH/HIGH. Administrative/record-keeping checks
   (ownership records, review cadence) are rated LOW/LOW.
+- **`remediation`** -- a short, actionable recommended fix for a FAIL/PARTIAL
+  result on this check (e.g. "Enroll the device in the organization's central
+  configuration-management/MDM platform" for CTL-01). Required for every
+  built-in check; shown as each register entry's "Recommended fix" line so
+  the register reads as a prioritized action plan, not just a list of gaps.
 
 These two ratings combine into an overall risk rating via a 3x3 qualitative
 lookup table (deliberately a lookup, not a numeric product -- ordinal
@@ -210,6 +224,11 @@ failure is more foundational, expected of every organization, than an IG2
 failure at the same risk level, so it is remediated first). A check with no
 metadata entry (e.g. an unrated custom check) sorts last as `UNRATED` rather
 than being dropped.
+
+Every text/markdown render of the register opens with a legend explaining
+`IG1`/`IG2`/`IG3`, FAIR frequency/magnitude, and the risk-rating scale above,
+and entries are sorted highest-priority first so the register itself reads as
+the recommended order of operations -- fix the top entry first.
 
 Implementation: `miccmac/risk_register.py`.
 

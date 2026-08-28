@@ -45,6 +45,7 @@ class RiskEntry:
     fair_magnitude: Optional[str]
     risk_rating: str
     detail: str
+    remediation: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +58,7 @@ class RiskEntry:
             "fair_magnitude": self.fair_magnitude,
             "risk_rating": self.risk_rating,
             "detail": self.detail,
+            "remediation": self.remediation,
         }
 
 
@@ -98,6 +100,7 @@ def build_risk_register(
             frequency = meta.fair_frequency if meta else None
             magnitude = meta.fair_magnitude if meta else None
             ig = meta.cis_ig if meta else None
+            remediation = meta.remediation if meta else None
             entries.append(RiskEntry(
                 check_id=check.check_id,
                 property_key=prop.key,
@@ -108,6 +111,7 @@ def build_risk_register(
                 fair_magnitude=magnitude,
                 risk_rating=risk_rating(frequency, magnitude),
                 detail=check.detail,
+                remediation=remediation,
             ))
 
     entries.sort(key=lambda e: (
@@ -118,12 +122,71 @@ def build_risk_register(
     return entries
 
 
+# Ordered highest-severity first, to drive both the sort tiebreak display and
+# the legend's severity scale.
+_RISK_LEGEND = [
+    ("CRITICAL", "HIGH+HIGH FAIR rating -- fix immediately, ahead of everything else below it"),
+    ("HIGH",     "HIGH+MEDIUM or MEDIUM+HIGH -- fix in the current remediation cycle"),
+    ("MODERATE", "MEDIUM+MEDIUM, LOW+HIGH, or HIGH+LOW -- schedule into the normal backlog"),
+    ("LOW",      "LOW+LOW, LOW+MEDIUM, or MEDIUM+LOW -- track, but not urgent"),
+    ("UNRATED",  "no CIS IG/FAIR metadata on file for this check_id -- rate it manually"),
+]
+
+
+def _legend_lines() -> List[str]:
+    lines = [
+        "  LEGEND",
+        "  " + "-" * 62,
+        "  CIS IG (CIS Controls v8 Implementation Group -- who is expected to have",
+        "  this control in place):",
+        "    IG1  basic cyber hygiene, expected of every organization",
+        "    IG2  requires more organizational maturity (centralized tooling,",
+        "         scheduled processes, identity integration)",
+        "    IG3  reserved for controls facing sophisticated/targeted threats",
+        "         (no built-in check is IG3; a custom check plugin may add one)",
+        "  FAIR (Factor Analysis of Information Risk, simplified/qualitative here,",
+        "  not quantitative FAIR/Monte Carlo):",
+        "    frequency  how often this failure mode is actually exploited in the wild",
+        "    magnitude  the blast radius if it is",
+        "    both are banded LOW / MEDIUM / HIGH and combined into a risk rating below",
+        "  Risk rating (frequency x magnitude, from the matrix in this module):",
+    ]
+    for rating, meaning in _RISK_LEGEND:
+        lines.append(f"    {rating:8s} {meaning}.")
+    return lines
+
+
+def _legend_markdown() -> List[str]:
+    md = [
+        "**Legend**",
+        "",
+        "- **CIS IG** (CIS Controls v8 Implementation Group -- who is expected to "
+        "have this control in place): `IG1` basic cyber hygiene, expected of every "
+        "organization; `IG2` requires more organizational maturity (centralized "
+        "tooling, scheduled processes, identity integration); `IG3` reserved for "
+        "controls facing sophisticated/targeted threats (no built-in check is IG3; "
+        "a custom check plugin may add one).",
+        "- **FAIR** (Factor Analysis of Information Risk, simplified/qualitative "
+        "here, not quantitative FAIR/Monte Carlo): *frequency* = how often this "
+        "failure mode is actually exploited in the wild; *magnitude* = the blast "
+        "radius if it is. Both are banded LOW/MEDIUM/HIGH.",
+        "- **Risk rating** (frequency x magnitude, via the matrix in "
+        "`miccmac/risk_register.py`): " + "; ".join(f"`{r}` {m}" for r, m in _RISK_LEGEND) + ".",
+        "",
+    ]
+    return md
+
+
 def to_text(entries: List[RiskEntry]) -> str:
     lines = ["=" * 64, "  MICCMAC RISK REGISTER (CIS IG + FAIR-inspired rating)", "=" * 64]
+    lines.extend(_legend_lines())
+    lines.append("=" * 64)
     if not entries:
         lines.append("  No FAIL/PARTIAL checks -- nothing to remediate.")
         lines.append("=" * 64)
         return "\n".join(lines)
+    lines.append("  Sorted highest priority first -- work top to bottom as your")
+    lines.append("  next course of action.")
     for e in entries:
         lines.append("")
         lines.append(f"  [{e.risk_rating:8s}] {e.check_id}  {e.name}")
@@ -131,6 +194,7 @@ def to_text(entries: List[RiskEntry]) -> str:
                       f"FAIR: {e.fair_frequency or 'n/a'}/{e.fair_magnitude or 'n/a'}")
         if e.detail:
             lines.append(f"             {e.detail}")
+        lines.append(f"             Recommended fix: {e.remediation or 'n/a -- no remediation on file for this check_id.'}")
     lines.append("")
     lines.append("=" * 64)
     return "\n".join(lines)
@@ -138,16 +202,20 @@ def to_text(entries: List[RiskEntry]) -> str:
 
 def to_markdown(entries: List[RiskEntry]) -> str:
     md = ["## Risk Register (CIS IG + FAIR-inspired rating)\n"]
+    md.extend(_legend_markdown())
     if not entries:
         md.append("No FAIL/PARTIAL checks -- nothing to remediate.\n")
         return "\n".join(md)
-    md.append("| Risk | Check | Name | Status | CIS IG | FAIR (freq/mag) | Detail |")
-    md.append("|---|---|---|---|---|---|---|")
+    md.append("Sorted highest priority first -- work top to bottom as your next course "
+               "of action.\n")
+    md.append("| Risk | Check | Name | Status | CIS IG | FAIR (freq/mag) | Detail | Recommended fix |")
+    md.append("|---|---|---|---|---|---|---|---|")
     for e in entries:
         detail = e.detail.replace("|", "\\|") if e.detail else ""
+        fix = (e.remediation or "n/a").replace("|", "\\|")
         md.append(
             f"| {e.risk_rating} | {e.check_id} | {e.name} | {e.status.value} | "
-            f"{e.cis_ig or 'n/a'} | {e.fair_frequency or 'n/a'}/{e.fair_magnitude or 'n/a'} | {detail} |"
+            f"{e.cis_ig or 'n/a'} | {e.fair_frequency or 'n/a'}/{e.fair_magnitude or 'n/a'} | {detail} | {fix} |"
         )
     md.append("")
     return "\n".join(md)

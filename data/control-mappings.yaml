@@ -167,30 +167,34 @@ properties:
 #   records, hardware attribute documentation, review cadence) are LOW/LOW.
 # These two fields combine into a risk rating via the matrix in
 # miccmac/risk_register.py; see docs/methodology.md for the full rationale.
+#
+# remediation: a short, actionable next step for a FAIL/PARTIAL result on this
+#   check, surfaced in the risk register as each entry's "Recommended fix" so
+#   the register reads as a prioritized action plan, not just a list of gaps.
 checks:
-  - { check_id: MON-01, property_key: monitored,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: MEDIUM }
-  - { check_id: MON-02, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: MON-03, property_key: monitored,   cis_ig: IG2, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: MON-04, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: INV-01, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: INV-02, property_key: inventoried, cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
-  - { check_id: INV-03, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: INV-04, property_key: inventoried, cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: LOW }
-  - { check_id: CTL-01, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: CTL-02, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: CTL-03, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: HIGH }
-  - { check_id: CTL-04, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: CLM-01, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
-  - { check_id: CLM-02, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
-  - { check_id: CLM-03, property_key: claimed,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
-  - { check_id: MIN-01, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: MIN-02, property_key: minimized,   cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: MIN-03, property_key: minimized,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: MIN-04, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: ASM-01, property_key: assessed,    cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: ASM-02, property_key: assessed,    cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
-  - { check_id: ASM-03, property_key: assessed,    cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
-  - { check_id: CUR-01, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: CUR-02, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
-  - { check_id: CUR-03, property_key: current,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
-  - { check_id: CUR-04, property_key: current,     cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: MON-01, property_key: monitored,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: MEDIUM, remediation: "Enable OS-native security/audit logging (e.g. Windows Event Logging, Linux auditd) on the device and confirm it is actively generating events." }
+  - { check_id: MON-02, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Deploy a log-forwarding agent and point it at the organization's centralized SIEM/log platform so this device's logs are retained off-host." }
+  - { check_id: MON-03, property_key: monitored,   cis_ig: IG2, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Install and start the standard EDR/endpoint telemetry agent for this fleet; confirm the agent service is running and reporting healthy." }
+  - { check_id: MON-04, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Apply the organization's baseline audit policy (or auditd rules) so authentication, privilege-use, and process-creation events are captured." }
+  - { check_id: INV-01, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Register the device in the authoritative CMDB/asset inventory system (or supply it via --inventory-record) so it is tracked as a known asset." }
+  - { check_id: INV-02, property_key: inventoried, cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW,    remediation: "Populate hardware make/model/serial (e.g. via DMI/SMBIOS) so osquery's system_info table returns non-empty vendor/model/serial values." }
+  - { check_id: INV-03, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Confirm the device's package manager (apt/dpkg, etc.) is queryable and its installed-software list is being collected into inventory." }
+  - { check_id: INV-04, property_key: inventoried, cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: LOW,    remediation: "Re-review and re-date the device's inventory record, and schedule a recurring review so it never again exceeds the policy interval." }
+  - { check_id: CTL-01, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Enroll the device in the organization's central configuration-management/MDM platform." }
+  - { check_id: CTL-02, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Remove standing local-administrator rights from routine accounts; grant elevation via a just-in-time/PAM mechanism instead." }
+  - { check_id: CTL-03, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: HIGH,   remediation: "Place the device behind an identity-aware proxy or conditional-access policy tied to the organization's IdP." }
+  - { check_id: CTL-04, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Assign the device a configuration baseline (e.g. GPO/Ansible/Intune profile) and enable drift detection/auto-remediation." }
+  - { check_id: CLM-01, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW,    remediation: "Record a named accountable business owner for the device in the asset/inventory system." }
+  - { check_id: CLM-02, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW,    remediation: "Record the responsible system administrator or owning team for the device." }
+  - { check_id: CLM-03, property_key: claimed,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM, remediation: "Document the device's business purpose and assign it a data classification label." }
+  - { check_id: MIN-01, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Disable and stop any running services/daemons not required for the device's documented purpose." }
+  - { check_id: MIN-02, property_key: minimized,   cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Uninstall software packages that are not on the approved/required list for this device's role." }
+  - { check_id: MIN-03, property_key: minimized,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Enable the host firewall and stop listening on any network-reachable port not required by an approved service." }
+  - { check_id: MIN-04, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Apply a recognized hardening baseline (e.g. a CIS Benchmark) appropriate to the device's OS." }
+  - { check_id: ASM-01, property_key: assessed,    cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Enroll the device in the organization's authenticated vulnerability-scanning schedule." }
+  - { check_id: ASM-02, property_key: assessed,    cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM, remediation: "Enroll the device in a recurring configuration/compliance assessment (e.g. CIS-CAT, SCAP)." }
+  - { check_id: ASM-03, property_key: assessed,    cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Load this device's open findings into the remediation-tracking system with SLA due dates and named owners." }
+  - { check_id: CUR-01, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Apply pending OS security patches and confirm the patch cadence meets policy (e.g. via unattended-upgrades/WSUS)." }
+  - { check_id: CUR-02, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH,   remediation: "Update out-of-date third-party applications and enroll the device in third-party patch management." }
+  - { check_id: CUR-03, property_key: current,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM, remediation: "Update the device's firmware/BIOS to the vendor's current supported version." }
+  - { check_id: CUR-04, property_key: current,     cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Renew or replace any expired/expiring certificates and rotate stale cryptographic material before it lapses." }

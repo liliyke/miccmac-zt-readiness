@@ -16,8 +16,8 @@ version: "0.2.0"
 framework: "test"
 properties: []
 checks:
-  - { check_id: MON-01, property_key: monitored, cis_ig: IG1, fair_frequency: HIGH, fair_magnitude: MEDIUM }
-  - { check_id: INV-01, property_key: inventoried, cis_ig: IG2, fair_frequency: LOW, fair_magnitude: LOW }
+  - { check_id: MON-01, property_key: monitored, cis_ig: IG1, fair_frequency: HIGH, fair_magnitude: MEDIUM, remediation: "Enable logging." }
+  - { check_id: INV-01, property_key: inventoried, cis_ig: IG2, fair_frequency: LOW, fair_magnitude: LOW, remediation: "Add to inventory." }
 """
 
 
@@ -47,6 +47,7 @@ def test_valid_yaml_parses(tmp_path):
     meta = load_check_metadata(p)
     assert set(meta) == {"MON-01", "INV-01"}
     assert meta["MON-01"].cis_ig == "IG1"
+    assert meta["MON-01"].remediation == "Enable logging."
 
 
 def test_rejects_missing_checks_section(tmp_path):
@@ -74,6 +75,13 @@ def test_rejects_invalid_fair_value(tmp_path):
     p = tmp_path / "mappings.yaml"
     p.write_text(VALID_YAML.replace("fair_frequency: HIGH", "fair_frequency: EXTREME"), encoding="utf-8")
     with pytest.raises(MappingsError, match="fair_frequency"):
+        load_check_metadata(p)
+
+
+def test_rejects_missing_remediation(tmp_path):
+    p = tmp_path / "mappings.yaml"
+    p.write_text(VALID_YAML.replace(', remediation: "Enable logging."', ""), encoding="utf-8")
+    with pytest.raises(MappingsError, match="remediation"):
         load_check_metadata(p)
 
 

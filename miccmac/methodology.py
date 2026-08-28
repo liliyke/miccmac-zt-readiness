@@ -101,6 +101,13 @@ class _ThresholdMethodology:
     def score_overall(self, overall_score: Optional[float]) -> LevelResult:
         return self._level_result(overall_score)
 
+    @property
+    def cutoffs(self) -> List[float]:
+        """Ascending minimum scores required for level 2..max_level, exposed
+        read-only so callers (e.g. report.py's scoring-chart legend) can
+        display the real thresholds instead of hardcoding a second copy."""
+        return list(self._cutoffs)
+
 
 class CMMIMethodology(_ThresholdMethodology):
     name = "cmmi"
@@ -117,6 +124,13 @@ class CISAZTMMMethodology(_ThresholdMethodology):
 REGISTRY: Dict[str, _ThresholdMethodology] = {
     "cmmi": CMMIMethodology(),
     "cisa-ztmm": CISAZTMMMethodology(),
+}
+
+# Full names for the acronyms, used by report.py's legend so the scorecard is
+# readable without already knowing what "CMMI" or "CISA ZTMM" stand for.
+FULL_NAMES: Dict[str, str] = {
+    "cmmi": "Capability Maturity Model Integration",
+    "cisa-ztmm": "CISA (Cybersecurity and Infrastructure Security Agency) Zero Trust Maturity Model",
 }
 
 

@@ -16,9 +16,14 @@ ATTACH_TO = "controlled"
 # Group, so this check plugs into risk-register prioritization the same way
 # a built-in check does (fair_frequency/fair_magnitude are optional -- omit
 # them and the entry still gets its CIS IG, but its risk_rating stays
-# UNRATED, since a rating needs both FAIR axes).
+# UNRATED, since a rating needs both FAIR axes). "remediation" is also
+# optional -- a recommended-fix string shown in the risk register's
+# "Recommended fix" line; omit it and that line reads "n/a" for this check.
 RISK_METADATA = {
-    "ACME-01": {"cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM"},
+    "ACME-01": {
+        "cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM",
+        "remediation": "Enroll the device in the Acme Corp PAM vault per Internal Policy 4.2.",
+    },
 }
 
 

@@ -43,6 +43,10 @@ custom_checks_dir must define, at module scope:
                                   optional -- without both, the entry's
                                   risk_rating stays UNRATED even with a CIS
                                   IG set, since a rating needs both FAIR axes.
+                                  "remediation" (str) is also optional -- a
+                                  recommended-fix string shown in the risk
+                                  register; without it the entry's
+                                  "Recommended fix" shows as "n/a".
 """
 from __future__ import annotations
 
@@ -233,8 +237,15 @@ class Config:
                         f"{py_file}: RISK_METADATA[{check_id!r}][{field_name!r}] {value!r} "
                         f"must be one of {VALID_FAIR_LEVELS} (or omitted)"
                     )
+            remediation = entry.get("remediation")
+            if remediation is not None and (not isinstance(remediation, str) or not remediation.strip()):
+                raise ConfigError(
+                    f"{py_file}: RISK_METADATA[{check_id!r}]['remediation'] must be a "
+                    f"non-empty string (or omitted)"
+                )
             risk_metadata[check_id] = CheckMetadata(
                 check_id=check_id, property_key=attach_to, cis_ig=cis_ig,
                 fair_frequency=fair_frequency, fair_magnitude=fair_magnitude,
+                remediation=remediation,
             )
         return risk_metadata

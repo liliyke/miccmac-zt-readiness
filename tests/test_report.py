@@ -26,8 +26,9 @@ def test_to_text_with_methodology_shows_overall_and_per_property_level():
     out = to_text(assessment)
     assert "CMMI" in out
     assert "Quantitatively Managed" in out
-    # shown twice: once for overall, once for the Monitored property line
-    assert out.count("Quantitatively Managed") == 2
+    # shown three times: once for overall, once for the Monitored property
+    # line, and once in the legend's static score->level chart.
+    assert out.count("Quantitatively Managed") == 3
 
 
 def test_to_text_unassessed_methodology_shows_unassessed_not_level_1():
@@ -36,7 +37,10 @@ def test_to_text_unassessed_methodology_shows_unassessed_not_level_1():
     assessment.methodology = apply_methodology(assessment, "cmmi")
     out = to_text(assessment)
     assert "Unassessed" in out
-    assert "Level 1" not in out
+    # The legend's static score->level reference chart legitimately shows
+    # "Level 1 Initial" -- what must never appear is the *actual* overall/
+    # property result being formatted as if level 1 were assigned.
+    assert "Level 1/" not in out
 
 
 def test_to_markdown_with_methodology_shows_overall_and_per_property_level():
