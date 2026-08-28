@@ -1,0 +1,13 @@
+# Example configuration for `miccmac assess --config`.
+#
+# excluded_checks: built-in check ids to drop entirely from the run (not
+#   shown, not scored). Useful when a check genuinely doesn't apply in your
+#   environment and NOT_APPLICABLE isn't available (e.g. you don't want to
+#   implement platform-detection for a check you'll never use).
+excluded_checks:
+  - MON-02
+
+# custom_checks_dir: a directory of your own check plugins (see
+# custom_checks/acme_extra_checks.py for the interface). Relative paths are
+# resolved relative to this config file's own directory.
+custom_checks_dir: ./custom_checks

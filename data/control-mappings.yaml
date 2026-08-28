@@ -17,7 +17,7 @@
 # 10.34190/eccws.24.1.3531) and are independent of, and not endorsed by,
 # Mr. Bejtlich.
 
-version: "0.1.0"
+version: "0.2.0"
 framework: "MICCMAC Zero Trust Device Readiness"
 
 properties:
@@ -144,3 +144,53 @@ properties:
     cis_v8:
       - "Control 7  Continuous Vulnerability Management (remediation)"
       - "Control 4  Secure Configuration of Enterprise Assets and Software"
+
+# Per-check risk enrichment, added in v0.2.0.
+#
+# cis_ig: the lowest CIS Implementation Group (IG1/IG2/IG3) at which the
+#   check's closest CIS v8 Safeguard first appears. IG1 = basic cyber hygiene
+#   expected of every organization; IG2 = requires more organizational
+#   maturity to operate (centralized tooling, scheduled processes, identity
+#   integration). No built-in check is IG3 in this release -- IG3 is reserved
+#   for checks a custom plugin might add for organizations facing
+#   sophisticated/targeted threats; it is not "missing," it is unexercised by
+#   the 26 built-in checks.
+#
+# fair_frequency / fair_magnitude: a simplified, qualitative LOW/MEDIUM/HIGH
+#   rating inspired by FAIR (Factor Analysis of Information Risk), not
+#   quantitative FAIR/Monte Carlo, which is out of scope. frequency = how
+#   often the underlying failure mode is actually the thing adversaries
+#   exploit in the wild; magnitude = the blast radius if it is. Checks tied to
+#   top real-world initial-access/lateral-movement vectors (missing EDR,
+#   unmanaged endpoint, unrestricted local admin, no host firewall, unpatched
+#   OS/software) are HIGH/HIGH. Administrative/record-keeping checks (ownership
+#   records, hardware attribute documentation, review cadence) are LOW/LOW.
+# These two fields combine into a risk rating via the matrix in
+# miccmac/risk_register.py; see docs/methodology.md for the full rationale.
+checks:
+  - { check_id: MON-01, property_key: monitored,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: MEDIUM }
+  - { check_id: MON-02, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: MON-03, property_key: monitored,   cis_ig: IG2, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: MON-04, property_key: monitored,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: INV-01, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: INV-02, property_key: inventoried, cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
+  - { check_id: INV-03, property_key: inventoried, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: INV-04, property_key: inventoried, cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: LOW }
+  - { check_id: CTL-01, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: CTL-02, property_key: controlled,  cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: CTL-03, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: HIGH }
+  - { check_id: CTL-04, property_key: controlled,  cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: CLM-01, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
+  - { check_id: CLM-02, property_key: claimed,     cis_ig: IG1, fair_frequency: LOW,    fair_magnitude: LOW }
+  - { check_id: CLM-03, property_key: claimed,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
+  - { check_id: MIN-01, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: MIN-02, property_key: minimized,   cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: MIN-03, property_key: minimized,   cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: MIN-04, property_key: minimized,   cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: ASM-01, property_key: assessed,    cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: ASM-02, property_key: assessed,    cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
+  - { check_id: ASM-03, property_key: assessed,    cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }
+  - { check_id: CUR-01, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: CUR-02, property_key: current,     cis_ig: IG1, fair_frequency: HIGH,   fair_magnitude: HIGH }
+  - { check_id: CUR-03, property_key: current,     cis_ig: IG2, fair_frequency: LOW,    fair_magnitude: MEDIUM }
+  - { check_id: CUR-04, property_key: current,     cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM }

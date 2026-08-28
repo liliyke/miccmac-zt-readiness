@@ -25,6 +25,13 @@ SCORE_MAP = {
     Status.ERROR: 0.0,
 }
 
+# The seven MICCMAC properties, fixed. Used to validate custom-check ATTACH_TO
+# values and to guard against ever growing an eighth property.
+PROPERTY_KEYS = (
+    "monitored", "inventoried", "controlled", "claimed",
+    "minimized", "assessed", "current",
+)
+
 
 @dataclass
 class CheckResult:
@@ -73,11 +80,20 @@ class Assessment:
     properties: List[PropertyResult] = field(default_factory=list)
     overall_score: Optional[float] = None
     readiness_tier: str = "Unassessed"
+    # Set only when a --methodology was requested; a methodology.MethodologyResult.
+    methodology: Optional[object] = None
+    # check_ids dropped by user configuration (miccmac.config.Config.excluded_checks).
+    excluded_check_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "target": self.target,
             "overall_score": self.overall_score,
             "readiness_tier": self.readiness_tier,
             "properties": [p.to_dict() for p in self.properties],
         }
+        if self.methodology is not None:
+            d["methodology"] = self.methodology.to_dict()
+        if self.excluded_check_ids:
+            d["excluded_check_ids"] = list(self.excluded_check_ids)
+        return d

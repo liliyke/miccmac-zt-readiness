@@ -1,7 +1,15 @@
 """Basic tests for the assessment engine and model."""
-from miccmac.engine import run_assessment, readiness_tier, PROPERTY_MODULES
-from miccmac.model import Status, CheckResult, PropertyResult
-from miccmac.engine import score_property
+import pytest
+
+from miccmac.config import Config, ConfigError
+from miccmac.engine import (
+    PROPERTY_MODULES,
+    enabled_check_ids,
+    readiness_tier,
+    run_assessment,
+    score_property,
+)
+from miccmac.model import CheckResult, PropertyResult, Status
 
 
 def test_seven_properties_in_miccmac_order():
@@ -41,3 +49,115 @@ def test_every_check_has_control_refs():
         prop = module.evaluate("test-device", {})
         for check in prop.checks:
             assert check.control_refs, f"{check.check_id} missing control_refs"
+
+
+def test_default_run_assessment_output_unchanged():
+    """Golden backward-compat test: no config/methodology -> identical shape
+    to the original scaffold's to_dict() output (4 keys, no methodology,
+    no excluded_check_ids)."""
+    assessment = run_assessment("test-device")
+    d = assessment.to_dict()
+    assert set(d.keys()) == {"target", "overall_score", "readiness_tier", "properties"}
+
+
+def test_enabled_check_ids_default_matches_all_26_builtin_ids():
+    ids = enabled_check_ids()
+    assert len(ids) == 26
+    assert len(ids) == len(set(ids))  # no duplicates
+    assert set(ids) == {c.check_id for m in PROPERTY_MODULES for c in m.evaluate("x", {}).checks}
+
+
+def test_excluded_checks_are_removed_from_output_and_scoring():
+    config = Config(excluded_checks=["MON-01"])
+    assessment = run_assessment("test-device", config=config)
+    mon = next(p for p in assessment.properties if p.key == "monitored")
+    assert "MON-01" not in {c.check_id for c in mon.checks}
+    assert assessment.excluded_check_ids == ["MON-01"]
+
+
+def test_enabled_check_ids_reflects_exclusions():
+    config = Config(excluded_checks=["MON-01"])
+    ids = enabled_check_ids(config)
+    assert "MON-01" not in ids
+    assert len(ids) == 25
+
+
+def test_excluding_unknown_check_id_raises_configerror():
+    config = Config(excluded_checks=["NOPE-99"])
+    with pytest.raises(ConfigError, match="unknown"):
+        run_assessment("test-device", config=config)
+    with pytest.raises(ConfigError, match="unknown"):
+        enabled_check_ids(config)
+
+
+def test_custom_check_attaches_to_correct_property_only(tmp_path):
+    plugin_src = '''
+from miccmac.model import CheckResult, Status
+CHECK_IDS = ["ACME-01"]
+ATTACH_TO = "controlled"
+def run_checks(target, context):
+    return [CheckResult(check_id="ACME-01", name="test", status=Status.PASS)]
+'''
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    (checks_dir / "acme.py").write_text(plugin_src, encoding="utf-8")
+
+    config = Config(custom_checks_dir=checks_dir)
+    assessment = run_assessment("test-device", config=config)
+
+    ctl = next(p for p in assessment.properties if p.key == "controlled")
+    assert "ACME-01" in {c.check_id for c in ctl.checks}
+    for prop in assessment.properties:
+        if prop.key != "controlled":
+            assert "ACME-01" not in {c.check_id for c in prop.checks}
+
+
+def test_custom_check_cannot_create_an_eighth_property(tmp_path):
+    plugin_src = '''
+from miccmac.model import CheckResult, Status
+CHECK_IDS = ["ACME-01"]
+ATTACH_TO = "controlled"
+def run_checks(target, context):
+    return [CheckResult(check_id="ACME-01", name="test", status=Status.PASS)]
+'''
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    (checks_dir / "acme.py").write_text(plugin_src, encoding="utf-8")
+
+    config = Config(custom_checks_dir=checks_dir)
+    assessment = run_assessment("test-device", config=config)
+    assert len(assessment.properties) == 7
+
+
+def test_custom_check_mismatched_ids_raises_configerror(tmp_path):
+    plugin_src = '''
+from miccmac.model import CheckResult, Status
+CHECK_IDS = ["ACME-01"]
+ATTACH_TO = "controlled"
+def run_checks(target, context):
+    return [CheckResult(check_id="WRONG-ID", name="test", status=Status.PASS)]
+'''
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    (checks_dir / "acme.py").write_text(plugin_src, encoding="utf-8")
+
+    config = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match="ACME-01"):
+        run_assessment("test-device", config=config)
+
+
+def test_methodology_flag_attaches_methodology_without_altering_flat_score():
+    plain = run_assessment("test-device")
+    with_methodology = run_assessment("test-device", methodology_name="cmmi")
+
+    assert with_methodology.overall_score == plain.overall_score
+    assert with_methodology.readiness_tier == plain.readiness_tier
+    assert with_methodology.methodology is not None
+    assert with_methodology.methodology.name == "cmmi"
+    # scaffold today has no scorable checks -> Unassessed, not falsely "Level 1"
+    assert with_methodology.methodology.overall.level_label == "Unassessed"
+
+
+def test_no_methodology_flag_leaves_methodology_none():
+    assessment = run_assessment("test-device")
+    assert assessment.methodology is None
