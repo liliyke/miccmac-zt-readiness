@@ -82,7 +82,26 @@ miccmac assess my-laptop-01 --format json
 
 # Write the report to a file
 miccmac assess my-laptop-01 --format markdown --output reports/my-laptop-01.md
+
+# Score against a maturity-model methodology in addition to the default score
+miccmac assess my-laptop-01 --methodology cmmi
+miccmac assess my-laptop-01 --methodology cisa-ztmm
+
+# Exclude built-in checks / add your own via a config file (see
+# examples/miccmac-config.example.yaml and examples/custom_checks/)
+miccmac assess my-laptop-01 --config my-config.yaml
+
+# Append a CIS Implementation Group + FAIR-inspired risk register
+miccmac assess my-laptop-01 --risk-register
+
+# Print the exact enabled check-id set for a configuration -- the "fairness
+# control" for comparing automated output against a manual assessment
+miccmac list-checks --config my-config.yaml
 ```
+
+Pluggable scoring methodologies, check exclusion/custom checks, and the risk
+register are documented in full, including the scoring tables and rationale,
+in [`docs/methodology.md`](docs/methodology.md).
 
 ## Example output
 
@@ -134,11 +153,14 @@ individual device checks in `miccmac/checks/` are stubbed
 
 | Component | State |
 |---|---|
-| CLI (`miccmac assess <target>`) | Working — Python 3.9+, stdlib only |
+| CLI (`miccmac assess <target>`) | Working — Python 3.9+ core, PyYAML for config/mappings |
 | Engine, scoring, readiness tiers | Working |
 | Text / Markdown / JSON renderers | Working |
 | 7 property modules with 26 named checks | Defined, with control references |
 | Per-check NIST 800-207 / 800-53 / CIS v8 mappings | Complete (see [`data/control-mappings.yaml`](data/control-mappings.yaml)) |
+| Pluggable CMMI / CISA ZTMM scoring methodologies | Working (`--methodology`) |
+| Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
+| CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
 
 ### What does not ship yet
 
