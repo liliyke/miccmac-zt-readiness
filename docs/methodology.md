@@ -197,10 +197,10 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, three properties have real, working detection logic
-against a live target: **Inventoried** (INV-01..04), **Monitored**
-(MON-01..04), and **Controlled** (CTL-01..04), all proven end-to-end against
-a real Ubuntu 26.04 LTS VM. The remaining 14 checks are still
+As of this release, four properties have real, working detection logic:
+**Inventoried** (INV-01..04), **Monitored** (MON-01..04), **Controlled**
+(CTL-01..04), and **Claimed** (CLM-01..03), all proven end-to-end against a
+real Ubuntu 26.04 LTS VM. The remaining 11 checks are still
 `NOT_IMPLEMENTED` scaffolding; this section documents the pattern the rest
 will follow.
 
@@ -282,6 +282,21 @@ matching the least-privilege design used throughout. On the test VM, root is
 locked and exactly one account holds sudo, so CTL-02 PASSes; CTL-01 (no
 config-management agent) and CTL-04 (no hardening-baseline tool) both FAIL
 on a stock install, which is accurate -- neither ships by default.
+
+**Claimed is entirely external -- and that changes its stub gate.** All
+three Claimed checks (business owner, system administrator, business
+purpose/data classification) are organizational record-keeping facts with
+no device-local signal whatsoever, so `miccmac/checks/claimed.py` reads
+`context["attestation"]` exclusively and never touches `context["facts"]`.
+Because of that, its fallback-to-stub gate differs from every other property
+implemented so far: instead of gating on facts-presence (which would be
+meaningless here), it gates on the context being entirely empty -- the true
+default invocation. Any other invocation, including `--attestation` alone
+with no `--connector` at all, reaches real per-check logic, each reporting
+its own `NOT_APPLICABLE` if its specific attestation key is missing. This
+was verified directly: `miccmac assess <target> --attestation
+attestation.json` (no `--connector`) correctly PASSes all three CLM checks
+from attestation data alone.
 
 ## 12. Extending the toolkit
 
