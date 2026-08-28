@@ -197,12 +197,12 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, five properties have real, working detection logic:
+As of this release, six properties have real, working detection logic:
 **Inventoried** (INV-01..04), **Monitored** (MON-01..04), **Controlled**
-(CTL-01..04), **Claimed** (CLM-01..03), and **Minimized** (MIN-01..04), all
-proven end-to-end against a real Ubuntu 26.04 LTS VM. The remaining 7 checks
-are still `NOT_IMPLEMENTED` scaffolding; this section documents the pattern
-the rest will follow.
+(CTL-01..04), **Claimed** (CLM-01..03), **Minimized** (MIN-01..04), and
+**Assessed** (ASM-01..03), all proven end-to-end against a real Ubuntu
+26.04 LTS VM. The remaining 4 checks (Current) are still `NOT_IMPLEMENTED`
+scaffolding; this section documents the pattern the rest will follow.
 
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
@@ -317,6 +317,19 @@ Ubuntu's defaults; `fs.suid_dumpable` and `net.ipv4.conf.all.rp_filter` are
 not), correctly scoring `PARTIAL` -- distinct from CTL-04, which only checks
 whether a hardening *tool* is installed, not whether hardening was actually
 *applied*.
+
+**Assessed follows Claimed's pattern, for the same reason.** All three
+checks -- vulnerability scanning, compliance assessment, and finding
+remediation SLA tracking -- ask whether an activity was *performed on
+schedule* or *is tracked over time*, which is scan-history / GRC-process
+data, not a point-in-time device fact. An installed scanner agent wouldn't
+even prove the schedule claim, so `miccmac/checks/assessed.py` doesn't try
+-- it reads `context["attestation"]` exclusively, using the same empty-
+context stub gate as Claimed. ASM-01 and ASM-02 reuse the recency-vs-policy-
+interval pattern from INV-04 (`last_scan`/`last_assessment` compared against
+`interval_days`), rather than duplicating a new one -- three uses of the
+same shape (INV-04, ASM-01, ASM-02) confirms it's a real recurring pattern
+worth keeping consistent, not coincidence.
 
 ## 12. Extending the toolkit
 

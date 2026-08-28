@@ -162,14 +162,13 @@ individual device checks in `miccmac/checks/` are stubbed
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
 | SSH + osquery target connector | Working (`--connector ssh-osquery`), proven against a live Ubuntu 26.04 LTS VM |
-| Inventoried, Monitored, Controlled, Claimed, Minimized real detection logic (19 checks) | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
+| Inventoried, Monitored, Controlled, Claimed, Minimized, Assessed real detection logic (22 checks) | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
 
-- **2 of 7 properties still stubbed.** Inventoried (INV-01..04), Monitored
-  (MON-01..04), Controlled (CTL-01..04), Claimed (CLM-01..03), and Minimized
-  (MIN-01..04) have real detection logic; the other 7 checks (Assessed,
-  Current) return `Status.NOT_IMPLEMENTED`.
+- **1 of 7 properties still stubbed.** Only Current (CUR-01..04) still
+  returns `Status.NOT_IMPLEMENTED`; every other property has real detection
+  logic.
 - **One connector, one platform proven.** `ssh-osquery` is implemented and
   tested end-to-end against Ubuntu Desktop; Windows (WinRM) and macOS
   connectors, and OS-conditional branching within checks, are not yet built.
@@ -222,9 +221,9 @@ excluded from scoring rather than failed.
 | **Inventory / asset lookups** | Query your CMDB (ServiceNow, Snipe-IT, Intune, etc.) | Connector layer feeds facts |
 | **Cloud variants** | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access | Separate cloud-aware connectors |
 
-### Lowest-effort first concrete targets — done for Linux + osquery / Inventoried + Monitored + Controlled + Claimed + Minimized
+### Lowest-effort first concrete targets — done for Linux + osquery, 6 of 7 properties
 
-Five vertical slices are implemented and proven end-to-end against a live
+Six vertical slices are implemented and proven end-to-end against a live
 Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
 
 - **Inventoried** (`miccmac/checks/inventoried.py`) — all four `INV-*`
@@ -249,6 +248,10 @@ Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
   state + `listening_ports` filtered to real network-reachable listeners
   (loopback-only services excluded), and a sample of CIS-recommended kernel
   `system_controls` for MIN-04.
+- **Assessed** (`miccmac/checks/assessed.py`) — all three `ASM-*` checks,
+  entirely from `--attestation` (scan/assessment schedule and SLA tracking
+  are process-history facts, not device state) — reuses the same
+  recency-vs-policy-interval pattern as INV-04.
 
 See
 [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic)
@@ -264,8 +267,9 @@ miccmac assess 192.168.1.50 --connector ssh-osquery \
 
 Remaining reasonable next targets, following the same pattern:
 
-- **Assessed, Current on Linux** — continue the same osquery + connector
-  pattern for the remaining properties.
+- **Current on Linux** — the last remaining property; continue the same
+  osquery + connector pattern (patch level, third-party software updates,
+  firmware, certificate/crypto material expiry).
 - **Windows + Sysmon + Defender** — a `WinRMConnector` alongside
   `SSHOsqueryConnector`; implement `MON-03` by checking the Sysmon driver and
   parsed config; `INV-03` via `Get-Package`; `CUR-01` via Windows Update
