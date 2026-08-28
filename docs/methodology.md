@@ -140,12 +140,21 @@ would otherwise fail.
 
 **Custom checks** are your own Python modules, one file per module, dropped
 into `custom_checks_dir`. Each must define `CHECK_IDS` (a non-empty list of
-new check ids), `ATTACH_TO` (one of the seven canonical property keys), and
-`run_checks(target, context) -> list[CheckResult]`. The engine merges each
-plugin's results into the matching *existing* property -- there is no code
-path that creates an eighth property; the seven letters spell the framework
-name and are fixed. See `examples/custom_checks/acme_extra_checks.py` and
-`examples/miccmac-config.example.yaml` for a worked example.
+new check ids), `ATTACH_TO` (one of the seven canonical property keys),
+`run_checks(target, context) -> list[CheckResult]`, and `RISK_METADATA`
+(a `dict[str, dict]`, one entry per id in `CHECK_IDS`, each with at least a
+`cis_ig` of `IG1`/`IG2`/`IG3`). The engine merges each plugin's results into
+the matching *existing* property -- there is no code path that creates an
+eighth property; the seven letters spell the framework name and are fixed.
+Each `CheckResult` you return carries its own `control_refs` field, which
+*is* the control mapping -- no separate declaration needed. `RISK_METADATA`
+is what lets a custom check plug into the risk register's prioritization the
+same way a built-in check does, rather than always sorting last as
+`UNRATED`; `fair_frequency`/`fair_magnitude` are optional on top of the
+required `cis_ig` -- omit them and the check still gets its CIS IG shown and
+used for sort-tiebreaking, but its `risk_rating` stays `UNRATED` since a
+rating needs both FAIR axes. See `examples/custom_checks/acme_extra_checks.py`
+and `examples/miccmac-config.example.yaml` for a worked example.
 
 **Fairness control.** When comparing the tool's automated output against a
 manual/human assessment (or against a different methodology run), both sides

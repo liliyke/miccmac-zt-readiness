@@ -100,6 +100,7 @@ def test_custom_check_attaches_to_correct_property_only(tmp_path):
 from miccmac.model import CheckResult, Status
 CHECK_IDS = ["ACME-01"]
 ATTACH_TO = "controlled"
+RISK_METADATA = {"ACME-01": {"cis_ig": "IG2"}}
 def run_checks(target, context):
     return [CheckResult(check_id="ACME-01", name="test", status=Status.PASS)]
 '''
@@ -122,6 +123,7 @@ def test_custom_check_cannot_create_an_eighth_property(tmp_path):
 from miccmac.model import CheckResult, Status
 CHECK_IDS = ["ACME-01"]
 ATTACH_TO = "controlled"
+RISK_METADATA = {"ACME-01": {"cis_ig": "IG2"}}
 def run_checks(target, context):
     return [CheckResult(check_id="ACME-01", name="test", status=Status.PASS)]
 '''
@@ -139,6 +141,7 @@ def test_custom_check_mismatched_ids_raises_configerror(tmp_path):
 from miccmac.model import CheckResult, Status
 CHECK_IDS = ["ACME-01"]
 ATTACH_TO = "controlled"
+RISK_METADATA = {"ACME-01": {"cis_ig": "IG2"}}
 def run_checks(target, context):
     return [CheckResult(check_id="WRONG-ID", name="test", status=Status.PASS)]
 '''

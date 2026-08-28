@@ -12,6 +12,15 @@ from miccmac.model import CheckResult, Status
 CHECK_IDS = ["ACME-01"]
 ATTACH_TO = "controlled"
 
+# Required: one entry per CHECK_IDS id, with at least a CIS Implementation
+# Group, so this check plugs into risk-register prioritization the same way
+# a built-in check does (fair_frequency/fair_magnitude are optional -- omit
+# them and the entry still gets its CIS IG, but its risk_rating stays
+# UNRATED, since a rating needs both FAIR axes).
+RISK_METADATA = {
+    "ACME-01": {"cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM"},
+}
+
 
 def run_checks(target: str, context: dict) -> list[CheckResult]:
     return [

@@ -200,3 +200,27 @@ def test_assess_with_bad_attestation_json_errors_cleanly(tmp_path, capsys):
     rc = main(["assess", "test-device", "--attestation", str(attestation_path)])
     assert rc == 2
     assert "not valid json" in capsys.readouterr().err.lower()
+
+
+def test_custom_check_risk_metadata_flows_into_risk_register(tmp_path, capsys):
+    """End-to-end: a custom check's declared RISK_METADATA rates it in the
+    risk register instead of leaving it UNRATED."""
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    (checks_dir / "acme.py").write_text('''
+from miccmac.model import CheckResult, Status
+CHECK_IDS = ["ACME-01"]
+ATTACH_TO = "controlled"
+RISK_METADATA = {"ACME-01": {"cis_ig": "IG1", "fair_frequency": "HIGH", "fair_magnitude": "HIGH"}}
+def run_checks(target, context):
+    return [CheckResult(check_id="ACME-01", name="Acme control", status=Status.FAIL, detail="failing")]
+''', encoding="utf-8")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f'custom_checks_dir: "{checks_dir.as_posix()}"\n', encoding="utf-8")
+
+    rc = main(["assess", "test-device", "--format", "json", "--config", str(config_path), "--risk-register"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    entry = next(e for e in data["risk_register"] if e["check_id"] == "ACME-01")
+    assert entry["cis_ig"] == "IG1"
+    assert entry["risk_rating"] == "CRITICAL"

@@ -4,7 +4,7 @@ Assessment/PropertyResult/CheckResult objects directly -- no target,
 osquery, or network dependency."""
 import pytest
 
-from miccmac.metadata import MappingsError
+from miccmac.metadata import CheckMetadata, MappingsError
 from miccmac.model import Assessment, CheckResult, PropertyResult, Status
 from miccmac.risk_register import build_risk_register, render, risk_rating
 
@@ -52,6 +52,28 @@ def test_build_risk_register_raises_on_bad_metadata_path(tmp_path):
     checks = [CheckResult("MON-01", "a", Status.FAIL)]
     with pytest.raises(MappingsError):
         build_risk_register(_assessment(checks), metadata_path=tmp_path / "nope.yaml")
+
+
+def test_extra_metadata_rates_a_custom_check_instead_of_unrated():
+    """A custom check's declared RISK_METADATA (see miccmac/config.py) plugs
+    it into the same prioritization as built-in checks, instead of always
+    sorting last as UNRATED."""
+    checks = [
+        CheckResult("MON-01", "a", Status.FAIL),        # built-in, HIGH
+        CheckResult("CUSTOM-01", "custom", Status.FAIL),  # supplied via extra_metadata
+    ]
+    extra = {
+        "CUSTOM-01": CheckMetadata(
+            check_id="CUSTOM-01", property_key="monitored",
+            cis_ig="IG1", fair_frequency="HIGH", fair_magnitude="HIGH",
+        ),
+    }
+    entries = build_risk_register(_assessment(checks), extra_metadata=extra)
+    custom_entry = next(e for e in entries if e.check_id == "CUSTOM-01")
+    assert custom_entry.cis_ig == "IG1"
+    assert custom_entry.risk_rating == "CRITICAL"
+    # CRITICAL outranks MON-01's HIGH, so the custom check sorts first.
+    assert entries[0].check_id == "CUSTOM-01"
 
 
 @pytest.mark.parametrize("frequency,magnitude,expected", [

@@ -124,13 +124,26 @@ def _build_context(args) -> dict:
     return context
 
 
+def _custom_check_risk_metadata(config: Config) -> dict:
+    """Flatten every loaded custom-check plugin's RISK_METADATA into a single
+    check_id -> CheckMetadata lookup, so custom checks plug into the risk
+    register the same way built-in checks do."""
+    merged = {}
+    for plugins in config.load_custom_checks().values():
+        for plugin in plugins:
+            merged.update(plugin.risk_metadata)
+    return merged
+
+
 def _run_assess(args) -> str:
     config = _load_config(args.config)
     context = _build_context(args)
     assessment = run_assessment(
         args.target, context=context, config=config, methodology_name=args.methodology,
     )
-    entries = build_risk_register(assessment) if args.risk_register else None
+    entries = None
+    if args.risk_register:
+        entries = build_risk_register(assessment, extra_metadata=_custom_check_risk_metadata(config))
     return _render_output(assessment, entries, args.format)
 
 

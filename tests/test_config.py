@@ -9,6 +9,7 @@ from miccmac.model import CheckResult, Status
 
 CHECK_IDS = ["ACME-01"]
 ATTACH_TO = "controlled"
+RISK_METADATA = {"ACME-01": {"cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM"}}
 
 def run_checks(target, context):
     return [CheckResult(check_id="ACME-01", name="test", status=Status.NOT_IMPLEMENTED)]
@@ -93,6 +94,8 @@ def test_load_custom_checks_discovers_and_validates_plugin(tmp_path):
     plugins = cfg.load_custom_checks()
     assert list(plugins) == ["controlled"]
     assert plugins["controlled"][0].check_ids == ["ACME-01"]
+    assert plugins["controlled"][0].risk_metadata["ACME-01"].cis_ig == "IG2"
+    assert plugins["controlled"][0].risk_metadata["ACME-01"].fair_frequency == "MEDIUM"
 
     result = plugins["controlled"][0].run_checks("target", {})
     assert result[0].check_id == "ACME-01"
@@ -162,6 +165,65 @@ def test_load_custom_checks_rejects_missing_run_checks(tmp_path):
     cfg = Config(custom_checks_dir=checks_dir)
     with pytest.raises(ConfigError, match="run_checks"):
         cfg.load_custom_checks()
+
+
+def test_load_custom_checks_rejects_missing_risk_metadata(tmp_path):
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    bad = VALID_PLUGIN.replace(
+        'RISK_METADATA = {"ACME-01": {"cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM"}}',
+        "",
+    )
+    (checks_dir / "bad.py").write_text(bad, encoding="utf-8")
+    cfg = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match="RISK_METADATA"):
+        cfg.load_custom_checks()
+
+
+def test_load_custom_checks_rejects_risk_metadata_missing_a_check_id(tmp_path):
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    bad = VALID_PLUGIN.replace('CHECK_IDS = ["ACME-01"]', 'CHECK_IDS = ["ACME-01", "ACME-02"]')
+    (checks_dir / "bad.py").write_text(bad, encoding="utf-8")
+    cfg = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match="ACME-02"):
+        cfg.load_custom_checks()
+
+
+def test_load_custom_checks_rejects_invalid_cis_ig(tmp_path):
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    bad = VALID_PLUGIN.replace('"cis_ig": "IG2"', '"cis_ig": "IG9"')
+    (checks_dir / "bad.py").write_text(bad, encoding="utf-8")
+    cfg = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match="cis_ig"):
+        cfg.load_custom_checks()
+
+
+def test_load_custom_checks_rejects_invalid_fair_level(tmp_path):
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    bad = VALID_PLUGIN.replace('"fair_frequency": "MEDIUM"', '"fair_frequency": "EXTREME"')
+    (checks_dir / "bad.py").write_text(bad, encoding="utf-8")
+    cfg = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match="fair_frequency"):
+        cfg.load_custom_checks()
+
+
+def test_load_custom_checks_allows_omitted_fair_fields(tmp_path):
+    """cis_ig is required; fair_frequency/fair_magnitude are optional."""
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    minimal = VALID_PLUGIN.replace(
+        'RISK_METADATA = {"ACME-01": {"cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM"}}',
+        'RISK_METADATA = {"ACME-01": {"cis_ig": "IG2"}}',
+    )
+    (checks_dir / "acme.py").write_text(minimal, encoding="utf-8")
+    cfg = Config(custom_checks_dir=checks_dir)
+    plugins = cfg.load_custom_checks()
+    meta = plugins["controlled"][0].risk_metadata["ACME-01"]
+    assert meta.cis_ig == "IG2"
+    assert meta.fair_frequency is None
 
 
 def test_example_plugin_and_config_files_are_valid():

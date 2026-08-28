@@ -29,7 +29,20 @@ custom_checks_dir must define, at module scope:
   - run_checks(target, context) -> list[CheckResult]
                                   Same shape as the built-in modules'
                                   _run_checks. Returned check_ids must
-                                  exactly match CHECK_IDS.
+                                  exactly match CHECK_IDS. Each CheckResult's
+                                  own control_refs field is the "control
+                                  mapping" -- no separate declaration needed.
+  - RISK_METADATA: dict[str, dict]
+                                  Required, one entry per id in CHECK_IDS.
+                                  Each entry must include "cis_ig" (one of
+                                  IG1/IG2/IG3) so the check plugs into the
+                                  same risk-register prioritization as the
+                                  built-in checks, rather than always sorting
+                                  last as UNRATED. "fair_frequency" and
+                                  "fair_magnitude" (LOW/MEDIUM/HIGH) are
+                                  optional -- without both, the entry's
+                                  risk_rating stays UNRATED even with a CIS
+                                  IG set, since a rating needs both FAIR axes.
 """
 from __future__ import annotations
 
@@ -40,7 +53,7 @@ from typing import Callable, Dict, List, Optional
 
 import yaml
 
-from miccmac.metadata import all_builtin_check_ids
+from miccmac.metadata import VALID_FAIR_LEVELS, VALID_IGS, CheckMetadata, all_builtin_check_ids
 from miccmac.model import PROPERTY_KEYS, CheckResult
 
 
@@ -56,6 +69,7 @@ class LoadedPlugin:
     check_ids: List[str]
     attach_to: str
     run_checks: Callable[[str, dict], List[CheckResult]]
+    risk_metadata: Dict[str, CheckMetadata] = field(default_factory=dict)
 
 
 @dataclass
@@ -178,9 +192,49 @@ class Config:
                 f"{py_file}: CHECK_IDS {sorted(collisions)} collide with another custom check plugin"
             )
 
+        risk_metadata = Config._parse_plugin_risk_metadata(module, check_ids, py_file, attach_to)
+
         return LoadedPlugin(
             module_name=module_name,
             check_ids=list(check_ids),
             attach_to=attach_to,
             run_checks=run_checks,
+            risk_metadata=risk_metadata,
         )
+
+    @staticmethod
+    def _parse_plugin_risk_metadata(module, check_ids: list, py_file: Path, attach_to: str) -> Dict[str, CheckMetadata]:
+        raw = getattr(module, "RISK_METADATA", None)
+        if not isinstance(raw, dict):
+            raise ConfigError(
+                f"{py_file}: must define RISK_METADATA: dict[str, dict], one entry per CHECK_IDS "
+                f"id, with at least a 'cis_ig' (IG1/IG2/IG3) -- required so custom checks plug "
+                f"into risk-register prioritization rather than always sorting as UNRATED"
+            )
+        missing = set(check_ids) - set(raw)
+        if missing:
+            raise ConfigError(f"{py_file}: RISK_METADATA is missing entries for {sorted(missing)}")
+
+        risk_metadata: Dict[str, CheckMetadata] = {}
+        for check_id in check_ids:
+            entry = raw[check_id]
+            if not isinstance(entry, dict):
+                raise ConfigError(f"{py_file}: RISK_METADATA[{check_id!r}] must be a dict")
+            cis_ig = entry.get("cis_ig")
+            if cis_ig not in VALID_IGS:
+                raise ConfigError(
+                    f"{py_file}: RISK_METADATA[{check_id!r}]['cis_ig'] {cis_ig!r} must be one of {VALID_IGS}"
+                )
+            fair_frequency = entry.get("fair_frequency")
+            fair_magnitude = entry.get("fair_magnitude")
+            for field_name, value in (("fair_frequency", fair_frequency), ("fair_magnitude", fair_magnitude)):
+                if value is not None and value not in VALID_FAIR_LEVELS:
+                    raise ConfigError(
+                        f"{py_file}: RISK_METADATA[{check_id!r}][{field_name!r}] {value!r} "
+                        f"must be one of {VALID_FAIR_LEVELS} (or omitted)"
+                    )
+            risk_metadata[check_id] = CheckMetadata(
+                check_id=check_id, property_key=attach_to, cis_ig=cis_ig,
+                fair_frequency=fair_frequency, fair_magnitude=fair_magnitude,
+            )
+        return risk_metadata

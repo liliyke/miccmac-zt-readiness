@@ -19,9 +19,9 @@ level, so it's remediated first).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from miccmac.metadata import DEFAULT_MAPPINGS_PATH, load_check_metadata
+from miccmac.metadata import CheckMetadata, DEFAULT_MAPPINGS_PATH, load_check_metadata
 from miccmac.model import Assessment, Status
 
 RISK_MATRIX = {
@@ -67,17 +67,27 @@ def risk_rating(frequency: Optional[str], magnitude: Optional[str]) -> str:
 
 
 def build_risk_register(
-    assessment: Assessment, metadata_path=DEFAULT_MAPPINGS_PATH,
+    assessment: Assessment,
+    metadata_path=DEFAULT_MAPPINGS_PATH,
+    extra_metadata: Optional[Dict[str, CheckMetadata]] = None,
 ) -> List[RiskEntry]:
     """Collect every FAIL/PARTIAL check across assessment.properties, join by
-    check_id against check-level CIS IG/FAIR metadata (a check_id with no
-    matching entry -- e.g. a custom check -- gets None fields and rating
-    UNRATED, sorted last), sorted by (-risk_rank, ig_rank, check_id).
+    check_id against check-level CIS IG/FAIR metadata, sorted by
+    (-risk_rank, ig_rank, check_id).
+
+    ``extra_metadata`` (check_id -> CheckMetadata) supplies risk metadata for
+    custom checks, declared via their RISK_METADATA attribute (see
+    miccmac/config.py) -- merged over the built-in lookup so custom checks
+    plug into the same prioritization instead of always sorting last as
+    UNRATED. A check_id with no metadata at all (in neither source) still
+    gets None fields and rating UNRATED, sorted last.
 
     Raises MappingsError if metadata_path itself is missing/malformed --
     that's a real configuration problem, not a per-check gap, so it should
     surface rather than silently degrade every entry to UNRATED."""
-    metadata_by_id = load_check_metadata(metadata_path)
+    metadata_by_id = dict(load_check_metadata(metadata_path))
+    if extra_metadata:
+        metadata_by_id.update(extra_metadata)
 
     entries: List[RiskEntry] = []
     for prop in assessment.properties:
