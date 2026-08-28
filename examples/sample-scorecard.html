@@ -377,6 +377,20 @@
   td.detail-cell { color: var(--ink-muted); font-style: italic; min-width: 220px; }
   td.fix-cell { color: var(--accent-ink); min-width: 260px; }
   td.meta-cell { font-family: ui-monospace, monospace; font-size: 0.78rem; color: var(--ink-faint); white-space: nowrap; }
+  td.prop-cell { white-space: nowrap; }
+  td.refs-cell { min-width: 200px; }
+  .ref-tag {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin: 1px 4px 1px 0;
+    white-space: nowrap;
+  }
 
   /* ---------- Legend ---------- */
 
@@ -613,6 +627,27 @@
   </div>
 </div>
 
+<div class="section-head">
+  <h2>All 26 Built-in Checks</h2>
+  <span class="section-note">full reference &mdash; every check's control mapping, CIS IG, and FAIR rating, not just the ones that failed this run</span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Check</th>
+        <th>Name</th>
+        <th>Control mapping</th>
+        <th>CIS IG</th>
+        <th>FAIR freq / mag</th>
+      </tr>
+    </thead>
+    <tbody id="all-checks-body"></tbody>
+  </table>
+</div>
+
 <footer>
   <span>miccmac-zt-readiness &middot; github.com/liliyke/miccmac-zt-readiness</span>
   <span>Ojeh, I. (2025). ECCWS 2025 &middot; DOI 10.34190/eccws.24.1.3531</span>
@@ -748,6 +783,52 @@
       <td class="fix-cell">${r.fix}</td>
     `;
     riskBody.appendChild(tr);
+  });
+
+  // Full reference: all 26 built-in checks, from data/control-mappings.yaml
+  // and each check module's own control_refs (see miccmac/checks/*.py) --
+  // independent of which checks actually failed on this particular device.
+  const allChecks = [
+    { letter: "M", id: "MON-01", name: "Endpoint security logging enabled", refs: ["NIST 800-53 AU-2", "CIS v8 8.2"], ig: "IG1", fair: "HIGH / MEDIUM" },
+    { letter: "M", id: "MON-02", name: "Logs forwarded to a centralized SIEM / log platform", refs: ["NIST 800-53 AU-6", "CIS v8 8.9"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "M", id: "MON-03", name: "EDR / endpoint telemetry agent installed and healthy", refs: ["NIST 800-53 SI-4", "CIS v8 13.7"], ig: "IG2", fair: "HIGH / HIGH" },
+    { letter: "M", id: "MON-04", name: "Audit policy covers authentication, privilege, and process events", refs: ["NIST 800-53 AU-2", "CIS v8 8.5"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "I", id: "INV-01", name: "Device present in the authoritative asset inventory", refs: ["NIST 800-53 CM-8", "CIS v8 1.1"], ig: "IG1", fair: "MEDIUM / MEDIUM" },
+    { letter: "I", id: "INV-02", name: "Hardware attributes recorded (make, model, serial)", refs: ["NIST 800-53 CM-8", "CIS v8 1.1"], ig: "IG1", fair: "LOW / LOW" },
+    { letter: "I", id: "INV-03", name: "Installed-software inventory maintained for the device", refs: ["NIST 800-53 CM-8(2)", "CIS v8 2.1"], ig: "IG1", fair: "MEDIUM / MEDIUM" },
+    { letter: "I", id: "INV-04", name: "Inventory record reviewed within the policy interval", refs: ["NIST 800-53 PM-5", "CIS v8 1.1"], ig: "IG2", fair: "LOW / LOW" },
+    { letter: "C", id: "CTL-01", name: "Device enrolled in central configuration management / MDM", refs: ["NIST 800-53 CM-2", "CIS v8 4.1"], ig: "IG1", fair: "HIGH / HIGH" },
+    { letter: "C", id: "CTL-02", name: "Administrative privileges restricted (least privilege)", refs: ["NIST 800-53 AC-6", "CIS v8 5.4"], ig: "IG1", fair: "HIGH / HIGH" },
+    { letter: "C", id: "CTL-03", name: "Access governed by identity-aware / conditional-access policy", refs: ["NIST 800-207 Tenet 4", "NIST 800-53 AC-3", "CIS v8 6.7"], ig: "IG2", fair: "MEDIUM / HIGH" },
+    { letter: "C", id: "CTL-04", name: "Configuration baseline enforced and drift-monitored", refs: ["NIST 800-53 CM-6", "CIS v8 4.2"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "C", id: "CLM-01", name: "Accountable business owner assigned and recorded", refs: ["NIST 800-53 CM-8", "CIS v8 1.1"], ig: "IG1", fair: "LOW / LOW" },
+    { letter: "C", id: "CLM-02", name: "Responsible system administrator identified", refs: ["NIST 800-53 PS-2", "CIS v8 1.1"], ig: "IG1", fair: "LOW / LOW" },
+    { letter: "C", id: "CLM-03", name: "Business purpose and data classification documented", refs: ["NIST 800-53 RA-2", "CIS v8 3.2"], ig: "IG2", fair: "LOW / MEDIUM" },
+    { letter: "M", id: "MIN-01", name: "Unnecessary services and daemons disabled", refs: ["NIST 800-53 CM-7", "CIS v8 4.8"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "M", id: "MIN-02", name: "Unused or unauthorized software removed", refs: ["NIST 800-53 CM-7(1)", "CIS v8 2.3"], ig: "IG1", fair: "MEDIUM / MEDIUM" },
+    { letter: "M", id: "MIN-03", name: "Host firewall enabled; unused network ports closed", refs: ["NIST 800-53 SC-7", "CIS v8 4.5"], ig: "IG1", fair: "HIGH / HIGH" },
+    { letter: "M", id: "MIN-04", name: "Recognized hardening baseline (e.g. CIS Benchmark) applied", refs: ["NIST 800-53 CM-6", "CIS v8 4.1"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "A", id: "ASM-01", name: "Authenticated vulnerability scanning performed on schedule", refs: ["NIST 800-53 RA-5", "CIS v8 7.5"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
+    { letter: "A", id: "ASM-02", name: "Configuration / compliance assessment performed on schedule", refs: ["NIST 800-53 CA-2", "CIS v8 7.6"], ig: "IG2", fair: "LOW / MEDIUM" },
+    { letter: "A", id: "ASM-03", name: "Findings tracked to remediation against defined SLAs", refs: ["NIST 800-53 CA-7", "CIS v8 7.1"], ig: "IG1", fair: "MEDIUM / MEDIUM" },
+    { letter: "C", id: "CUR-01", name: "Operating-system patch level within policy", refs: ["NIST 800-53 SI-2", "CIS v8 7.3"], ig: "IG1", fair: "HIGH / HIGH" },
+    { letter: "C", id: "CUR-02", name: "Third-party software updated within policy", refs: ["NIST 800-53 SI-2", "CIS v8 7.4"], ig: "IG1", fair: "HIGH / HIGH" },
+    { letter: "C", id: "CUR-03", name: "Firmware / BIOS current", refs: ["NIST 800-53 SI-2", "CIS v8 7.3"], ig: "IG2", fair: "LOW / MEDIUM" },
+    { letter: "C", id: "CUR-04", name: "Certificates and cryptographic material valid and unexpired", refs: ["NIST 800-53 SC-12", "CIS v8 3.10"], ig: "IG2", fair: "MEDIUM / MEDIUM" }
+  ];
+
+  const allChecksBody = document.getElementById("all-checks-body");
+  allChecks.forEach(c => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="prop-cell"><span class="prop-badge" style="width:26px;height:26px;font-size:0.85rem;">${c.letter}</span></td>
+      <td class="id-cell">${c.id}</td>
+      <td class="name-cell">${c.name}</td>
+      <td class="refs-cell">${c.refs.map(r => `<span class="ref-tag">${r}</span>`).join("")}</td>
+      <td class="meta-cell">${c.ig}</td>
+      <td class="meta-cell">${c.fair}</td>
+    `;
+    allChecksBody.appendChild(tr);
   });
 </script>
 
