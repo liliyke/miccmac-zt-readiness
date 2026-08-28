@@ -197,12 +197,12 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, six properties have real, working detection logic:
-**Inventoried** (INV-01..04), **Monitored** (MON-01..04), **Controlled**
-(CTL-01..04), **Claimed** (CLM-01..03), **Minimized** (MIN-01..04), and
-**Assessed** (ASM-01..03), all proven end-to-end against a real Ubuntu
-26.04 LTS VM. The remaining 4 checks (Current) are still `NOT_IMPLEMENTED`
-scaffolding; this section documents the pattern the rest will follow.
+As of this release, **all seven MICCMAC properties have real, working
+detection logic** -- Monitored, Inventoried, Controlled, Claimed, Minimized,
+Assessed, and Current (all 26 checks) -- proven end-to-end against a real
+Ubuntu 26.04 LTS VM. This section documents the pattern used throughout, and
+the real findings (and real bugs, caught and fixed) that came out of testing
+against a live target rather than only synthetic fixtures.
 
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
@@ -330,6 +330,23 @@ interval pattern from INV-04 (`last_scan`/`last_assessment` compared against
 `interval_days`), rather than duplicating a new one -- three uses of the
 same shape (INV-04, ASM-01, ASM-02) confirms it's a real recurring pattern
 worth keeping consistent, not coincidence.
+
+**Current combines all three prior patterns in one property.** CUR-01
+(patch cadence) and CUR-02 (third-party update cadence) are device-observable
+via `systemd_units` (`apt-daily-upgrade.timer`) and the `file` table's mtime
+for `/var/lib/apt/periodic/update-success-stamp` -- notably, this stayed
+within osquery's own SQL surface (`file` exposes metadata), unlike MON-02's
+raw-command exception. CUR-02 also introduced a third gate shape: `NOT_APPLICABLE`
+when the test VM's `apt_sources` contains zero third-party repositories --
+not because the data is unreachable (as with CTL-03/Claimed/Assessed), but
+because the question itself doesn't apply when there's no third-party
+software to have a policy for. CUR-04 (certificate expiry) is directly and
+fully device-observable via osquery's `certificates` table -- no gaps, no
+external data needed. CUR-03 (firmware/BIOS currency) is the one check in
+this property that's irreducibly external even *with* root access: a device
+can report its current firmware version, never whether that's the *latest
+available* one, since there's no local oracle for that, only a vendor feed
+-- so it reads `context["attestation"]`, same as CTL-03.
 
 ## 12. Extending the toolkit
 

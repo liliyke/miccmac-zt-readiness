@@ -144,10 +144,10 @@ Scoring and tier thresholds are documented, and can be tuned, in
 
 ## Project status
 
-This repository is an **alpha scaffold** — v0.1.0. The framework, scoring
-engine, control mappings, reporting, and CLI are complete and working. The
-individual device checks in `miccmac/checks/` are stubbed
-(`NOT_IMPLEMENTED`) and ready for real detection logic.
+This repository started as an **alpha scaffold** — v0.1.0 — and now has real
+detection logic for all seven MICCMAC properties, proven end-to-end against
+a live target. See [`docs/methodology.md`](docs/methodology.md) for the full
+architecture and design rationale.
 
 ### What works today
 
@@ -162,24 +162,23 @@ individual device checks in `miccmac/checks/` are stubbed
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
 | SSH + osquery target connector | Working (`--connector ssh-osquery`), proven against a live Ubuntu 26.04 LTS VM |
-| Inventoried, Monitored, Controlled, Claimed, Minimized, Assessed real detection logic (22 checks) | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
+| All 7 MICCMAC properties, all 26 checks — real detection logic | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
 
-- **1 of 7 properties still stubbed.** Only Current (CUR-01..04) still
-  returns `Status.NOT_IMPLEMENTED`; every other property has real detection
-  logic.
 - **One connector, one platform proven.** `ssh-osquery` is implemented and
   tested end-to-end against Ubuntu Desktop; Windows (WinRM) and macOS
   connectors, and OS-conditional branching within checks, are not yet built.
-- **No inventory or EDR / MDM / cloud API clients** beyond the
-  `--inventory-record` file-based input for INV-01/INV-04.
+- **No inventory/GRC/scanning system integrations** beyond the
+  `--inventory-record` and `--attestation` file-based inputs.
 
 Running `python -m miccmac assess <target>` with no `--connector` flag still
 prints the *structure* of a real assessment without inspecting anything —
 byte-identical to the original scaffold's output, verified by diffing
-against it directly. Add `--connector ssh-osquery --ssh-user <u> --ssh-key
-<path>` to get real, evidence-backed results for the Inventoried property.
+against it directly through every pass of this work. Add `--connector
+ssh-osquery --ssh-user <u> --ssh-key <path>` (plus `--inventory-record` and
+`--attestation` for the checks that need external data) to get real,
+evidence-backed results across all seven properties.
 
 ### Architecture (OS-agnostic by design)
 
@@ -211,20 +210,21 @@ choose) and calls platform-specific detection logic. Where a check genuinely
 doesn't apply to a given platform, return `Status.NOT_APPLICABLE` so it's
 excluded from scoring rather than failed.
 
-### Roadmap to a real implementation
+### Roadmap beyond the first platform
 
-| Layer | What to add | Where it goes |
+| Layer | Status | What's left |
 |---|---|---|
-| **Target connector** | SSH / WinRM / EDR API / MDM API / "run locally" client | A new `miccmac/connectors/` package |
-| **OS detector** | Detect platform, populate `context["facts"]["os"]` | Inside the connector, before calling `run_assessment` |
-| **Per-OS check bodies** | Replace `NOT_IMPLEMENTED` stubs with real evaluations | Inside each `miccmac/checks/*.py` |
-| **Inventory / asset lookups** | Query your CMDB (ServiceNow, Snipe-IT, Intune, etc.) | Connector layer feeds facts |
-| **Cloud variants** | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access | Separate cloud-aware connectors |
+| **Target connector** | `SSHOsqueryConnector` done | WinRM / EDR API / MDM API connectors for other platforms |
+| **OS detector** | `context["facts"]["os"]` populated by the connector | Per-OS branching inside checks (currently Linux-only logic) |
+| **Check bodies** | All 26 checks have real logic (Linux) | Port/extend to Windows and macOS fact schemas |
+| **Inventory / asset lookups** | `--inventory-record` (file-based) works | Live CMDB integration (ServiceNow, Snipe-IT, Intune, etc.) |
+| **Attestation** | `--attestation` (file-based) works | Live GRC/IdP integration (Azure AD, a scan-management API, etc.) |
+| **Cloud variants** | Not started | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access |
 
-### Lowest-effort first concrete targets — done for Linux + osquery, 6 of 7 properties
+### Lowest-effort first concrete targets — done for Linux + osquery, all 7 properties
 
-Six vertical slices are implemented and proven end-to-end against a live
-Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
+All seven vertical slices are implemented and proven end-to-end against a
+live Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
 
 - **Inventoried** (`miccmac/checks/inventoried.py`) — all four `INV-*`
   checks; two of which (INV-01, INV-04) correctly draw on an external
@@ -252,6 +252,12 @@ Ubuntu 26.04 LTS VM, via `miccmac/connectors/ssh_osquery.py`:
   entirely from `--attestation` (scan/assessment schedule and SLA tracking
   are process-history facts, not device state) — reuses the same
   recency-vs-policy-interval pattern as INV-04.
+- **Current** (`miccmac/checks/current.py`) — all four `CUR-*` checks: patch
+  and third-party update cadence via `apt-daily-upgrade.timer` and the
+  `file` table's mtime for apt's update-success stamp, certificate expiry
+  directly via osquery's `certificates` table, and CUR-03 (firmware/BIOS
+  currency) via `--attestation`, since even root access only reveals the
+  *current* version, never whether it's the *latest available* one.
 
 See
 [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic)
@@ -265,11 +271,9 @@ miccmac assess 192.168.1.50 --connector ssh-osquery \
     --attestation attestation.json --risk-register
 ```
 
-Remaining reasonable next targets, following the same pattern:
+All 26 checks now have real detection logic on Linux. Reasonable next
+targets, following the same pattern:
 
-- **Current on Linux** — the last remaining property; continue the same
-  osquery + connector pattern (patch level, third-party software updates,
-  firmware, certificate/crypto material expiry).
 - **Windows + Sysmon + Defender** — a `WinRMConnector` alongside
   `SSHOsqueryConnector`; implement `MON-03` by checking the Sysmon driver and
   parsed config; `INV-03` via `Get-Package`; `CUR-01` via Windows Update

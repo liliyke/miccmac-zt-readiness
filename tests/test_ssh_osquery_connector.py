@@ -20,6 +20,7 @@ def _mock_channel_file(text: str, exit_status: int = 0):
 _DEFAULT_RESPONSES = {
     "system_info": [], "os_version": [], "deb_packages": [], "systemd_units": [],
     "shadow": [], "sudo": [], "listening_ports": [], "system_controls": [],
+    "update-success-stamp": [], "apt_sources": [], "platform_info": [], "certificates": [],
 }
 
 
@@ -60,6 +61,10 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
                           "sub_state": "running", "load_state": "loaded"}],
         "shadow": [{"username": "root", "password_status": "locked"}],
         "sudo": [{"username": "miccmac"}],
+        "update-success-stamp": [{"mtime": "1700000000"}],
+        "apt_sources": [{"base_uri": "http://us.archive.ubuntu.com/ubuntu"}],
+        "platform_info": [{"vendor": "VMware, Inc.", "version": "6.00", "date": "12/12/2023"}],
+        "certificates": [],
     }
     mock_client = _make_client(responses)
     mock_ssh_client_cls.return_value = mock_client
@@ -75,8 +80,34 @@ def test_collect_facts_shapes_os_and_system_info(mock_ssh_client_cls):
     assert facts["rsyslog_forwarding_configured"] is False
     assert facts["root_locked"] is True
     assert facts["sudo_users"] == ["miccmac"]
+    assert facts["apt_update_stamp_mtime"] == 1700000000
+    assert facts["apt_sources"] == ["http://us.archive.ubuntu.com/ubuntu"]
+    assert facts["platform_info"]["vendor"] == "VMware, Inc."
+    assert facts["expired_certificates"] == []
     mock_client.connect.assert_called_once()
     mock_client.close.assert_called_once()
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_apt_update_stamp_mtime_none_when_file_missing(mock_ssh_client_cls):
+    responses = {"update-success-stamp": []}
+    mock_ssh_client_cls.return_value = _make_client(responses)
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["apt_update_stamp_mtime"] is None
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_expired_certificates_populated(mock_ssh_client_cls):
+    responses = {"certificates": [{"common_name": "old.example.com", "not_valid_after": "100"}]}
+    mock_ssh_client_cls.return_value = _make_client(responses)
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["expired_certificates"] == [{"common_name": "old.example.com", "not_valid_after": "100"}]
 
 
 @patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")

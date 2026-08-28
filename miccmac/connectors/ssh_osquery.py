@@ -28,10 +28,12 @@ QUERIES = {
     # (MON-01), osqueryd as the endpoint telemetry agent (MON-03), auditd
     # (MON-04). One query, filtered to only the units checks care about.
     # 'ufw.service' added for Minimized (MIN-03): host firewall enabled.
+    # 'apt-daily-upgrade.timer' added for Current (CUR-01): the mechanism
+    # that actually applies OS/security patches on a schedule.
     "systemd_units": "SELECT id, active_state, sub_state, load_state FROM systemd_units "
                       "WHERE id IN ('systemd-journald.service', 'rsyslog.service', "
                       "'syslog-ng.service', 'osqueryd.service', 'auditd.service', "
-                      "'ufw.service');",
+                      "'ufw.service', 'apt-daily-upgrade.timer');",
     # Controlled (C): whether direct root login is possible. Readable without
     # root -- password_status reflects /etc/shadow's lock state, not the hash
     # itself, and osqueryi (run as an unprivileged user here) can read it.
@@ -60,6 +62,22 @@ QUERIES = {
     "hardening_sysctls": "SELECT name, current_value FROM system_controls WHERE name IN "
                           "('kernel.dmesg_restrict', 'kernel.kptr_restrict', "
                           "'fs.suid_dumpable', 'net.ipv4.conf.all.rp_filter');",
+    # Current (C, CUR-01): when apt last successfully completed an update
+    # cycle. mtime is file metadata -- within osquery's normal SQL surface,
+    # no raw command needed (unlike MON-02's rsyslog-content gap).
+    "apt_update_stamp": "SELECT mtime FROM file "
+                         "WHERE path = '/var/lib/apt/periodic/update-success-stamp';",
+    # Current (C, CUR-02): configured apt repositories, to distinguish
+    # official Ubuntu archives from third-party sources.
+    "apt_sources": "SELECT DISTINCT base_uri FROM apt_sources;",
+    # Current (C, CUR-03): BIOS/firmware vendor and version. Like
+    # system_info's hardware_serial (see INV-02), this is typically empty
+    # when osqueryi runs unprivileged -- DMI data requires root.
+    "platform_info": "SELECT vendor, version, date FROM platform_info;",
+    # Current (C, CUR-04): system trust-store certificates and their expiry.
+    # Directly device-observable, unlike CUR-03.
+    "certificates": "SELECT common_name, not_valid_after FROM certificates "
+                     "WHERE not_valid_after != '' AND not_valid_after < strftime('%s', 'now');",
 }
 
 # osquery's SQL surface exposes file *metadata* (the `file` table) but not
@@ -142,6 +160,9 @@ class SSHOsqueryConnector:
         root_locked = bool(shadow_root_rows) and shadow_root_rows[0].get("password_status") == "locked"
 
         hardening_sysctls = {row["name"]: row["current_value"] for row in results["hardening_sysctls"]}
+        apt_stamp_rows = results["apt_update_stamp"]
+        apt_update_stamp_mtime = int(apt_stamp_rows[0]["mtime"]) if apt_stamp_rows else None
+        platform_info = results["platform_info"][0] if results["platform_info"] else {}
 
         return {
             "os": os_facts,
@@ -153,4 +174,8 @@ class SSHOsqueryConnector:
             "sudo_users": [row["username"] for row in results["sudo_users"]],
             "listening_ports": results["listening_ports"],
             "hardening_sysctls": hardening_sysctls,
+            "apt_update_stamp_mtime": apt_update_stamp_mtime,
+            "apt_sources": [row["base_uri"] for row in results["apt_sources"]],
+            "platform_info": platform_info,
+            "expired_certificates": results["certificates"],
         }
