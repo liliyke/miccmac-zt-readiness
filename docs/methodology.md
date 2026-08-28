@@ -197,12 +197,12 @@ Implementation: `miccmac/risk_register.py`.
 
 ## 10. Target connectors and real detection logic
 
-As of this release, four properties have real, working detection logic:
+As of this release, five properties have real, working detection logic:
 **Inventoried** (INV-01..04), **Monitored** (MON-01..04), **Controlled**
-(CTL-01..04), and **Claimed** (CLM-01..03), all proven end-to-end against a
-real Ubuntu 26.04 LTS VM. The remaining 11 checks are still
-`NOT_IMPLEMENTED` scaffolding; this section documents the pattern the rest
-will follow.
+(CTL-01..04), **Claimed** (CLM-01..03), and **Minimized** (MIN-01..04), all
+proven end-to-end against a real Ubuntu 26.04 LTS VM. The remaining 7 checks
+are still `NOT_IMPLEMENTED` scaffolding; this section documents the pattern
+the rest will follow.
 
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
@@ -297,6 +297,26 @@ its own `NOT_APPLICABLE` if its specific attestation key is missing. This
 was verified directly: `miccmac assess <target> --attestation
 attestation.json` (no `--connector`) correctly PASSes all three CLM checks
 from attestation data alone.
+
+**Two real bugs caught by live-VM testing (Minimized):** the first
+implementation of MIN-02 (unused/unauthorized software) matched legacy
+package names as a *substring*, and `"nis"` false-positived on the unrelated
+package `libunistring5` (`libu-NIS-tring5`) -- fixed to exact package-name
+matching. The first implementation of MIN-03 (unused network ports) counted
+every listening port regardless of bind address, and flagged loopback-only
+services (`127.0.0.53` systemd-resolved, `127.0.0.1`/`::1` CUPS and chrony)
+as "unexpected exposed ports" even though loopback-bound sockets aren't
+reachable from the network and aren't real attack surface -- fixed by
+excluding `127.0.0.0/8` and `::1` in the connector's `listening_ports`
+query. Both were caught only because the check ran against a real VM, not
+synthetic test fixtures -- exactly the value real-target testing is for.
+MIN-04 (hardening baseline) is a genuinely nuanced real finding, not a bug:
+the test VM matches 2 of 4 sampled CIS-recommended kernel parameters
+(`kernel.dmesg_restrict`, `kernel.kptr_restrict` are already hardened by
+Ubuntu's defaults; `fs.suid_dumpable` and `net.ipv4.conf.all.rp_filter` are
+not), correctly scoring `PARTIAL` -- distinct from CTL-04, which only checks
+whether a hardening *tool* is installed, not whether hardening was actually
+*applied*.
 
 ## 12. Extending the toolkit
 

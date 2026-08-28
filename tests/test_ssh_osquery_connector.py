@@ -19,7 +19,7 @@ def _mock_channel_file(text: str, exit_status: int = 0):
 
 _DEFAULT_RESPONSES = {
     "system_info": [], "os_version": [], "deb_packages": [], "systemd_units": [],
-    "shadow": [], "sudo": [],
+    "shadow": [], "sudo": [], "listening_ports": [], "system_controls": [],
 }
 
 
@@ -115,6 +115,21 @@ def test_sudo_users_lists_multiple_accounts(mock_ssh_client_cls):
     facts = connector.collect_facts("10.0.0.5")
 
     assert facts["sudo_users"] == ["alice", "bob"]
+
+
+@patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")
+def test_listening_ports_and_hardening_sysctls_shaped(mock_ssh_client_cls):
+    responses = {
+        "listening_ports": [{"port": "22", "protocol": "6", "address": "0.0.0.0"}],
+        "system_controls": [{"name": "kernel.dmesg_restrict", "current_value": "1"}],
+    }
+    mock_ssh_client_cls.return_value = _make_client(responses)
+
+    connector = SSHOsqueryConnector(ssh_user="miccmac", ssh_key_path="/fake/key")
+    facts = connector.collect_facts("10.0.0.5")
+
+    assert facts["listening_ports"] == [{"port": "22", "protocol": "6", "address": "0.0.0.0"}]
+    assert facts["hardening_sysctls"] == {"kernel.dmesg_restrict": "1"}
 
 
 @patch("miccmac.connectors.ssh_osquery.paramiko.SSHClient")

@@ -27,9 +27,11 @@ QUERIES = {
     # Service state for the Monitored (M) checks: journald/rsyslog/syslog-ng
     # (MON-01), osqueryd as the endpoint telemetry agent (MON-03), auditd
     # (MON-04). One query, filtered to only the units checks care about.
+    # 'ufw.service' added for Minimized (MIN-03): host firewall enabled.
     "systemd_units": "SELECT id, active_state, sub_state, load_state FROM systemd_units "
                       "WHERE id IN ('systemd-journald.service', 'rsyslog.service', "
-                      "'syslog-ng.service', 'osqueryd.service', 'auditd.service');",
+                      "'syslog-ng.service', 'osqueryd.service', 'auditd.service', "
+                      "'ufw.service');",
     # Controlled (C): whether direct root login is possible. Readable without
     # root -- password_status reflects /etc/shadow's lock state, not the hash
     # itself, and osqueryi (run as an unprivileged user here) can read it.
@@ -41,6 +43,23 @@ QUERIES = {
                    "JOIN user_groups ug ON u.uid = ug.uid "
                    "JOIN groups g ON ug.gid = g.gid "
                    "WHERE g.groupname = 'sudo';",
+    # Minimized (M): real, network-reachable TCP/UDP listeners only.
+    # listening_ports also returns non-IP (raw/netlink) socket rows with
+    # port/protocol '0' (noise, excluded by port != '0'), and loopback-bound
+    # services (127.0.0.0/8, ::1 -- e.g. systemd-resolved's stub on
+    # 127.0.0.53, cupsd, chronyd) that aren't reachable from the network and
+    # so aren't real attack surface for MIN-03 (excluded explicitly, since
+    # SQLite's LIKE has no CIDR match).
+    "listening_ports": "SELECT DISTINCT port, protocol, address FROM listening_ports "
+                        "WHERE protocol IN ('6', '17') AND port != '0' "
+                        "AND address NOT LIKE '127.%' AND address != '::1';",
+    # Minimized (M, MIN-04): a small sample of CIS-benchmark-relevant kernel
+    # hardening parameters. Not exhaustive -- a deliberately simple first
+    # pass at "is a recognized hardening baseline actually applied", as
+    # opposed to CTL-04's "is a hardening tool merely installed".
+    "hardening_sysctls": "SELECT name, current_value FROM system_controls WHERE name IN "
+                          "('kernel.dmesg_restrict', 'kernel.kptr_restrict', "
+                          "'fs.suid_dumpable', 'net.ipv4.conf.all.rp_filter');",
 }
 
 # osquery's SQL surface exposes file *metadata* (the `file` table) but not
@@ -122,6 +141,8 @@ class SSHOsqueryConnector:
         shadow_root_rows = results["shadow_root"]
         root_locked = bool(shadow_root_rows) and shadow_root_rows[0].get("password_status") == "locked"
 
+        hardening_sysctls = {row["name"]: row["current_value"] for row in results["hardening_sysctls"]}
+
         return {
             "os": os_facts,
             "system_info": system_info,
@@ -130,4 +151,6 @@ class SSHOsqueryConnector:
             "rsyslog_forwarding_configured": bool(rsyslog_forwarding_raw.strip()),
             "root_locked": root_locked,
             "sudo_users": [row["username"] for row in results["sudo_users"]],
+            "listening_ports": results["listening_ports"],
+            "hardening_sysctls": hardening_sysctls,
         }
