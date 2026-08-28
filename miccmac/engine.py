@@ -10,7 +10,7 @@ from miccmac.checks import (
     minimized, assessed, current,
 )
 from miccmac.config import Config, ConfigError
-from miccmac.model import PROPERTY_KEYS, Assessment, PropertyResult, SCORE_MAP
+from miccmac.model import PROPERTY_KEYS, Assessment, PropertyResult, SCORE_MAP, Status
 
 # MICCMAC property order is meaningful: it spells the framework name.
 PROPERTY_MODULES = [
@@ -88,7 +88,7 @@ def enabled_check_ids(config: Optional[Config] = None) -> List[str]:
     ATTACH_TO property, sorted by check_id within each group). Requires no
     live target/context. config=None is equivalent to Config()."""
     config = config or Config()
-    excluded = set(config.excluded_checks)
+    excluded = set(config.excluded_checks.keys())
     _validate_exclusions(excluded, _known_check_ids(config))
 
     plugins_by_property = config.load_custom_checks()
@@ -127,8 +127,8 @@ def run_assessment(
     context = context or {}
     config = config or Config()
 
-    excluded = set(config.excluded_checks)
-    _validate_exclusions(excluded, _known_check_ids(config))
+    excluded = config.excluded_checks  # dict: check_id -> reason
+    _validate_exclusions(set(excluded), _known_check_ids(config))
     plugins_by_property = config.load_custom_checks()
 
     assessment = Assessment(target=target)
@@ -147,8 +147,14 @@ def run_assessment(
                 )
             prop.checks.extend(plugin_checks)
 
-        if excluded:
-            prop.checks = [c for c in prop.checks if c.check_id not in excluded]
+        # Excluded checks are never silently dropped: they stay in the
+        # report as NOT_APPLICABLE with the recorded reason, and are removed
+        # from the scoring denominator via the same NOT_APPLICABLE exclusion
+        # score_property() already applies -- not counted as a pass or fail.
+        for check in prop.checks:
+            if check.check_id in excluded:
+                check.status = Status.NOT_APPLICABLE
+                check.detail = f"Excluded: {excluded[check.check_id]}"
 
         prop.score = score_property(prop)
         assessment.properties.append(prop)

@@ -17,7 +17,7 @@ def run_checks(target, context):
 
 def test_config_defaults_are_inert():
     cfg = Config()
-    assert cfg.excluded_checks == []
+    assert cfg.excluded_checks == {}
     assert cfg.custom_checks_dir is None
     assert cfg.load_custom_checks() == {}
 
@@ -26,11 +26,43 @@ def test_from_file_parses_excluded_checks_and_custom_checks_dir(tmp_path):
     checks_dir = tmp_path / "custom_checks"
     checks_dir.mkdir()
     (tmp_path / "config.yaml").write_text(
-        "excluded_checks:\n  - MON-02\ncustom_checks_dir: ./custom_checks\n", encoding="utf-8"
+        "excluded_checks:\n"
+        "  - check_id: MON-02\n"
+        "    reason: \"No centralized SIEM in this pilot's environment.\"\n"
+        "custom_checks_dir: ./custom_checks\n",
+        encoding="utf-8",
     )
     cfg = Config.from_file(tmp_path / "config.yaml")
-    assert cfg.excluded_checks == ["MON-02"]
+    assert cfg.excluded_checks == {"MON-02": "No centralized SIEM in this pilot's environment."}
     assert cfg.custom_checks_dir == checks_dir.resolve()
+
+
+def test_from_file_excluded_check_missing_reason_raises(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("excluded_checks:\n  - check_id: MON-02\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="reason"):
+        Config.from_file(p)
+
+
+def test_from_file_excluded_check_plain_string_raises(tmp_path):
+    """A bare check-id string (the old schema) must be rejected -- every
+    exclusion now requires a recorded reason."""
+    p = tmp_path / "config.yaml"
+    p.write_text("excluded_checks:\n  - MON-02\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="reason"):
+        Config.from_file(p)
+
+
+def test_from_file_duplicate_excluded_check_raises(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        "excluded_checks:\n"
+        "  - check_id: MON-02\n    reason: \"first\"\n"
+        "  - check_id: MON-02\n    reason: \"second\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate"):
+        Config.from_file(p)
 
 
 def test_from_file_missing_file_raises_configerror(tmp_path):

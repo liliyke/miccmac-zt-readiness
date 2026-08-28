@@ -125,9 +125,18 @@ A YAML config file (`miccmac assess --config path/to/config.yaml`) supports:
 
 ```yaml
 excluded_checks:
-  - MON-02          # dropped entirely: not shown, not scored
+  - check_id: MON-02
+    reason: "No centralized SIEM in this pilot's environment."
 custom_checks_dir: ./custom_checks
 ```
+
+Every exclusion **requires a recorded reason** -- a bare check-id string is
+rejected. Excluded checks are never silently dropped: they still appear in
+the report, with status `NOT_APPLICABLE` and detail `Excluded: <reason>`,
+and are removed from that property's scoring denominator the same way any
+other `NOT_APPLICABLE` check is -- not counted as a pass or fail. This
+prevents the scorecard from being inflated by quietly excluding checks that
+would otherwise fail.
 
 **Custom checks** are your own Python modules, one file per module, dropped
 into `custom_checks_dir`. Each must define `CHECK_IDS` (a non-empty list of

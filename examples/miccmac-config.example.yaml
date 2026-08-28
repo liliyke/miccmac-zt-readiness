@@ -1,11 +1,13 @@
 # Example configuration for `miccmac assess --config`.
 #
-# excluded_checks: built-in check ids to drop entirely from the run (not
-#   shown, not scored). Useful when a check genuinely doesn't apply in your
-#   environment and NOT_APPLICABLE isn't available (e.g. you don't want to
-#   implement platform-detection for a check you'll never use).
+# excluded_checks: built-in check ids to exclude from scoring, each with a
+#   required, recorded reason. Excluded checks are never silently dropped --
+#   they still appear in the report as NOT_APPLICABLE with
+#   "Excluded: <reason>", just removed from that property's scoring
+#   denominator rather than counted as a pass or fail.
 excluded_checks:
-  - MON-02
+  - check_id: MON-02
+    reason: "No centralized SIEM in this pilot's environment."
 
 # custom_checks_dir: a directory of your own check plugins (see
 # custom_checks/acme_extra_checks.py for the interface). Relative paths are

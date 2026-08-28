@@ -67,23 +67,28 @@ def test_enabled_check_ids_default_matches_all_26_builtin_ids():
     assert set(ids) == {c.check_id for m in PROPERTY_MODULES for c in m.evaluate("x", {}).checks}
 
 
-def test_excluded_checks_are_removed_from_output_and_scoring():
-    config = Config(excluded_checks=["MON-01"])
+def test_excluded_checks_render_as_not_applicable_with_reason_and_are_unscored():
+    """Excluded checks are never silently dropped: they stay in the report
+    as NOT_APPLICABLE with the recorded reason, and are removed from the
+    scoring denominator rather than counted as a pass or fail."""
+    config = Config(excluded_checks={"MON-01": "Not relevant to this pilot's fleet."})
     assessment = run_assessment("test-device", config=config)
     mon = next(p for p in assessment.properties if p.key == "monitored")
-    assert "MON-01" not in {c.check_id for c in mon.checks}
+    mon01 = next(c for c in mon.checks if c.check_id == "MON-01")
+    assert mon01.status == Status.NOT_APPLICABLE
+    assert mon01.detail == "Excluded: Not relevant to this pilot's fleet."
     assert assessment.excluded_check_ids == ["MON-01"]
 
 
 def test_enabled_check_ids_reflects_exclusions():
-    config = Config(excluded_checks=["MON-01"])
+    config = Config(excluded_checks={"MON-01": "Not relevant to this pilot's fleet."})
     ids = enabled_check_ids(config)
     assert "MON-01" not in ids
     assert len(ids) == 25
 
 
 def test_excluding_unknown_check_id_raises_configerror():
-    config = Config(excluded_checks=["NOPE-99"])
+    config = Config(excluded_checks={"NOPE-99": "typo'd id"})
     with pytest.raises(ConfigError, match="unknown"):
         run_assessment("test-device", config=config)
     with pytest.raises(ConfigError, match="unknown"):

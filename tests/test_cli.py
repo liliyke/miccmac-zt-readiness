@@ -47,12 +47,17 @@ def test_list_checks_text_and_json(capsys):
 
 def test_assess_with_config_excludes_checks(tmp_path, capsys):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("excluded_checks:\n  - MON-01\n", encoding="utf-8")
+    config_path.write_text(
+        "excluded_checks:\n  - check_id: MON-01\n    reason: \"Not relevant to this pilot.\"\n",
+        encoding="utf-8",
+    )
 
     assert main(["assess", "test-device", "--format", "json", "--config", str(config_path)]) == 0
     data = json.loads(capsys.readouterr().out)
-    mon_ids = {c["check_id"] for p in data["properties"] if p["key"] == "monitored" for c in p["checks"]}
-    assert "MON-01" not in mon_ids
+    mon = next(p for p in data["properties"] if p["key"] == "monitored")
+    mon01 = next(c for c in mon["checks"] if c["check_id"] == "MON-01")
+    assert mon01["status"] == "NOT_APPLICABLE"
+    assert mon01["detail"] == "Excluded: Not relevant to this pilot."
     assert data["excluded_check_ids"] == ["MON-01"]
 
 
@@ -64,7 +69,9 @@ def test_assess_with_bad_config_path_errors_cleanly(tmp_path, capsys):
 
 def test_assess_with_unknown_excluded_check_errors_cleanly(tmp_path, capsys):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("excluded_checks:\n  - NOPE-99\n", encoding="utf-8")
+    config_path.write_text(
+        "excluded_checks:\n  - check_id: NOPE-99\n    reason: \"typo'd id\"\n", encoding="utf-8",
+    )
     rc = main(["assess", "test-device", "--config", str(config_path)])
     assert rc == 2
     assert "unknown" in capsys.readouterr().err.lower()

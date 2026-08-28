@@ -5,9 +5,16 @@ A config file (YAML, so a hand-written .json config also parses since JSON
 is a YAML subset) looks like:
 
     excluded_checks:
-      - MON-02
-      - CUR-04
+      - check_id: MON-02
+        reason: "No centralized SIEM in this pilot's environment."
+      - check_id: CUR-04
+        reason: "Certificate lifecycle is managed by a separate PKI audit."
     custom_checks_dir: ./my_checks
+
+Every exclusion requires a recorded reason -- excluded checks are never
+silently dropped. They still appear in the report, with status
+NOT_APPLICABLE and detail "Excluded: <reason>", and are removed from that
+property's scoring denominator rather than counted as a pass or fail.
 
 Custom-check plugin interface: a single .py file dropped in
 custom_checks_dir must define, at module scope:
@@ -53,7 +60,7 @@ class LoadedPlugin:
 
 @dataclass
 class Config:
-    excluded_checks: List[str] = field(default_factory=list)
+    excluded_checks: Dict[str, str] = field(default_factory=dict)  # check_id -> reason
     custom_checks_dir: Optional[Path] = None
     _plugin_cache: Optional[Dict[str, List[LoadedPlugin]]] = field(
         default=None, init=False, repr=False, compare=False,
@@ -73,9 +80,7 @@ class Config:
         if not isinstance(data, dict):
             raise ConfigError(f"{path}: expected a top-level mapping, got {type(data).__name__}")
 
-        excluded = data.get("excluded_checks", [])
-        if not isinstance(excluded, list) or not all(isinstance(x, str) for x in excluded):
-            raise ConfigError(f"{path}: excluded_checks must be a list of strings")
+        excluded = cls._parse_excluded_checks(data.get("excluded_checks", []), path)
 
         custom_dir_raw = data.get("custom_checks_dir")
         custom_dir: Optional[Path] = None
@@ -86,7 +91,29 @@ class Config:
             if not custom_dir.is_absolute():
                 custom_dir = (path.parent / custom_dir).resolve()
 
-        return cls(excluded_checks=list(excluded), custom_checks_dir=custom_dir)
+        return cls(excluded_checks=excluded, custom_checks_dir=custom_dir)
+
+    @staticmethod
+    def _parse_excluded_checks(raw, path: Path) -> Dict[str, str]:
+        if not isinstance(raw, list):
+            raise ConfigError(f"{path}: excluded_checks must be a list")
+        excluded: Dict[str, str] = {}
+        for i, entry in enumerate(raw):
+            if not isinstance(entry, dict) or "check_id" not in entry or "reason" not in entry:
+                raise ConfigError(
+                    f"{path}: excluded_checks[{i}] must be a mapping with 'check_id' and "
+                    f"'reason' (a plain check-id string is not enough -- every exclusion "
+                    f"requires a recorded reason), got {entry!r}"
+                )
+            check_id, reason = entry["check_id"], entry["reason"]
+            if not isinstance(check_id, str) or not check_id:
+                raise ConfigError(f"{path}: excluded_checks[{i}].check_id must be a non-empty string")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ConfigError(f"{path}: excluded_checks[{i}].reason must be a non-empty string")
+            if check_id in excluded:
+                raise ConfigError(f"{path}: duplicate excluded_checks entry for {check_id!r}")
+            excluded[check_id] = reason
+        return excluded
 
     def load_custom_checks(self) -> Dict[str, List[LoadedPlugin]]:
         """Discover, import, and validate every plugin under custom_checks_dir.
