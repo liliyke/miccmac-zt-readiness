@@ -11,6 +11,14 @@ provider (Azure AD, Okta, etc.), not something visible on the box itself --
 so it reads context["attestation"] (via --attestation) instead, following
 the same external-fact pattern as INV-01/INV-04's --inventory-record.
 
+On Windows targets (facts["os"]["platform"] == "windows", populated by
+miccmac/connectors/ssh_osquery_windows.py), CTL-01/02/04 branch to Windows
+equivalents: installed MDM/config-mgmt clients (SCCM, Intune, or the same
+cross-platform agents) in place of deb packages, built-in-Administrator-
+account state + Administrators-group membership in place of root_locked/
+sudo_users, and installed hardening tools in place of deb packages. CTL-03
+stays attestation-based on both platforms.
+
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
@@ -43,6 +51,13 @@ _NAMES = {
 _CONFIG_MGMT_PACKAGES = ("puppet", "chef", "ansible", "salt-minion", "landscape-client")
 # Package-name substrings that indicate a hardening-baseline tool is present.
 _HARDENING_PACKAGES = ("usg", "openscap")
+# Windows program-name substrings indicating central configuration
+# management / fleet enrollment (SCCM/ConfigMgr, Intune, or the same
+# cross-platform config-mgmt agents as the Linux list).
+_CONFIG_MGMT_PROGRAMS_WIN = ("Configuration Manager Client", "Intune Management Extension",
+                            "Chef", "Puppet", "Ansible")
+# Windows program-name substrings indicating a hardening-baseline tool is present.
+_HARDENING_PROGRAMS_WIN = ("Security Compliance", "Policy Analyzer", "LGPO")
 
 
 def _stub_result(check_id: str) -> CheckResult:
@@ -135,15 +150,80 @@ def _check_ctl04(deb_packages: list) -> CheckResult:
     )
 
 
+def _program_installed(programs: list, name_substrings: tuple) -> str | None:
+    for prog in programs:
+        name = prog.get("name", "")
+        if any(sub in name for sub in name_substrings):
+            return name
+    return None
+
+
+def _check_ctl01_windows(programs: list) -> CheckResult:
+    match = _program_installed(programs, _CONFIG_MGMT_PROGRAMS_WIN)
+    if match:
+        status = Status.PASS
+        detail = f"Central configuration management / MDM client found installed: {match!r}."
+    else:
+        status = Status.FAIL
+        detail = "No central configuration management / MDM client (SCCM, Intune, Chef, Puppet, Ansible) found installed."
+    return CheckResult(
+        check_id="CTL-01", name=_NAMES["CTL-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-01"],
+    )
+
+
+def _check_ctl02_windows(builtin_admin_enabled: bool, local_admins: list) -> CheckResult:
+    if not builtin_admin_enabled and local_admins:
+        status = Status.PASS
+        detail = (f"Built-in Administrator account is disabled; privilege elevation is via "
+                  f"{len(local_admins)} named Administrators-group account(s): {', '.join(local_admins)}.")
+    elif not builtin_admin_enabled:
+        status = Status.PARTIAL
+        detail = "Built-in Administrator account is disabled, but no named accounts hold Administrators-group membership -- there is no elevation path at all."
+    else:
+        status = Status.FAIL
+        detail = "Built-in Administrator account is enabled, bypassing named-account elevation."
+    return CheckResult(
+        check_id="CTL-02", name=_NAMES["CTL-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-02"],
+    )
+
+
+def _check_ctl04_windows(programs: list) -> CheckResult:
+    match = _program_installed(programs, _HARDENING_PROGRAMS_WIN)
+    if match:
+        status = Status.PASS
+        detail = f"Hardening-baseline tool found installed: {match!r}."
+    else:
+        status = Status.FAIL
+        detail = "No recognized hardening-baseline tool (Microsoft Security Compliance Toolkit, LGPO) found installed."
+    return CheckResult(
+        check_id="CTL-04", name=_NAMES["CTL-04"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CTL-04"],
+    )
+
+
 def _run_checks(target: str, context: dict) -> list[CheckResult]:
     facts = context.get("facts")
     if facts is None:
         return _stub_checks()
 
+    attestation = context.get("attestation")
+
+    if (facts.get("os") or {}).get("platform") == "windows":
+        programs = facts.get("programs") or []
+        builtin_admin_enabled = bool(facts.get("builtin_admin_enabled"))
+        local_admins = facts.get("local_admins") or []
+        return [
+            _check_ctl01_windows(programs),
+            _check_ctl02_windows(builtin_admin_enabled, local_admins),
+            _check_ctl03(attestation),
+            _check_ctl04_windows(programs),
+        ]
+
     deb_packages = facts.get("deb_packages") or []
     root_locked = bool(facts.get("root_locked"))
     sudo_users = facts.get("sudo_users") or []
-    attestation = context.get("attestation")
 
     return [
         _check_ctl01(deb_packages),

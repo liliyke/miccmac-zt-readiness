@@ -11,6 +11,12 @@ device can self-report. Those two checks read context["inventory_record"],
 a caller-supplied dict representing that external system's record for this
 device (see miccmac/cli.py's --inventory-record).
 
+On Windows targets (facts["os"]["platform"] == "windows", populated by
+miccmac/connectors/ssh_osquery_windows.py), INV-03 branches to count
+facts["programs"] (Win32 programs from the registry Uninstall keys) instead
+of facts["deb_packages"]. INV-02 needs no branch -- it already reads the
+cross-platform facts["system_info"] key on both platforms.
+
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
@@ -117,6 +123,20 @@ def _check_inv03(deb_packages: list) -> CheckResult:
     )
 
 
+def _check_inv03_windows(programs: list) -> CheckResult:
+    count = len(programs)
+    if count > 0:
+        status = Status.PASS
+        detail = f"{count} installed programs enumerated via osquery programs."
+    else:
+        status = Status.FAIL
+        detail = "osquery programs query returned no results; software inventory cannot be confirmed."
+    return CheckResult(
+        check_id="INV-03", name=_NAMES["INV-03"], status=status, detail=detail,
+        evidence=f"{count} rows", control_refs=_CONTROL_REFS["INV-03"],
+    )
+
+
 def _check_inv04(record: dict | None) -> CheckResult:
     if record is None:
         return CheckResult(
@@ -160,12 +180,16 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
 
     inventory_record = context.get("inventory_record")
     system_info = facts.get("system_info") or {}
-    deb_packages = facts.get("deb_packages") or []
+
+    if (facts.get("os") or {}).get("platform") == "windows":
+        inv03 = _check_inv03_windows(facts.get("programs") or [])
+    else:
+        inv03 = _check_inv03(facts.get("deb_packages") or [])
 
     return [
         _check_inv01(inventory_record),
         _check_inv02(system_info),
-        _check_inv03(deb_packages),
+        inv03,
         _check_inv04(inventory_record),
     ]
 

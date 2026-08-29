@@ -8,6 +8,13 @@ miccmac/connectors/ssh_osquery.py) -- specifically facts["systemd_units"]
 osqueryd, auditd) and facts["rsyslog_forwarding_configured"] (whether
 rsyslog's config declares a remote destination).
 
+On Windows targets (facts["os"]["platform"] == "windows", populated by
+miccmac/connectors/ssh_osquery_windows.py), the same four checks branch to
+Windows-native equivalents: the Windows Event Log service in place of
+journald/syslog, a known log-forwarding-agent service in place of rsyslog
+remote-forwarding config, osqueryd unchanged, and Sysmon in place of
+auditd for rich auth/privilege/process audit coverage.
+
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
@@ -123,10 +130,88 @@ def _check_mon04(units: dict) -> CheckResult:
     )
 
 
+# Windows service names recognized as log-forwarding/SIEM agents (see
+# ssh_osquery_windows.py's services query) -- the Windows counterpart to
+# MON-02's "rsyslog forwards to somewhere" check.
+_WIN_FORWARDING_SERVICES = ("SplunkForwarder", "winlogbeat", "nxlog", "DatadogAgent",
+                            "MicrosoftMonitoringAgent", "AzureMonitorAgent")
+
+
+def _win_running(services: dict, name: str) -> bool:
+    return services.get(name, {}).get("status") == "RUNNING"
+
+
+def _check_mon01_windows(services: dict) -> CheckResult:
+    if _win_running(services, "EventLog"):
+        status = Status.PASS
+        detail = "Windows Event Log service is running."
+    else:
+        status = Status.FAIL
+        detail = "Windows Event Log service is not running; no baseline logging service found."
+    return CheckResult(
+        check_id="MON-01", name=_NAMES["MON-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-01"],
+    )
+
+
+def _check_mon02_windows(services: dict) -> CheckResult:
+    running = [name for name in _WIN_FORWARDING_SERVICES if _win_running(services, name)]
+    if running:
+        status = Status.PASS
+        detail = f"Log-forwarding agent service running: {', '.join(running)}."
+    else:
+        status = Status.FAIL
+        detail = "No recognized log-forwarding agent service found running; logs are not leaving the device."
+    return CheckResult(
+        check_id="MON-02", name=_NAMES["MON-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-02"],
+    )
+
+
+def _check_mon03_windows(services: dict) -> CheckResult:
+    if _win_running(services, "osqueryd"):
+        status = Status.PASS
+        detail = "osqueryd (endpoint telemetry agent) is installed and running."
+    else:
+        status = Status.FAIL
+        detail = "osqueryd is not running; no endpoint telemetry agent detected."
+    return CheckResult(
+        check_id="MON-03", name=_NAMES["MON-03"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-03"],
+    )
+
+
+def _check_mon04_windows(services: dict) -> CheckResult:
+    sysmon_running = _win_running(services, "Sysmon") or _win_running(services, "Sysmon64")
+    eventlog_running = _win_running(services, "EventLog")
+    if sysmon_running:
+        status = Status.PASS
+        detail = "Sysmon is running, providing rich authentication/privilege/process audit coverage."
+    elif eventlog_running:
+        status = Status.PARTIAL
+        detail = "Windows Event Log is running, but Sysmon is not -- native Security log auditing is not verified by this check."
+    else:
+        status = Status.FAIL
+        detail = "Neither Sysmon nor the Windows Event Log service is running; authentication/privilege/process events are not being captured."
+    return CheckResult(
+        check_id="MON-04", name=_NAMES["MON-04"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MON-04"],
+    )
+
+
 def _run_checks(target: str, context: dict) -> list[CheckResult]:
     facts = context.get("facts")
     if facts is None:
         return _stub_checks()
+
+    if (facts.get("os") or {}).get("platform") == "windows":
+        services = facts.get("services") or {}
+        return [
+            _check_mon01_windows(services),
+            _check_mon02_windows(services),
+            _check_mon03_windows(services),
+            _check_mon04_windows(services),
+        ]
 
     units = facts.get("systemd_units") or {}
     rsyslog_forwarding_configured = bool(facts.get("rsyslog_forwarding_configured"))

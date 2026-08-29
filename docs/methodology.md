@@ -252,6 +252,25 @@ requiring miccmac to be installed on every target). Enable it with
 `miccmac assess <host> --connector ssh-osquery --ssh-user <user> --ssh-key
 <path>`.
 
+**Windows targets.** `miccmac/connectors/ssh_osquery_windows.py` implements
+the same `Connector` protocol for Windows (OpenSSH Server + `osqueryi.exe`
+over SSH, plus a couple of PowerShell one-offs for facts osquery's Windows
+table set doesn't cover -- built-in-Administrator-account state and Windows
+Defender Firewall profile status). Enable it with `--connector
+ssh-osquery-windows`. Every check module branches internally on
+`facts["os"]["platform"] == "windows"` to interpret Windows-native facts
+(Windows services in place of systemd units, installed programs in place of
+deb packages, Administrators-group membership in place of sudo, a sample of
+registry hardening settings in place of kernel sysctls, and so on) --
+same check IDs, names, and control mappings on both platforms, just a
+different evidence source. Genuinely cross-platform osquery tables
+(`system_info`, `listening_ports`, `certificates`) reuse the identical fact
+key on both platforms, so INV-02 and CUR-04 need no platform branch at all.
+Unit-tested against fake Windows facts (`tests/test_windows_checks.py`,
+`tests/test_ssh_osquery_windows_connector.py`); live-VM verification against
+a real Windows 11 Enterprise target follows the same VM-build process used
+for the Ubuntu target.
+
 **External data, not just device facts.** Two of the four Inventoried checks
 (INV-01, INV-04) are NOT derivable from the device alone -- whether a device
 is tracked in an authoritative asset inventory, and when that record was

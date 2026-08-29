@@ -16,6 +16,14 @@ for that, only a vendor API/feed. So CUR-03 reads context["attestation"]
 Claimed / Assessed, rather than pretending a device-local check could answer
 "is this current".
 
+On Windows targets (facts["os"]["platform"] == "windows", populated by
+miccmac/connectors/ssh_osquery_windows.py), CUR-01/02 branch to Windows
+equivalents: the Windows Update service (wuauserv) and last-successful-
+install timestamp in place of apt-daily-upgrade.timer/update-success-stamp,
+and installed third-party programs + package-manager presence in place of
+apt sources. CUR-03 stays attestation-based and CUR-04 reuses the same
+cross-platform expired_certificates fact key on both platforms.
+
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
@@ -52,6 +60,10 @@ _OFFICIAL_UBUNTU_URI_FRAGMENTS = ("archive.ubuntu.com", "security.ubuntu.com",
 # patch cadence out of policy. Matches apt-daily-upgrade.timer's default
 # roughly-daily cadence with headroom.
 APT_UPDATE_FRESHNESS_DAYS = 7
+# Same freshness window applied to Windows Update's last successful install.
+WIN_UPDATE_FRESHNESS_DAYS = 30
+# Publisher-string fragments recognized as Microsoft's own (not "third-party").
+_MICROSOFT_PUBLISHER_FRAGMENTS = ("Microsoft",)
 
 
 def _stub_result(check_id: str) -> CheckResult:
@@ -120,6 +132,68 @@ def _check_cur02(units: dict, apt_sources: list) -> CheckResult:
     )
 
 
+def _check_cur01_windows(services: dict, last_update_installed_iso: str | None) -> CheckResult:
+    service_running = services.get("wuauserv", {}).get("status") == "RUNNING"
+    if not service_running:
+        return CheckResult(
+            check_id="CUR-01", name=_NAMES["CUR-01"], status=Status.FAIL,
+            detail="Windows Update service (wuauserv) is not running; OS patches are not applied on a schedule.",
+            control_refs=_CONTROL_REFS["CUR-01"],
+        )
+    if not last_update_installed_iso:
+        return CheckResult(
+            check_id="CUR-01", name=_NAMES["CUR-01"], status=Status.PARTIAL,
+            detail="Windows Update service is running, but no successful update install has been recorded yet.",
+            control_refs=_CONTROL_REFS["CUR-01"],
+        )
+    try:
+        last_update = datetime.datetime.fromisoformat(last_update_installed_iso)
+    except ValueError:
+        return CheckResult(
+            check_id="CUR-01", name=_NAMES["CUR-01"], status=Status.ERROR,
+            detail=f"Last Windows Update install timestamp {last_update_installed_iso!r} is not a valid date.",
+            control_refs=_CONTROL_REFS["CUR-01"],
+        )
+    if last_update.tzinfo is None:
+        last_update = last_update.replace(tzinfo=datetime.timezone.utc)
+    age_days = (datetime.datetime.now(tz=datetime.timezone.utc) - last_update).days
+    if age_days <= WIN_UPDATE_FRESHNESS_DAYS:
+        status = Status.PASS
+        detail = f"Windows Update service active; last successful update installed {age_days} day(s) ago."
+    else:
+        status = Status.FAIL
+        detail = (f"Windows Update service active, but last successful update was {age_days} "
+                 f"day(s) ago, exceeding the {WIN_UPDATE_FRESHNESS_DAYS}-day policy.")
+    return CheckResult(
+        check_id="CUR-01", name=_NAMES["CUR-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CUR-01"],
+    )
+
+
+def _check_cur02_windows(programs: list) -> CheckResult:
+    third_party = [p for p in programs
+                   if not any(frag in (p.get("publisher") or "") for frag in _MICROSOFT_PUBLISHER_FRAGMENTS)]
+    if not third_party:
+        return CheckResult(
+            check_id="CUR-02", name=_NAMES["CUR-02"], status=Status.NOT_APPLICABLE,
+            detail="No third-party programs installed; no third-party software to have an update policy for.",
+            control_refs=_CONTROL_REFS["CUR-02"],
+        )
+    package_manager = next((p["name"] for p in programs if "Chocolatey" in p.get("name", "")), None)
+    if package_manager:
+        status = Status.PARTIAL
+        detail = (f"{len(third_party)} third-party program(s) installed, and a package manager "
+                 f"({package_manager!r}) is present; whether third-party software is actually kept "
+                 f"current is not verified.")
+    else:
+        status = Status.FAIL
+        detail = f"{len(third_party)} third-party program(s) installed, and no package manager (e.g. Chocolatey) was found to keep them updated."
+    return CheckResult(
+        check_id="CUR-02", name=_NAMES["CUR-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["CUR-02"],
+    )
+
+
 def _check_cur03(attestation: dict | None) -> CheckResult:
     if attestation is None or "firmware_currency" not in attestation:
         return CheckResult(
@@ -159,11 +233,22 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
     if facts is None:
         return _stub_checks()
 
+    expired_certificates = facts.get("expired_certificates") or []
+    attestation = context.get("attestation")
+
+    if (facts.get("os") or {}).get("platform") == "windows":
+        services = facts.get("services") or {}
+        programs = facts.get("programs") or []
+        return [
+            _check_cur01_windows(services, facts.get("last_update_installed_iso")),
+            _check_cur02_windows(programs),
+            _check_cur03(attestation),
+            _check_cur04(expired_certificates),
+        ]
+
     units = facts.get("systemd_units") or {}
     apt_update_stamp_mtime = facts.get("apt_update_stamp_mtime")
     apt_sources = facts.get("apt_sources") or []
-    expired_certificates = facts.get("expired_certificates") or []
-    attestation = context.get("attestation")
 
     return [
         _check_cur01(units, apt_update_stamp_mtime),

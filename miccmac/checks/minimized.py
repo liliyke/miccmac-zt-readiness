@@ -11,6 +11,14 @@ CIS-benchmark-relevant kernel parameters -- MIN-04's evidence that a
 baseline was actually *applied*, distinct from CTL-04's "is a hardening
 tool merely installed").
 
+On Windows targets (facts["os"]["platform"] == "windows", populated by
+miccmac/connectors/ssh_osquery_windows.py), all four checks branch to
+Windows equivalents: legacy Windows services (Telnet/FTP/SNMP) in place of
+legacy systemd units, legacy optional Windows features (SMBv1, Telnet
+client) in place of legacy deb packages, Windows Defender Firewall profile
+state in place of ufw, and a sample of CIS-benchmark-relevant registry
+settings in place of kernel sysctls.
+
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
@@ -54,6 +62,20 @@ _EXPECTED_SYSCTLS = {
     "kernel.kptr_restrict": "1",
     "fs.suid_dumpable": "0",
     "net.ipv4.conf.all.rp_filter": "1",
+}
+
+# Windows service names considered legacy/insecure if running (MIN-01).
+_LEGACY_SERVICES_WIN = ("Telnet", "TlntSvr", "FTPSVC", "SNMP")
+# Ports considered part of the expected minimal footprint on Windows
+# (RDP/WinRM for management, SSH since these targets run OpenSSH Server).
+_EXPECTED_PORTS_WIN = {"22", "3389", "5985", "5986"}
+# registry setting -> the CIS-hardened value expected (see
+# ssh_osquery_windows.py's hardening_registry query).
+_EXPECTED_REGISTRY_WIN = {
+    "EnableLUA": "1",
+    "SMB1": "0",
+    "DisableRealtimeMonitoring": "0",
+    "NoDriveTypeAutoRun": "255",
 }
 
 
@@ -140,10 +162,87 @@ def _check_min04(hardening_sysctls: dict) -> CheckResult:
     )
 
 
+def _check_min01_windows(services: dict) -> CheckResult:
+    active = [name for name in _LEGACY_SERVICES_WIN if services.get(name, {}).get("status") == "RUNNING"]
+    if active:
+        status = Status.FAIL
+        detail = f"Legacy/insecure service(s) running: {', '.join(active)}."
+    else:
+        status = Status.PASS
+        detail = "No legacy/insecure services (Telnet, FTP, SNMP) found running."
+    return CheckResult(
+        check_id="MIN-01", name=_NAMES["MIN-01"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MIN-01"],
+    )
+
+
+def _check_min02_windows(legacy_features_enabled: list) -> CheckResult:
+    if legacy_features_enabled:
+        status = Status.FAIL
+        detail = f"Legacy/insecure optional feature(s) enabled: {', '.join(legacy_features_enabled)}."
+    else:
+        status = Status.PASS
+        detail = "No legacy/insecure optional features (Telnet client/server, TFTP, SMBv1, FTP server) found enabled."
+    return CheckResult(
+        check_id="MIN-02", name=_NAMES["MIN-02"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MIN-02"],
+    )
+
+
+def _check_min03_windows(firewall_all_profiles_enabled: bool, listening_ports: list) -> CheckResult:
+    unexpected_ports = sorted({p["port"] for p in listening_ports if p["port"] not in _EXPECTED_PORTS_WIN})
+
+    if firewall_all_profiles_enabled and not unexpected_ports:
+        status = Status.PASS
+        detail = "Windows Defender Firewall is enabled on all profiles; only the expected minimal ports are listening."
+    elif firewall_all_profiles_enabled:
+        status = Status.PARTIAL
+        detail = f"Windows Defender Firewall is enabled on all profiles, but unexpected port(s) are listening: {', '.join(unexpected_ports)}."
+    else:
+        status = Status.FAIL
+        detail = "Windows Defender Firewall is not enabled on all profiles."
+    return CheckResult(
+        check_id="MIN-03", name=_NAMES["MIN-03"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MIN-03"],
+    )
+
+
+def _check_min04_windows(hardening_registry: dict) -> CheckResult:
+    matched = [name for name, expected in _EXPECTED_REGISTRY_WIN.items()
+              if hardening_registry.get(name) == expected]
+    total = len(_EXPECTED_REGISTRY_WIN)
+
+    if len(matched) == total:
+        status = Status.PASS
+        detail = f"All {total} sampled hardening-baseline registry settings match their recommended values."
+    elif matched:
+        status = Status.PARTIAL
+        unmatched = sorted(set(_EXPECTED_REGISTRY_WIN) - set(matched))
+        detail = (f"{len(matched)}/{total} sampled hardening-baseline registry settings match; "
+                 f"not hardened: {', '.join(unmatched)}.")
+    else:
+        status = Status.FAIL
+        detail = "None of the sampled hardening-baseline registry settings match their recommended values."
+    return CheckResult(
+        check_id="MIN-04", name=_NAMES["MIN-04"], status=status, detail=detail,
+        control_refs=_CONTROL_REFS["MIN-04"],
+    )
+
+
 def _run_checks(target: str, context: dict) -> list[CheckResult]:
     facts = context.get("facts")
     if facts is None:
         return _stub_checks()
+
+    if (facts.get("os") or {}).get("platform") == "windows":
+        services = facts.get("services") or {}
+        listening_ports = facts.get("listening_ports") or []
+        return [
+            _check_min01_windows(services),
+            _check_min02_windows(facts.get("legacy_features_enabled") or []),
+            _check_min03_windows(bool(facts.get("firewall_all_profiles_enabled")), listening_ports),
+            _check_min04_windows(facts.get("hardening_registry") or {}),
+        ]
 
     units = facts.get("systemd_units") or {}
     deb_packages = facts.get("deb_packages") or []

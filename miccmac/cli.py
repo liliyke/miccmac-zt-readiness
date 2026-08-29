@@ -15,7 +15,7 @@ from miccmac.report import render as render_assessment
 from miccmac.risk_register import build_risk_register
 from miccmac.risk_register import render as render_risk_register
 
-CONNECTORS = ("ssh-osquery",)
+CONNECTORS = ("ssh-osquery", "ssh-osquery-windows")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,11 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_assess.add_argument("--risk-register", action="store_true",
                           help="Append the CIS IG / FAIR-inspired risk register to the output.")
     p_assess.add_argument("--connector", default=None, choices=CONNECTORS,
-                          help="Collect real facts from the target instead of the NOT_IMPLEMENTED stub.")
+                          help="Collect real facts from the target instead of the NOT_IMPLEMENTED "
+                               "stub. ssh-osquery targets Linux; ssh-osquery-windows targets Windows "
+                               "(OpenSSH Server + osqueryi.exe on the target).")
     p_assess.add_argument("--ssh-user", default=None,
-                          help="SSH username (required with --connector ssh-osquery).")
+                          help="SSH username (required with --connector ssh-osquery[-windows]).")
     p_assess.add_argument("--ssh-key", default=None,
-                          help="Path to the SSH private key (required with --connector ssh-osquery).")
+                          help="Path to the SSH private key (required with --connector ssh-osquery[-windows]).")
     p_assess.add_argument("--ssh-port", type=int, default=22,
                           help="SSH port (default: 22).")
     p_assess.add_argument("--inventory-record", default=None,
@@ -106,11 +108,14 @@ def _load_json_file(path: str, flag_name: str) -> dict:
 def _build_context(args) -> dict:
     context = {}
 
-    if args.connector == "ssh-osquery":
+    if args.connector in ("ssh-osquery", "ssh-osquery-windows"):
         if not args.ssh_user or not args.ssh_key:
-            raise ConfigError("--connector ssh-osquery requires --ssh-user and --ssh-key")
-        from miccmac.connectors.ssh_osquery import SSHOsqueryConnector
-        connector = SSHOsqueryConnector(
+            raise ConfigError(f"--connector {args.connector} requires --ssh-user and --ssh-key")
+        if args.connector == "ssh-osquery":
+            from miccmac.connectors.ssh_osquery import SSHOsqueryConnector as _Connector
+        else:
+            from miccmac.connectors.ssh_osquery_windows import SSHOsqueryWindowsConnector as _Connector
+        connector = _Connector(
             ssh_user=args.ssh_user, ssh_key_path=args.ssh_key, port=args.ssh_port,
         )
         context["facts"] = connector.collect_facts(args.target)

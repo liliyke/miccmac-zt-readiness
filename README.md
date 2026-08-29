@@ -163,14 +163,12 @@ architecture and design rationale.
 | Pluggable CMMI / CISA ZTMM scoring methodologies | Working (`--methodology`) |
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
-| SSH + osquery target connector | Working (`--connector ssh-osquery`), proven against a live Ubuntu 26.04 LTS VM |
-| All 7 MICCMAC properties, all 26 checks — real detection logic | Working — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
+| SSH + osquery target connectors | Working — `--connector ssh-osquery` (Linux, proven against a live Ubuntu 26.04 LTS VM) and `--connector ssh-osquery-windows` (Windows, OS-branching implemented and unit-tested; live-VM verification in progress) |
+| All 7 MICCMAC properties, all 26 checks — real detection logic | Working, both platforms — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
 
-- **One connector, one platform proven.** `ssh-osquery` is implemented and
-  tested end-to-end against Ubuntu Desktop; Windows (WinRM) and macOS
-  connectors, and OS-conditional branching within checks, are not yet built.
+- **macOS connector** is not yet built.
 - **No inventory/GRC/scanning system integrations** beyond the
   `--inventory-record` and `--attestation` file-based inputs.
 
@@ -178,9 +176,11 @@ Running `python -m miccmac assess <target>` with no `--connector` flag still
 prints the *structure* of a real assessment without inspecting anything —
 byte-identical to the original scaffold's output, verified by diffing
 against it directly through every pass of this work. Add `--connector
-ssh-osquery --ssh-user <u> --ssh-key <path>` (plus `--inventory-record` and
-`--attestation` for the checks that need external data) to get real,
-evidence-backed results across all seven properties.
+ssh-osquery --ssh-user <u> --ssh-key <path>` for a Linux target, or
+`--connector ssh-osquery-windows --ssh-user <u> --ssh-key <path>` for a
+Windows target (plus `--inventory-record` and `--attestation` for the
+checks that need external data) to get real, evidence-backed results across
+all seven properties.
 
 ### Architecture (OS-agnostic by design)
 
