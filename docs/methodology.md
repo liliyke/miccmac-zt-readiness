@@ -267,9 +267,16 @@ different evidence source. Genuinely cross-platform osquery tables
 (`system_info`, `listening_ports`, `certificates`) reuse the identical fact
 key on both platforms, so INV-02 and CUR-04 need no platform branch at all.
 Unit-tested against fake Windows facts (`tests/test_windows_checks.py`,
-`tests/test_ssh_osquery_windows_connector.py`); live-VM verification against
-a real Windows 11 Enterprise target follows the same VM-build process used
-for the Ubuntu target.
+`tests/test_ssh_osquery_windows_connector.py`), and proven end-to-end
+against a real Windows 11 Enterprise 25H2 VM: all 26 checks ran with real,
+evidence-backed results (overall score 60.8/100, "Developing," CMMI Level
+3/5 "Defined") -- no errors, no stub fallbacks. Real findings from that run:
+MON-03 (EDR/telemetry agent) PASSes because osqueryd itself registers as a
+running Windows service, the same way MON-03 PASSes on Linux via the
+osqueryd systemd unit; CUR-04 (expired certificates) legitimately FAILs
+because Windows' default trust store ships several long-expired legacy root
+CAs (e.g. the original VeriSign/Thawte timestamping roots) -- a real
+finding about the platform, not a bug in the check.
 
 **External data, not just device facts.** Two of the four Inventoried checks
 (INV-01, INV-04) are NOT derivable from the device alone -- whether a device

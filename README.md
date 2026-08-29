@@ -163,7 +163,7 @@ architecture and design rationale.
 | Pluggable CMMI / CISA ZTMM scoring methodologies | Working (`--methodology`) |
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
 | CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
-| SSH + osquery target connectors | Working — `--connector ssh-osquery` (Linux, proven against a live Ubuntu 26.04 LTS VM) and `--connector ssh-osquery-windows` (Windows, OS-branching implemented and unit-tested; live-VM verification in progress) |
+| SSH + osquery target connectors | Working — `--connector ssh-osquery` (Linux, proven against a live Ubuntu 26.04 LTS VM) and `--connector ssh-osquery-windows` (Windows, proven against a live Windows 11 Enterprise 25H2 VM) |
 | All 7 MICCMAC properties, all 26 checks — real detection logic | Working, both platforms — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
 ### What does not ship yet
