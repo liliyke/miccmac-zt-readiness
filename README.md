@@ -123,9 +123,12 @@ in [`docs/methodology.md`](docs/methodology.md).
   ...
 ```
 
-A full sample report is in [`examples/sample-report.md`](examples/sample-report.md), and an
-illustrative HTML scorecard rendering (from a real assessment against a live Ubuntu target) is in
-[`examples/sample-scorecard.html`](examples/sample-scorecard.html).
+A full sample report is in [`examples/sample-report.md`](examples/sample-report.md), and
+illustrative HTML scorecard renderings (from real assessments against all three live targets, with
+a target switcher) are in [`examples/sample-scorecard.html`](examples/sample-scorecard.html)
+(CMMI methodology) and [`examples/sample-scorecard-cisa-ztmm.html`](examples/sample-scorecard-cisa-ztmm.html)
+(CISA ZTMM methodology, same underlying check results) -- the two editions are kept side by
+side to show both maturity-methodology lenses on the same data.
 
 ## How scoring works
 
