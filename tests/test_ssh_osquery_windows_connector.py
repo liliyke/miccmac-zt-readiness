@@ -125,9 +125,11 @@ def test_last_update_installed_iso_none_when_empty(mock_ssh_client_cls):
 
 @patch("miccmac.connectors.ssh_osquery_windows.paramiko.SSHClient")
 def test_legacy_features_enabled_filters_to_enabled_only(mock_ssh_client_cls):
+    # osquery's real windows_optional_features.state is numeric: "1" enabled,
+    # "2" disabled (DISM's FeatureState enum), not the word "Enabled"/"Disabled".
     responses = {
-        "windows_optional_features": [{"name": "TelnetClient", "state": "Enabled"},
-                                      {"name": "SMB1Protocol", "state": "Disabled"}],
+        "windows_optional_features": [{"name": "TelnetClient", "state": "1"},
+                                      {"name": "SMB1Protocol", "state": "2"}],
     }
     mock_ssh_client_cls.return_value = _make_client(responses)
 

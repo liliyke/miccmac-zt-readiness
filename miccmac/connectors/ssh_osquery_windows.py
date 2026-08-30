@@ -181,8 +181,11 @@ class SSHOsqueryWindowsConnector:
         firewall_values = [v.strip() for v in firewall_raw.split(",") if v.strip()]
         all_profiles_enabled = bool(firewall_values) and all(v == "True" for v in firewall_values)
 
+        # windows_optional_features.state is numeric (DISM's FeatureState enum),
+        # not the word "Enabled" -- confirmed against a live target where a
+        # deliberately-enabled TelnetClient reported state "1", not "Enabled".
         legacy_features_enabled = [
-            row["name"] for row in results["legacy_features"] if row.get("state") == "Enabled"
+            row["name"] for row in results["legacy_features"] if row.get("state") == "1"
         ]
 
         return {
