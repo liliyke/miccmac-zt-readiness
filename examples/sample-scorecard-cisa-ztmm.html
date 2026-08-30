@@ -1,23 +1,23 @@
 <!doctype html>
 <!--
-  Illustrative HTML scorecard rendering, built from three real assessment
-  runs against live targets -- miccmac-ubuntu (Ubuntu 26.04.1 LTS),
-  DESKTOP-TQ6S23H (Windows 11 Enterprise 25H2), and WIN-AH4J566CC4U
-  (Windows Server 2025 Standard) -- via `miccmac assess ... --methodology
-  cmmi --risk-register`. This is a one-off visual presentation of those
-  assessments' real check results and risk registers, not something the CLI
-  generates directly -- the CLI's own text/markdown/json renderers are in
-  miccmac/report.py and miccmac/risk_register.py (see
-  examples/sample-report.md for their output format, including the legend
-  both renderers now include). The Legend and "All 26 Built-in Checks"
-  sections are reference material shared across all three targets, since
-  control mappings don't change per device.
+  Illustrative HTML scorecard rendering -- CISA ZTMM edition. Same three
+  real assessment runs as examples/sample-scorecard.html (miccmac-ubuntu,
+  DESKTOP-TQ6S23H, WIN-AH4J566CC4U), same check results and risk registers,
+  just scored through CISA's Zero Trust Maturity Model (4 stages) instead
+  of CMMI (5 levels). Both scorecards are kept side by side deliberately:
+  the flat readiness tier and check results are identical in both -- only
+  the maturity-methodology lens differs -- demonstrating the tool's
+  "two scoring outputs, shown together, not one replacing the other"
+  design (see docs/methodology.md and the Scientific Method Worksheet).
+  This is a one-off visual presentation, not something the CLI generates
+  directly -- the CLI's own text/markdown/json renderers are in
+  miccmac/report.py and miccmac/risk_register.py.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MICCMAC Readiness Scorecard</title>
+<title>MICCMAC ZTMM Scorecard</title>
 <style>
   :root {
     --bg: #F4F5F7;
@@ -112,6 +112,28 @@
   }
 
   h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+  /* ---------- Edition badge ---------- */
+
+  .edition-note {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+  }
+  .edition-badge {
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 100px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-weight: 700;
+  }
 
   /* ---------- Target switcher ---------- */
 
@@ -528,6 +550,11 @@
 </head>
 <body>
 
+<div class="edition-note">
+  <span class="edition-badge">CISA ZTMM edition</span>
+  <span>Same three real assessments as the CMMI scorecard &mdash; identical check results and risk registers, scored through CISA's 4-stage Zero Trust Maturity Model instead of CMMI's 5 levels. Both editions are kept side by side deliberately.</span>
+</div>
+
 <div class="target-tabs" id="target-tabs"></div>
 
 <header>
@@ -572,7 +599,7 @@
 
 <div class="section-head">
   <h2>Legend &amp; Scoring Reference</h2>
-  <span class="section-note">what the labels above mean, and how each score maps to a tier or level &mdash; shared across all targets</span>
+  <span class="section-note">what the labels above mean, and how each score maps to a tier or stage &mdash; shared across all targets</span>
 </div>
 
 <div class="legend-grid">
@@ -611,24 +638,24 @@
   </div>
 
   <div class="legend-card">
+    <h3>CISA ZTMM maturity stages <span style="font-weight:400;text-transform:none;letter-spacing:0;">(Cybersecurity and Infrastructure Security Agency Zero Trust Maturity Model)</span></h3>
+    <div class="legend-rows">
+      <div class="legend-row"><span class="legend-key">0-39</span><span class="legend-val">S1 <b>Traditional</b></span></div>
+      <div class="legend-row"><span class="legend-key">40-69</span><span class="legend-val">S2 <b>Initial</b></span></div>
+      <div class="legend-row"><span class="legend-key">70-89</span><span class="legend-val">S3 <b>Advanced</b></span></div>
+      <div class="legend-row"><span class="legend-key">90-100</span><span class="legend-val">S4 <b>Optimal</b></span></div>
+    </div>
+  </div>
+
+  <div class="legend-card">
     <h3>CMMI maturity levels <span style="font-weight:400;text-transform:none;letter-spacing:0;">(Capability Maturity Model Integration)</span></h3>
+    <p class="prose" style="margin-bottom:10px;">The alternative selectable methodology (<code class="mono">--methodology cmmi</code>, the default) &mdash; not computed for these assessments, which used CISA ZTMM above instead (see the companion CMMI-edition scorecard). Shares the same 0-100 score-to-level mapping approach, just with 5 levels instead of ZTMM's 4 stages.</p>
     <div class="legend-rows">
       <div class="legend-row"><span class="legend-key">0-19</span><span class="legend-val">L1 <b>Initial</b></span></div>
       <div class="legend-row"><span class="legend-key">20-39</span><span class="legend-val">L2 <b>Managed</b></span></div>
       <div class="legend-row"><span class="legend-key">40-69</span><span class="legend-val">L3 <b>Defined</b></span></div>
       <div class="legend-row"><span class="legend-key">70-89</span><span class="legend-val">L4 <b>Quantitatively Managed</b></span></div>
       <div class="legend-row"><span class="legend-key">90-100</span><span class="legend-val">L5 <b>Optimizing</b></span></div>
-    </div>
-  </div>
-
-  <div class="legend-card">
-    <h3>CISA ZTMM maturity stages <span style="font-weight:400;text-transform:none;letter-spacing:0;">(Cybersecurity and Infrastructure Security Agency Zero Trust Maturity Model)</span></h3>
-    <p class="prose" style="margin-bottom:10px;">The alternative selectable methodology (<code class="mono">--methodology cisa-ztmm</code>) &mdash; not computed for these assessments, which used CMMI instead. Shares the same 0-100 score-to-stage mapping approach, just with 4 stages instead of CMMI's 5.</p>
-    <div class="legend-rows">
-      <div class="legend-row"><span class="legend-key">0-39</span><span class="legend-val">S1 <b>Traditional</b></span></div>
-      <div class="legend-row"><span class="legend-key">40-69</span><span class="legend-val">S2 <b>Initial</b></span></div>
-      <div class="legend-row"><span class="legend-key">70-89</span><span class="legend-val">S3 <b>Advanced</b></span></div>
-      <div class="legend-row"><span class="legend-key">90-100</span><span class="legend-val">S4 <b>Optimal</b></span></div>
     </div>
   </div>
 
@@ -683,21 +710,25 @@
 </footer>
 
 <script>
-  // ---------- Per-target real assessment data ----------
-  // Each target's properties/riskRegister come directly from a real
-  // `miccmac assess <target> --connector ssh-osquery[-windows] --methodology
-  // cmmi --risk-register` run against a live VM. cmmi.level === null means
-  // the property was never scored (every check NOT_APPLICABLE, e.g. Claimed/
+  // ---------- Per-target real assessment data (CISA ZTMM edition) ----------
+  // Check results and risk registers are IDENTICAL to the CMMI-edition
+  // scorecard (same underlying `miccmac assess` runs) -- only the `ztmm`
+  // maturity-stage block differs, computed by re-bucketing the exact same
+  // property/overall scores through CISA ZTMM's 40/70/90 thresholds instead
+  // of CMMI's 20/40/70/90. This mirrors how the tool itself works: the
+  // methodology layer re-scores existing flat scores, it never re-queries
+  // the device (see miccmac/methodology.py). ztmm.level === null means the
+  // property was never scored (every check NOT_APPLICABLE, e.g. Claimed/
   // Assessed with no --attestation supplied) -- rendered as "Unassessed."
   const TARGETS = {
 
     ubuntu: {
       label: "Ubuntu Desktop", hostname: "miccmac-ubuntu", address: "192.168.48.136",
       platform: "Ubuntu 26.04.1 LTS", assessed: "2026-08-28",
-      overall: 72.0, tier: "Defensible", cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+      overall: 72.0, tier: "Defensible", cmmi: { level: 3, label: "Advanced", pct: 66.7 },
       properties: [
         { key: "monitored", letter: "M", title: "Monitored", score: 50.0,
-          cmmi: { level: 3, label: "Defined", pct: 50.0 },
+          cmmi: { level: 2, label: "Initial", pct: 33.3 },
           checks: [
             { id: "MON-01", status: "PASS", name: "Endpoint security logging enabled", detail: "systemd-journald and a syslog daemon (rsyslog/syslog-ng) are both active." },
             { id: "MON-02", status: "FAIL", name: "Logs forwarded to a centralized SIEM / log platform", detail: "No remote forwarding destination found in rsyslog configuration; logs are not leaving the device." },
@@ -706,7 +737,7 @@
           ]
         },
         { key: "inventoried", letter: "I", title: "Inventoried", score: 75.0,
-          cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+          cmmi: { level: 3, label: "Advanced", pct: 66.7 },
           checks: [
             { id: "INV-01", status: "PASS", name: "Device present in the authoritative asset inventory", detail: "Device 'miccmac-ubuntu-01' present and tracked in the supplied inventory record." },
             { id: "INV-02", status: "FAIL", name: "Hardware attributes recorded (make, model, serial)", detail: "No hardware attributes (vendor/model/serial) reported by osquery system_info." },
@@ -715,7 +746,7 @@
           ]
         },
         { key: "controlled", letter: "C", title: "Controlled", score: 25.0,
-          cmmi: { level: 2, label: "Managed", pct: 25.0 },
+          cmmi: { level: 1, label: "Traditional", pct: 0.0 },
           checks: [
             { id: "CTL-01", status: "FAIL", name: "Device enrolled in central configuration management / MDM", detail: "No central configuration management / MDM agent (puppet, chef, ansible, salt-minion, landscape-client) found installed." },
             { id: "CTL-02", status: "PASS", name: "Administrative privileges restricted (least privilege)", detail: "root account is locked (no direct password login); privilege elevation is via sudo for 1 named account(s): miccmac." },
@@ -724,7 +755,7 @@
           ]
         },
         { key: "claimed", letter: "C", title: "Claimed", score: 100.0,
-          cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+          cmmi: { level: 4, label: "Optimal", pct: 100.0 },
           checks: [
             { id: "CLM-01", status: "PASS", name: "Accountable business owner assigned and recorded", detail: "Business owner recorded: 'Isaac Ojeh'." },
             { id: "CLM-02", status: "PASS", name: "Responsible system administrator identified", detail: "Responsible system administrator identified: 'Isaac Ojeh'." },
@@ -732,7 +763,7 @@
           ]
         },
         { key: "minimized", letter: "M", title: "Minimized", score: 87.5,
-          cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+          cmmi: { level: 3, label: "Advanced", pct: 66.7 },
           checks: [
             { id: "MIN-01", status: "PASS", name: "Unnecessary services and daemons disabled", detail: "No legacy/insecure services (telnet, rsh, rpcbind, tftp, NIS) found active." },
             { id: "MIN-02", status: "PASS", name: "Unused or unauthorized software removed", detail: "No legacy/insecure packages (telnetd, rsh-server, nis, xinetd, tftpd-hpa, rpcbind) found installed." },
@@ -741,7 +772,7 @@
           ]
         },
         { key: "assessed", letter: "A", title: "Assessed", score: 66.7,
-          cmmi: { level: 3, label: "Defined", pct: 50.0 },
+          cmmi: { level: 2, label: "Initial", pct: 33.3 },
           checks: [
             { id: "ASM-01", status: "PASS", name: "Authenticated vulnerability scanning performed on schedule", detail: "Vulnerability scanning last performed 27 day(s) ago (policy: 30)." },
             { id: "ASM-02", status: "FAIL", name: "Configuration / compliance assessment performed on schedule", detail: "Attestation states Compliance assessment is not performed." },
@@ -749,7 +780,7 @@
           ]
         },
         { key: "current", letter: "C", title: "Current", score: 100.0,
-          cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+          cmmi: { level: 4, label: "Optimal", pct: 100.0 },
           checks: [
             { id: "CUR-01", status: "PASS", name: "Operating-system patch level within policy", detail: "apt-daily-upgrade.timer active; last successful apt update 0 day(s) ago." },
             { id: "CUR-02", status: "NA", name: "Third-party software updated within policy", detail: "No third-party apt repositories configured; no third-party software to have an update policy for." },
@@ -773,10 +804,10 @@
     win11: {
       label: "Windows 11 Enterprise", hostname: "DESKTOP-TQ6S23H", address: "192.168.48.138",
       platform: "Windows 11 Enterprise 25H2 (Build 26200)", assessed: "2026-08-29",
-      overall: 60.8, tier: "Developing", cmmi: { level: 3, label: "Defined", pct: 50.0 },
+      overall: 60.8, tier: "Developing", cmmi: { level: 2, label: "Initial", pct: 33.3 },
       properties: [
         { key: "monitored", letter: "M", title: "Monitored", score: 62.5,
-          cmmi: { level: 3, label: "Defined", pct: 50.0 },
+          cmmi: { level: 2, label: "Initial", pct: 33.3 },
           checks: [
             { id: "MON-01", status: "PASS", name: "Endpoint security logging enabled", detail: "Windows Event Log service is running." },
             { id: "MON-02", status: "FAIL", name: "Logs forwarded to a centralized SIEM / log platform", detail: "No recognized log-forwarding agent service found running; logs are not leaving the device." },
@@ -785,7 +816,7 @@
           ]
         },
         { key: "inventoried", letter: "I", title: "Inventoried", score: 100.0,
-          cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+          cmmi: { level: 4, label: "Optimal", pct: 100.0 },
           checks: [
             { id: "INV-01", status: "NA", name: "Device present in the authoritative asset inventory", detail: "No inventory-system integration configured (no --inventory-record supplied); device presence in an external CMDB cannot be assessed from the device alone." },
             { id: "INV-02", status: "PASS", name: "Hardware attributes recorded (make, model, serial)", detail: "Hardware attributes recorded: vendor='VMware, Inc.', model='VMware20,1', serial='VMware-56 4d 0d e9 98 ef 77 ee-40 69 a1 cb 0b 60 11 a8'." },
@@ -794,7 +825,7 @@
           ]
         },
         { key: "controlled", letter: "C", title: "Controlled", score: 33.3,
-          cmmi: { level: 2, label: "Managed", pct: 25.0 },
+          cmmi: { level: 1, label: "Traditional", pct: 0.0 },
           checks: [
             { id: "CTL-01", status: "FAIL", name: "Device enrolled in central configuration management / MDM", detail: "No central configuration management / MDM client (SCCM, Intune, Chef, Puppet, Ansible) found installed." },
             { id: "CTL-02", status: "PASS", name: "Administrative privileges restricted (least privilege)", detail: "Built-in Administrator account is disabled; privilege elevation is via 2 named Administrators-group account(s): Administrator, miccmac." },
@@ -811,7 +842,7 @@
           ]
         },
         { key: "minimized", letter: "M", title: "Minimized", score: 75.0,
-          cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+          cmmi: { level: 3, label: "Advanced", pct: 66.7 },
           checks: [
             { id: "MIN-01", status: "PASS", name: "Unnecessary services and daemons disabled", detail: "No legacy/insecure services (Telnet, FTP, SNMP) found running." },
             { id: "MIN-02", status: "PASS", name: "Unused or unauthorized software removed", detail: "No legacy/insecure optional features (Telnet client/server, TFTP, SMBv1, FTP server) found enabled." },
@@ -828,7 +859,7 @@
           ]
         },
         { key: "current", letter: "C", title: "Current", score: 33.3,
-          cmmi: { level: 2, label: "Managed", pct: 25.0 },
+          cmmi: { level: 1, label: "Traditional", pct: 0.0 },
           checks: [
             { id: "CUR-01", status: "PASS", name: "Operating-system patch level within policy", detail: "Windows Update service active; last successful update installed 0 day(s) ago." },
             { id: "CUR-02", status: "FAIL", name: "Third-party software updated within policy", detail: "3 third-party program(s) installed, and no package manager (e.g. Chocolatey) was found to keep them updated." },
@@ -852,10 +883,10 @@
     winsrv: {
       label: "Windows Server 2025", hostname: "WIN-AH4J566CC4U", address: "192.168.48.139",
       platform: "Windows Server 2025 Standard (Build 26100)", assessed: "2026-08-29",
-      overall: 47.5, tier: "Developing", cmmi: { level: 3, label: "Defined", pct: 50.0 },
+      overall: 47.5, tier: "Developing", cmmi: { level: 2, label: "Initial", pct: 33.3 },
       properties: [
         { key: "monitored", letter: "M", title: "Monitored", score: 62.5,
-          cmmi: { level: 3, label: "Defined", pct: 50.0 },
+          cmmi: { level: 2, label: "Initial", pct: 33.3 },
           checks: [
             { id: "MON-01", status: "PASS", name: "Endpoint security logging enabled", detail: "Windows Event Log service is running." },
             { id: "MON-02", status: "FAIL", name: "Logs forwarded to a centralized SIEM / log platform", detail: "No recognized log-forwarding agent service found running; logs are not leaving the device." },
@@ -864,7 +895,7 @@
           ]
         },
         { key: "inventoried", letter: "I", title: "Inventoried", score: 100.0,
-          cmmi: { level: 5, label: "Optimizing", pct: 100.0 },
+          cmmi: { level: 4, label: "Optimal", pct: 100.0 },
           checks: [
             { id: "INV-01", status: "NA", name: "Device present in the authoritative asset inventory", detail: "No inventory-system integration configured (no --inventory-record supplied); device presence in an external CMDB cannot be assessed from the device alone." },
             { id: "INV-02", status: "PASS", name: "Hardware attributes recorded (make, model, serial)", detail: "Hardware attributes recorded: vendor='VMware, Inc.', model='VMware Virtual Platform', serial='VMware-56 4d 69 3f bc bb 42 35-1d a7 b3 b4 0a 2a 53 0a'." },
@@ -873,7 +904,7 @@
           ]
         },
         { key: "controlled", letter: "C", title: "Controlled", score: 0.0,
-          cmmi: { level: 1, label: "Initial", pct: 0.0 },
+          cmmi: { level: 1, label: "Traditional", pct: 0.0 },
           checks: [
             { id: "CTL-01", status: "FAIL", name: "Device enrolled in central configuration management / MDM", detail: "No central configuration management / MDM client (SCCM, Intune, Chef, Puppet, Ansible) found installed." },
             { id: "CTL-02", status: "FAIL", name: "Administrative privileges restricted (least privilege)", detail: "Built-in Administrator account is enabled, bypassing named-account elevation." },
@@ -890,7 +921,7 @@
           ]
         },
         { key: "minimized", letter: "M", title: "Minimized", score: 75.0,
-          cmmi: { level: 4, label: "Quantitatively Managed", pct: 75.0 },
+          cmmi: { level: 3, label: "Advanced", pct: 66.7 },
           checks: [
             { id: "MIN-01", status: "PASS", name: "Unnecessary services and daemons disabled", detail: "No legacy/insecure services (Telnet, FTP, SNMP) found running." },
             { id: "MIN-02", status: "PASS", name: "Unused or unauthorized software removed", detail: "No legacy/insecure optional features (Telnet client/server, TFTP, SMBv1, FTP server) found enabled." },
@@ -907,7 +938,7 @@
           ]
         },
         { key: "current", letter: "C", title: "Current", score: 0.0,
-          cmmi: { level: 1, label: "Initial", pct: 0.0 },
+          cmmi: { level: 1, label: "Traditional", pct: 0.0 },
           checks: [
             { id: "CUR-01", status: "FAIL", name: "Operating-system patch level within policy", detail: "Windows Update service (wuauserv) is not running; OS patches are not applied on a schedule." },
             { id: "CUR-02", status: "FAIL", name: "Third-party software updated within policy", detail: "3 third-party program(s) installed, and no package manager (e.g. Chocolatey) was found to keep them updated." },
@@ -960,12 +991,12 @@
       <div><dt>Assessed</dt><dd class="mono">${t.assessed}</dd></div>
     `;
 
-    const segs = Array.from({ length: 5 }, (_, i) =>
+    const segs = Array.from({ length: 4 }, (_, i) =>
       `<span class="${t.cmmi.level !== null && i < t.cmmi.level ? "filled" : ""}"></span>`
     ).join("");
     const cmmiLabel = t.cmmi.level !== null
-      ? `<span class="lvl-name">CMMI &middot; ${t.cmmi.label}</span><span class="lvl-pct">Level ${t.cmmi.level}/5</span>`
-      : `<span class="lvl-name">CMMI &middot; Unassessed</span>`;
+      ? `<span class="lvl-name">CISA ZTMM &middot; ${t.cmmi.label}</span><span class="lvl-pct">Stage ${t.cmmi.level}/4</span>`
+      : `<span class="lvl-name">CISA ZTMM &middot; Unassessed</span>`;
 
     document.getElementById("score-panel").innerHTML = `
       <div class="score-row">
@@ -987,13 +1018,13 @@
       const card = document.createElement("div");
       card.className = "prop-card";
 
-      const segs = Array.from({ length: 5 }, (_, i) =>
+      const segs = Array.from({ length: 4 }, (_, i) =>
         `<span class="${p.cmmi.level !== null && i < p.cmmi.level ? "filled" : ""}"></span>`
       ).join("");
       const scoreText = p.score === null ? "n/a / 100" : `${p.score.toFixed(1)} / 100`;
       const cmmiText = p.cmmi.level !== null
-        ? `CMMI L${p.cmmi.level} &mdash; ${p.cmmi.label}`
-        : `CMMI &mdash; Unassessed`;
+        ? `ZTMM S${p.cmmi.level} &mdash; ${p.cmmi.label}`
+        : `ZTMM &mdash; Unassessed`;
 
       card.innerHTML = `
         <div class="prop-head">
@@ -1055,17 +1086,9 @@
 
   renderAll();
 
-  // Full reference: all 26 built-in checks, from data/control-mappings.yaml
-  // and each check module's own control_refs (see miccmac/checks/*.py) --
-  // independent of which checks actually failed on any particular device,
-  // and identical across all three targets since control mappings are
-  // per-check, not per-platform.
-  // Multi-framework control mapping: NIST 800-53/CIS v8 (original), plus
-  // ISO/IEC 27001:2022, NIST CSF 2.0, HIPAA Security Rule (45 CFR Part 164),
-  // PCI DSS v4.0.1, and SOC 2 (AICPA TSC) added after individually
-  // researching each check against each framework's current published
-  // text. A framework tag is present only where a real, specific,
-  // citable control was confirmed -- omitted (not force-fit) otherwise.
+  // Full reference: all 26 built-in checks -- identical across both
+  // scorecard editions and all three targets, since control mappings are
+  // per-check, not per-methodology or per-platform.
   const allChecks = [
     { id: "MON-01", name: "Endpoint security logging enabled", refs: ["NIST 800-53 AU-2", "CIS v8 8.2", "ISO 27001 A.8.15", "NIST CSF PR.PS-04", "HIPAA §164.312(b)", "PCI DSS 10.2.1", "SOC 2 CC7.2"], ig: "IG1", fair: "HIGH / MEDIUM" },
     { id: "MON-02", name: "Logs forwarded to a centralized SIEM / log platform", refs: ["NIST 800-53 AU-6", "CIS v8 8.9", "ISO 27001 A.8.15", "NIST CSF PR.PS-04", "HIPAA §164.312(b)", "PCI DSS 10.3.3", "SOC 2 CC7.2"], ig: "IG2", fair: "MEDIUM / MEDIUM" },
