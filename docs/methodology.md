@@ -232,6 +232,13 @@ the recommended order of operations -- fix the top entry first.
 
 Implementation: `miccmac/risk_register.py`.
 
+**Provenance:** the `cis_ig`/`fair_frequency`/`fair_magnitude` values for all
+26 built-in checks were assigned by the researcher (Isaac Ojeh) and reviewed
+against a per-check rationale table on 2026-08-29; all 26 ratings were
+confirmed as-is with no adjustments. These are qualitative judgment calls,
+not derived from an external framework or SME panel beyond the researcher's
+own analysis.
+
 ## 10. Target connectors and real detection logic
 
 As of this release, **all seven MICCMAC properties have real, working
