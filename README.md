@@ -229,6 +229,7 @@ excluded from scoring rather than failed.
 | **Inventory / asset lookups** | `--inventory-record` (file-based) works | Live CMDB integration (ServiceNow, Snipe-IT, Intune, etc.) |
 | **Attestation** | `--attestation` (file-based) works | Live GRC/IdP integration (Azure AD, a scan-management API, etc.) |
 | **Cloud variants** | Not started | AWS SSM Inventory, Azure Arc, GCP OS Config rather than direct host access |
+| **Audit/review worksheet** | Not started | A `miccmac assess --review-worksheet` output mode generating a manual-vs-automated verification worksheet (raw-evidence command + blank verdict per check, plus risk-register accuracy/actionability fields) for auditing the tool's own results against independent manual review. Prototyped once by hand for this project's own fairness-control research pass; would need the raw-evidence commands derived from the connector/check code itself (not hand-maintained separately) to avoid drifting out of sync as checks change.
 
 ### Lowest-effort first concrete targets — done for Linux + osquery, all 7 properties
 
