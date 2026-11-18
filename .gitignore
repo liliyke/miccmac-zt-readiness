@@ -15,3 +15,8 @@ htmlcov/
 .idea/
 .vscode/
 reports/
+
+# Study data stays out of this public repository (keep it in a private,
+# versioned folder); these patterns are a safety net only.
+/study-data/
+/synthetic-study/
