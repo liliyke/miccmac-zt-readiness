@@ -516,6 +516,31 @@ def test_record_keeps_a_sealed_file_to_the_kind_it_was_recorded_as(tmp_path, cap
     assert [row.kind for row in read_ledger(ledger_file)] == ["tool-output"]
 
 
+def test_the_first_kind_of_a_sealed_file_must_fit_its_content(tmp_path, capsys):
+    """Round 4 (V): the first kind is final, so a saved facts file recorded as tool-output could never get its
+    facts row. A facts file is kind facts and only that; a register sheet's kind follows its name."""
+    study = _study(tmp_path)
+    ledger_file = study / "ledger.csv"
+    facts = study / "outputs" / "H1-facts.json"
+    facts.write_text('{\n  "facts_format": "miccmac-facts/1",\n  "facts": {}\n}\n', encoding="utf-8")
+    (study / "register").mkdir()
+    gaps = study / "register" / "H1-missed-gaps.csv"
+    gaps.write_text("gap\n", encoding="utf-8")
+    for kind, path, why in (
+            ("tool-output", facts, "is a saved facts file (miccmac-facts/1): record it with --kind facts"),
+            ("facts", study / "outputs" / "H1-cmmi.json",
+             "is not a saved facts file (miccmac-facts/1), so it is not --kind facts"),
+            ("register-review", gaps, "is not named <H>-register-review.csv, so it is not --kind register-review")):
+        assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", kind,
+                     str(path)]) == 2
+        assert f"{why}; nothing was recorded" in capsys.readouterr().err
+    assert not ledger_file.exists()
+    for kind, path in (("facts", facts), ("tool-output", study / "outputs" / "H1-cmmi.json"), ("missed-gaps", gaps)):
+        assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", kind,
+                     str(path)]) == 0
+    assert [row.kind for row in read_ledger(ledger_file)] == ["facts", "tool-output", "missed-gaps"]
+
+
 @pytest.mark.parametrize("note, owner", [
     ("withdrawn: by hand", "ledger withdraw"),
     ("seal opened by hand: hosts H1", "register-sheet and agreement"),
