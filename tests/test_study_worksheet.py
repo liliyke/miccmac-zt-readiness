@@ -3,7 +3,8 @@
 Tests for miccmac_study.worksheet: blank per-host manual worksheets.
 
 Covers the sheet layout and its instructions, the level ranges (full, or
-the study's manual_max_level with --study-config), the no-leak guarantee (no
+the study's manual_max_level with --study-config), the note when the study
+configuration declares no manual level rule yet, the no-leak guarantee (no
 tool results in check or level rows; no queries, thresholds, day counts,
 cutoffs, risk metadata or remediation text anywhere), the stub-mode
 assertion, list-checks validation, and overwrite protection. Fixtures are
@@ -268,6 +269,41 @@ def test_a_study_config_saved_as_ansi_gives_no_traceback(tmp_path, capsys):
     assert rc in (0, 2)  # 0 if formats.load_study_config decodes ANSI, else a clear error
     if rc == 2:
         assert "UTF-8" in capsys.readouterr().err
+
+
+NO_MANUAL_RULE = ("note: study.yaml declares no level_rule.manual yet (decision 4); ledger record will refuse to hash "
+                  "a filled worksheet until it does")
+NO_OVERALL_RULE = ("note: study.yaml declares no level_rule.overall, which the approved manual rule needs for the "
+                   "overall levels (decision 4); ledger record will refuse to hash a filled worksheet until it does")
+
+
+@pytest.mark.parametrize("text, note", [
+    ("hosts: [H1]\n", NO_MANUAL_RULE),
+    ("hosts: [H1]\nlevel_rule: {manual: null, tool_side: tool-cutoffs, overall: null}\n", NO_MANUAL_RULE),
+    ("hosts: [H1]\nmanual_max_level: {cmmi: 4}\nlevel_rule: {manual: approved}\n", NO_OVERALL_RULE),
+    ("hosts: [H1]\nmanual_max_level: {cmmi: 4}\nlevel_rule: {manual: approved, overall: pooled-checks}\n", None),
+    ("hosts: [H1]\nlevel_rule: {manual: tool-cutoffs}\n", None),
+])
+def test_study_config_without_a_manual_level_rule_gets_a_note(tmp_path, capsys, text, note):
+    """V2-N2, V3-N1: a missing decision 4 shows up when the blank sheet is made, not after it is hashed."""
+    config = _study_config(tmp_path, text)
+    assert _generate(tmp_path, "--study-config", str(config)) == 0
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [str(tmp_path / "worksheets" / "H1-worksheet.csv")]
+    assert captured.err == ("" if note is None else note + "\n")
+
+
+def test_the_template_study_config_gets_the_note_and_no_study_config_gets_none(tmp_path, capsys):
+    from miccmac_study.formats import config_template, load_study_config
+
+    config = _study_config(tmp_path, config_template(["H1"]))
+    assert _generate(tmp_path, "--study-config", str(config)) == 0
+    assert capsys.readouterr().err == NO_MANUAL_RULE + "\n"
+    assert worksheet.level_rule_note(load_study_config(config), "settings.yaml").startswith(
+        "note: settings.yaml declares no level_rule.manual yet")
+    (tmp_path / "worksheets" / "H1-worksheet.csv").unlink()
+    assert _generate(tmp_path) == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_level_description_library_function():

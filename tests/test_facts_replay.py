@@ -255,7 +255,10 @@ def test_an_existing_save_facts_file_is_refused_before_connecting(study, set_clo
      "--facts cannot be combined with --save-facts"),
     (["assess", TARGET, "--save-facts", "outputs/H2-facts.json"],
      "--save-facts requires --connector"),
-    (["assess", TARGET, "--connector", "ssh-osquery", *SSH, "--save-facts", "missing/H2-facts.json"],
+    # -o added deliberately: a live run with --save-facts now needs -o or
+    # --stdout (V1-N8), and without either that refusal would come first.
+    (["assess", TARGET, "--connector", "ssh-osquery", *SSH, "--save-facts", "missing/H2-facts.json",
+      "-o", "outputs/H2-cmmi.json"],
      "--save-facts folder does not exist"),
     (["assess", TARGET, "--connector", "ssh-osquery", *SSH, "--save-facts", "outputs/H2-facts.json",
       "-o", "outputs/../outputs/H2-facts.json"],
@@ -289,6 +292,11 @@ def _without(key):
     return envelope
 
 
+# Every --facts run below that reads its report from stdout (or must get past
+# the report-destination check to the error it tests) now passes --stdout:
+# without -o or --stdout a replay is refused first (V1-N8). Added
+# deliberately; tests/test_output_safety.py tests that refusal.
+
 @pytest.mark.parametrize("content, message", [
     (b"{not json", "is not valid UTF-8 JSON"),
     (b"\xff\xfe{\x00}\x00", "is not valid UTF-8 JSON"),
@@ -309,7 +317,7 @@ def test_a_malformed_facts_file_is_rejected(content, message, tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)
     data = content if isinstance(content, bytes) else json.dumps(content).encode("utf-8")
     Path("bad-facts.json").write_bytes(data)
-    assert main(["assess", "--facts", "bad-facts.json", "--format", "json"]) == 2
+    assert main(["assess", "--facts", "bad-facts.json", "--format", "json", "--stdout"]) == 2
     captured = capsys.readouterr()
     assert captured.err.startswith("error: ")
     assert message in captured.err
@@ -318,14 +326,14 @@ def test_a_malformed_facts_file_is_rejected(content, message, tmp_path, monkeypa
 
 def test_a_missing_facts_file_is_rejected(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    assert main(["assess", "--facts", "nope.json"]) == 2
+    assert main(["assess", "--facts", "nope.json", "--stdout"]) == 2
     assert capsys.readouterr().err.startswith("error: cannot read --facts file")
 
 
 def test_a_valid_hand_written_envelope_replays(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     Path("facts.json").write_text(json.dumps(VALID_ENVELOPE), encoding="utf-8")
-    assert main(["assess", "--facts", "facts.json", "--format", "json"]) == 0
+    assert main(["assess", "--facts", "facts.json", "--format", "json", "--stdout"]) == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data["target"] == TARGET
@@ -338,7 +346,7 @@ def test_replay_without_as_of_uses_the_files_as_of(study, set_clock, capsys):
     _live_run(set_clock)
     set_clock(REPLAY_CLOCK)
     capsys.readouterr()
-    assert main(["assess", "--facts", FACTS_PATH, *INPUTS, "--format", "json"]) == 0
+    assert main(["assess", "--facts", FACTS_PATH, *INPUTS, "--format", "json", "--stdout"]) == 0
     captured = capsys.readouterr()
     assert captured.err == ("note: --as-of not given; using 2026-11-23, the as_of date recorded "
                             "in the facts file\n")
@@ -356,7 +364,7 @@ def test_replay_of_facts_saved_without_as_of_uses_the_collection_date(study, set
     assert _load(FACTS_PATH)["as_of"] is None
     set_clock(REPLAY_CLOCK)
     capsys.readouterr()
-    assert main(["assess", "--facts", FACTS_PATH, *INPUTS, "--format", "json"]) == 0
+    assert main(["assess", "--facts", FACTS_PATH, *INPUTS, "--format", "json", "--stdout"]) == 0
     captured = capsys.readouterr()
     # CC-07: the note now also says that the live run (no --as-of) read the
     # real clock, so its date-dependent verdicts may differ from the replay's.
@@ -407,21 +415,24 @@ def test_evening_replay_warnings_otherwise_unchanged(file_as_of, cli_as_of, expe
                                                       monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     Path("facts.json").write_text(json.dumps(_evening_envelope(file_as_of)), encoding="utf-8")
-    assert main(["assess", "--facts", "facts.json", "--format", "json", "--as-of", cli_as_of]) == 0
+    assert main(["assess", "--facts", "facts.json", "--format", "json", "--as-of", cli_as_of,
+                 "--stdout"]) == 0
     assert capsys.readouterr().err == expected
 
 
 def test_replay_warns_when_as_of_differs_from_the_file_or_predates_collection(study, set_clock, capsys):
     _live_run(set_clock)
     capsys.readouterr()
-    assert main(["assess", "--facts", FACTS_PATH, "--format", "json", "--as-of", "2026-11-20"]) == 0
+    assert main(["assess", "--facts", FACTS_PATH, "--format", "json", "--as-of", "2026-11-20",
+                 "--stdout"]) == 0
     assert capsys.readouterr().err == (
         "warning: --as-of 2026-11-20 differs from the as_of date recorded in the facts file "
         "(2026-11-23)\n"
         "warning: --as-of 2026-11-20 is earlier than the date the facts were collected "
         "(2026-11-23 UTC)\n"
     )
-    assert main(["assess", "--facts", FACTS_PATH, "--format", "json", "--as-of", "2026-12-01"]) == 0
+    assert main(["assess", "--facts", FACTS_PATH, "--format", "json", "--as-of", "2026-12-01",
+                 "--stdout"]) == 0
     captured = capsys.readouterr()
     assert captured.err == ("warning: --as-of 2026-12-01 differs from the as_of date recorded in "
                             "the facts file (2026-11-23)\n")
@@ -432,20 +443,20 @@ def test_replay_warns_when_as_of_differs_from_the_file_or_predates_collection(st
 def test_replay_target_defaults_to_the_files_target(study, set_clock, capsys):
     _live_run(set_clock)
     capsys.readouterr()
-    assert main(["assess", "--facts", FACTS_PATH, "--format", "json"]) == 0
+    assert main(["assess", "--facts", FACTS_PATH, "--format", "json", "--stdout"]) == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data["target"] == data["provenance"]["target"] == TARGET
     assert "warning" not in captured.err
 
-    assert main(["assess", TARGET, "--facts", FACTS_PATH, "--format", "json"]) == 0
+    assert main(["assess", TARGET, "--facts", FACTS_PATH, "--format", "json", "--stdout"]) == 0
     assert "warning" not in capsys.readouterr().err
 
 
 def test_replay_with_a_different_target_warns_and_uses_it(study, set_clock, capsys):
     _live_run(set_clock)
     capsys.readouterr()
-    assert main(["assess", "H1", "--facts", FACTS_PATH, "--format", "json"]) == 0
+    assert main(["assess", "H1", "--facts", FACTS_PATH, "--format", "json", "--stdout"]) == 0
     captured = capsys.readouterr()
     assert captured.err.startswith("warning: target 'H1' differs from the target recorded in the "
                                    "facts file ('192.0.2.10')")
@@ -465,7 +476,7 @@ def test_replay_of_windows_facts(tmp_path, monkeypatch, capsys):
         "extra": {"os_version_full": {"ok": True, "data": [{"build": "26200"}]}},
     })
     Path("facts.json").write_text(json.dumps(envelope), encoding="utf-8")
-    assert main(["assess", "--facts", "facts.json", "--format", "json"]) == 0
+    assert main(["assess", "--facts", "facts.json", "--format", "json", "--stdout"]) == 0
     data = json.loads(capsys.readouterr().out)
     details = {c["check_id"]: c["detail"] for p in data["properties"] for c in p["checks"]}
     assert details["INV-03"] == "1 installed programs enumerated via osquery programs."

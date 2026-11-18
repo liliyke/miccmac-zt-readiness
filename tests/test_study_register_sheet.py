@@ -2,7 +2,8 @@
 
 Tests for miccmac_study.register_sheet: risk-register review sheets that
 stay sealed (ledger.seal_status) until every host's worksheet is hashed,
-whatever --config lists, unless the host was withdrawn in the ledger.
+whatever --config lists, unless the host was withdrawn in the ledger, and
+the one seal-opening ledger row each run that writes sheets appends.
 
 Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts with a provenance block per the miccmac-provenance/1 spec and
@@ -161,9 +162,11 @@ def test_refuses_when_a_worksheet_changed_after_hashing(study, capsys):
                                                            encoding="utf-8")
     assert _run(study) == 2
     err = capsys.readouterr().err
-    assert ("H2 (worksheet changed after it was hashed: worksheets/H2-worksheet.csv; restore the original bytes "
-            "from your commit, e-mail or ledger-archive copy; a changed worksheet cannot be re-hashed "
-            "(archived copy: ledger-archive/") in err
+    # Reworded on purpose (V1-N1): the first row's archive copy is named in the advice itself.
+    first = read_ledger(study / "ledger.csv")[1]
+    assert (f"H2 (worksheet changed after it was hashed: worksheets/H2-worksheet.csv; restore the original bytes "
+            f"from ledger-archive/{first.sha256}.csv (or your commit or e-mailed copy); a changed worksheet cannot "
+            "be re-hashed)") in err
     assert "stay sealed" in err
     # Re-recording cannot help here, so the refusal does not suggest it.
     assert "ledger record --" not in err and "ledger withdraw" not in err
@@ -217,7 +220,7 @@ def test_forced_run_records_the_reason_in_the_ledger_first(study, capsys):
     assert _run(study, "--force-before-unseal", "--reason", "pipeline dry run on synthetic data") == 0
     assert len(capsys.readouterr().out.splitlines()) == 4
     rows = read_ledger(study / "ledger.csv")
-    assert len(rows) == 2
+    assert len(rows) == 2                     # the FORCE row only, no seal-opening row
     forced = rows[-1]
     assert (forced.host_code, forced.kind, forced.path) == (ledger.STUDY_HOST_CODE, "other", "study.yaml")
     assert forced.note == "register sheets generated before every worksheet was hashed: pipeline dry run on synthetic data"
@@ -227,15 +230,80 @@ def test_forced_run_records_the_reason_in_the_ledger_first(study, capsys):
     assert _sheet(study, "H2").exists()
 
 
+def test_a_run_that_writes_sheets_appends_one_seal_opening_row(study, capsys):
+    """RD-03, V1-N2: the ledger shows when the register (tool findings) became
+    visible: exactly one row per run that writes sheets, none for a refusal."""
+    _hash_worksheets(study, "H1", "H2")
+    assert _run(study) == 0
+    rows = read_ledger(study / "ledger.csv")
+    assert len(rows) == 3
+    opened = rows[-1]
+    assert (opened.host_code, opened.kind, opened.path) == ("STUDY", "protocol", "study.yaml")
+    assert opened.note == "seal opened by register-sheet: hosts H1, H2; withdrawn: none"
+    assert opened.note.startswith(ledger.SEAL_OPENED_NOTE_PREFIX)
+    assert ledger.archive_path(study / "ledger.csv", opened).is_file()
+    assert ledger.first_seal_opening(rows) == (2, opened)
+    assert [state for _, state in ledger.verify_rows(study / "ledger.csv")] == [ledger.OK] * 3
+    capsys.readouterr()
+
+    assert _run(study) == 2                                       # refused: the sheets exist
+    assert "refusing to overwrite" in capsys.readouterr().err
+    assert len(read_ledger(study / "ledger.csv")) == 3
+    assert _run(study, "--overwrite") == 0                        # written again: a second opening
+    rows = read_ledger(study / "ledger.csv")
+    assert len(rows) == 4 and rows[-1].note == opened.note
+
+
+def test_a_refused_run_records_no_seal_opening(study, capsys):
+    _hash_worksheets(study, "H1")
+    assert _run(study) == 2                                       # sealed
+    _hash_worksheets(study, "H2")
+    _write_output(study, "H2", _win_facts(), register=False)
+    assert _run(study) == 2                                       # an output without a register
+    assert "risk_register" in capsys.readouterr().err
+    rows = read_ledger(study / "ledger.csv")
+    assert [r.kind for r in rows] == ["worksheet", "worksheet"] and ledger.first_seal_opening(rows) is None
+
+
+def test_the_seal_opening_names_every_host_of_the_seal_and_the_config_used(study, capsys):
+    _hash_worksheets(study, "H1", "H2")
+    h1_only = study / "h1-only.yaml"
+    h1_only.write_text("hosts: [H1]\n", encoding="utf-8")
+    assert _run(study, "--config", str(h1_only)) == 0
+    opened = read_ledger(study / "ledger.csv")[-1]
+    assert (opened.path, opened.sha256) == ("h1-only.yaml", ledger.sha256_file(h1_only))
+    assert opened.note == "seal opened by register-sheet: hosts H1, H2; withdrawn: none"
+
+
+def test_a_study_yaml_edited_after_it_was_recorded_keeps_the_sheets_sealed(study, capsys):
+    """V1-N2 (a): a temporary edit of the hosts never opens the seal."""
+    ledger.record_files(study / "ledger.csv", "STUDY", "other", [study / "study.yaml"], note="study configuration")
+    _hash_worksheets(study, "H1", "H2")
+    config = study / "study.yaml"
+    original = config.read_bytes()
+    config.write_text(config_template(["H1"], synthetic=True), encoding="utf-8")
+    assert _run(study) == 2
+    err = capsys.readouterr().err
+    assert "STUDY (study.yaml changed since it was last recorded (ledger line 2, " in err
+    assert "editing study.yaml never opens the seal" in err
+    assert not (study / "register").exists() and len(read_ledger(study / "ledger.csv")) == 3
+    config.write_bytes(original)
+    assert _run(study) == 0
+
+
 def test_force_note_prefix_lives_in_the_ledger_module():
     assert register_sheet.FORCE_NOTE_PREFIX is ledger.FORCE_NOTE_PREFIX
     assert ledger.FORCE_NOTE_PREFIX == "register sheets generated before every worksheet was hashed: "
 
 
-def test_force_with_every_worksheet_hashed_adds_no_ledger_row(study, capsys):
+def test_force_with_every_worksheet_hashed_records_a_seal_opening_and_no_force_row(study, capsys):
+    # Changed on purpose (RD-03, V1-N2): every run that writes sheets now records the opening. With the
+    # seal open, --force-before-unseal overrides nothing, so the row is the normal seal-opening row.
     _hash_worksheets(study, "H1", "H2")
     assert _run(study, "--force-before-unseal", "--reason", "not needed") == 0
-    assert len(read_ledger(study / "ledger.csv")) == 2
+    rows = read_ledger(study / "ledger.csv")
+    assert len(rows) == 3
+    assert rows[-1].note == "seal opened by register-sheet: hosts H1, H2; withdrawn: none"
 
 
 def test_forced_run_that_cannot_proceed_records_nothing(study, capsys):
@@ -376,7 +444,9 @@ def test_a_withdrawn_host_leaves_the_seal_and_gets_no_sheets(study, capsys):
     assert capsys.readouterr().out.splitlines() == [str(_sheet(study, "H1")), str(_sheet(study, "H1", "missed-gaps"))]
     assert not _sheet(study, "H2").exists()
     rows = read_ledger(study / "ledger.csv")
-    assert [(r.host_code, r.kind) for r in rows] == [("H1", "worksheet"), ("H2", "protocol")]
+    # Changed on purpose (RD-03): the run that wrote the sheets appended its seal-opening row.
+    assert [(r.host_code, r.kind) for r in rows] == [("H1", "worksheet"), ("H2", "protocol"), ("STUDY", "protocol")]
+    assert rows[-1].note == "seal opened by register-sheet: hosts H1; withdrawn: H2"
 
 
 def test_every_host_withdrawn_is_refused(study, capsys):

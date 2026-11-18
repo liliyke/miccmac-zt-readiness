@@ -514,7 +514,9 @@ def test_cli_as_of_end_to_end_same_output_under_two_real_clocks(lab, real_clock,
     outputs = []
     for moment in REAL_CLOCKS:
         real_clock(moment)
-        assert main(LIVE_ARGS + ["--as-of", "2026-11-23"]) == 0
+        # --stdout added deliberately: a --connector run with --as-of now
+        # needs -o or --stdout (V1-N8; tests/test_output_safety.py).
+        assert main(LIVE_ARGS + ["--as-of", "2026-11-23", "--stdout"]) == 0
         captured = capsys.readouterr()
         assert captured.err == ""
         outputs.append(json.loads(captured.out))

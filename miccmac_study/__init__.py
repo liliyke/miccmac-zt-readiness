@@ -16,9 +16,11 @@ to the repository root (they are not installed with the package):
     python -m miccmac_study --help
 
 Drafted with AI assistance (Claude Code, Anthropic) for the researcher to
-review and test; see the project's AI-use log. Every judgment in the study
-(manual verdicts and levels, register ratings, root causes, interpretation)
-is entered by the researcher; nothing here fills those fields.
+review and test. That assistance is declared in miccmac_study/README.md and
+in the first docstring line of every module and test file of the
+instruments. Every judgment in the study (manual verdicts and levels,
+register ratings, root causes, interpretation) is entered by the researcher;
+nothing here fills those fields.
 """
 from __future__ import annotations
 

@@ -13,15 +13,16 @@ interpretation. No command fills those fields.
 | Command | What it does |
 |---|---|
 | `worksheet` | Blank manual worksheet per host: check id, property, intent, control references, and the levels you may enter. No results. |
-| `ledger` | `record` hashes files and keeps a copy of each in `ledger-archive\` (a worksheet is linted first); `verify` re-hashes them; `status` lists what each host has; `withdraw` takes a host out of the study. |
+| `ledger` | `record` hashes files and keeps a copy of each in `ledger-archive\` (a worksheet is linted first; a file in `worksheets\`, `outputs\` or `register\` is hashed once, never again); `verify` re-hashes them; `status` lists what each host has; `withdraw` takes a host out of the study. |
 | `health` | Checks facts files and tool outputs after a run (with `--ledger` and `--host`, against the ledger too), or input files before the study (`--inputs`). Prints ok/PROBLEM lines only, never a result. |
 | `register-sheet` | Register review sheets. Refuses until every host of the study has its worksheet hashed and unchanged, or is withdrawn. |
 | `agreement` | The analysis plan's counts, rates and intervals, behind the same seal. |
 | `synthetic` | A made-up study folder for testing all of the above. Never study data. |
 
-A command that refuses prints `error: ...` and exits 2. Where a message
-suggests `python -m miccmac_study ...`, type it as
-`& $py -m miccmac_study ...`.
+register-sheet and agreement record each opening of the seal in the ledger
+(a `seal opened by ...` row). A command that refuses prints `error: ...`
+and exits 2. Where a message suggests `python -m miccmac_study ...`, type
+it as `& $py -m miccmac_study ...`.
 
 ## Keep the study folder private
 
@@ -31,6 +32,7 @@ versioned folder (for example a git repository with a private remote).
 net. Keep the SSH private key outside the study folder too, for example
 `$HOME\.ssh\miccmac_study_ed25519`. The layout:
 
+    <study>/.gitattributes                "* -text": git keeps every file byte for byte
     <study>/study.yaml                    analysis settings and the decisions
     <study>/ledger.csv                    SHA-256 ledger; never edit or delete a row
     <study>/ledger-archive/               a copy of every hashed file, named by its SHA-256
@@ -52,24 +54,39 @@ Replace the parts in angle brackets.
 
     $repo = "<path to miccmac-zt-readiness>"; $py = "$repo\.venv\Scripts\python.exe"; $env:PYTHONPATH = $repo
     Set-Location "<study folder>"
+    Set-Content -Encoding ASCII .gitattributes "* -text"
+    git add .gitattributes; git commit -q -m "Keep study files byte for byte"
     New-Item -ItemType Directory -Force inputs, outputs, worksheets, register | Out-Null
     Add-Content -Encoding ASCII .gitignore "keys/", "id_*", "*_ed25519*", "*_rsa*", "*.pem", "*.ppk"
     & $py -m miccmac list-checks --format json > inputs\list-checks.json
     & $py -c "from miccmac_study.formats import config_template; open('study.yaml', 'x', encoding='utf-8').write(config_template(['H1','H2','H3','H4','H5']))"
 
-- The `.gitignore` is a safety net: no key belongs in the study folder. If
-  the folder is a git repository, push it once to its private remote
-  (`git push -u origin <branch>`), so that the plain `git push` of steps 3b
-  and 9 works.
+- `.gitattributes` goes in first, committed before any study file: Git for
+  Windows rewrites line endings by default, so a file restored from a commit
+  or a clone would no longer match its hash.
+- If a commit stops with `Author identity unknown`, set your name and
+  e-mail for this repository once (`git config user.name "<your name>";
+  git config user.email "<your e-mail>"`) and run the line again.
+- Before unsealing, never look at the study repository with a git GUI,
+  `git diff`, `git show` or `git log -p`: they display sealed outputs. Keep
+  `-q` on every commit (git's summary counts their lines).
+- The `.gitignore` is a safety net: no key belongs in the study folder. Push
+  the repository once to its private remote (`git push -u origin <branch>`),
+  so that the plain `git push` of steps 3b and 9 works.
 - The last line refuses to replace an existing `study.yaml` (Python then
   ends with `FileExistsError`).
 - Edit `study.yaml` for the decisions: `hosts` (decision 1),
   `secondary_methodologies` (decision 2), `level_rule` and
   `manual_max_level` (decision 4; see "Analysis defaults" below) and
-  `weighted_kappa`. Leave `synthetic: false`.
+  `weighted_kappa`. Leave `synthetic: false`. `ledger record` refuses a
+  study.yaml that does not load, and step 3 refuses every worksheet until
+  `level_rule.manual` (with `approved`, also `level_rule.overall`) is
+  declared.
 - Write `inputs\<H>-attestation.json` and `inputs\<H>-inventory-record.json`
-  for each host (decision 3, input files for every host). The assessor gets
-  the same files and the same check list.
+  for each host (decision 3, input files for every host), with exactly these
+  names: the identical-inputs check tells the two files apart by name, and
+  `ledger record --kind input` refuses other names. The assessor gets the
+  same files and the same check list.
 - Save JSON and YAML as UTF-8 (in Notepad: Save as, Encoding UTF-8). The
   tools also read what PowerShell writes (`>` saves UTF-16), but the ledger
   hashes the bytes, so settle the encoding before you record a file.
@@ -90,9 +107,10 @@ again. Then hash the fixed inputs:
     foreach ($h in "H1","H2","H3","H4","H5") { & $py -m miccmac_study ledger record --ledger ledger.csv --host $h --kind input "inputs\$h-attestation.json" "inputs\$h-inventory-record.json" }
 
 Each record prints `<sha256>  <path>` and the `archive copy:` it made. To
-correct study.yaml or an input file before the first tool run, edit it and
-record it again with the same `--kind`: `ledger verify` then shows the
-earlier row as SUPERSEDED. From the first tool run on, study.yaml is fixed.
+correct study.yaml before the first tool run, or an input file before step 1
+of its host, edit it and record it again with the same `--kind`: `ledger
+verify` then shows the earlier row as SUPERSEDED. Anything later is in "If a
+hashed file changed".
 
 If decision 3 is "exclude the 10 input-driven checks" instead:
 
@@ -140,13 +158,13 @@ window, so start with the same line as Setup. Windows hosts use
     # 2. Manual pass, blind: fill the worksheet in Excel, save it as CSV UTF-8, close Excel
     # 3. Lint and hash the worksheet; from now on it never changes
     & $py -m miccmac_study ledger record --ledger ledger.csv --host $h --kind worksheet "worksheets\$h-worksheet.csv"
-    # 3b. Anchor the hash outside this folder; note the commit id or the e-mail's send time in the session log
+    # 3b. Anchor the hash outside this folder (or e-mail the sheet); note the commit id or the e-mail's send time in the session log
     git add ledger.csv "worksheets\$h-worksheet.csv"; git commit -q -m "$h worksheet hashed"; git push -q; git rev-parse HEAD
     # 4. Revert the VM to its clean snapshot
     # 5. Tool run, to files only, saving the facts: one live collection per revert
-    & $py -m miccmac assess $ip --connector ssh-osquery --ssh-user assessor --ssh-key $key --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cmmi --risk-register --format json -o "outputs\$h-cmmi.json" --as-of $day --save-facts "outputs\$h-facts.json"
+    & $py -m miccmac assess $ip --save-facts "outputs\$h-facts.json" --as-of $day --connector ssh-osquery --ssh-user assessor --ssh-key $key --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cmmi --risk-register --format json -o "outputs\$h-cmmi.json"
     # 6. CISA ZTMM from the saved facts, with no second connection
-    & $py -m miccmac assess $ip --facts "outputs\$h-facts.json" --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cisa-ztmm --risk-register --format json -o "outputs\$h-cisa-ztmm.json" --as-of $day
+    & $py -m miccmac assess $ip --facts "outputs\$h-facts.json" --as-of $day --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cisa-ztmm --risk-register --format json -o "outputs\$h-cisa-ztmm.json"
     # 7. Hash the outputs
     & $py -m miccmac_study ledger record --ledger ledger.csv --host $h --kind facts "outputs\$h-facts.json"
     & $py -m miccmac_study ledger record --ledger ledger.csv --host $h --kind tool-output "outputs\$h-cmmi.json" "outputs\$h-cisa-ztmm.json"
@@ -156,32 +174,50 @@ window, so start with the same line as Setup. Windows hosts use
     git add -A; git commit -q -m "$h outputs hashed"; git push -q
 
 - Step 1: `--study-config` makes each level row state the levels study.yaml
-  allows.
+  allows. A `note:` on stderr says when study.yaml declares no level rule
+  yet; step 3 would then refuse the sheet.
 - Step 2: a verdict per check (PASS, PARTIAL, FAIL, N/A, or UNASSESSED with
   a reason), your pass criterion, evidence steps and their source (NONE when
   no external procedure exists), the levels, `assessor` and `level_rule`.
   Later corrections go in the disagreement log, never in the sheet.
 - Step 3: `ledger record` lints the sheet first: blank or unreadable
   verdicts and levels, levels outside the allowed range or not following
-  your `level_rule.manual`, the host code and the synthetic flag. On any
-  `lint` line it records nothing: fix the sheet and run step 3 again. Use
-  `--force` only with a reason you can defend; the ledger note then lists
-  the findings. From now on never open the hashed sheet in Excel: open a copy.
+  the declared `level_rule` (or no rule declared), a blank pass criterion,
+  evidence steps or procedure source on a check that is not UNASSESSED, a
+  blank `assessor` or `level_rule`, the host code and the synthetic flag.
+  On any `lint` line it records nothing: fix the sheet and run step 3
+  again. Use `--force` only with a reason you can defend, and give it with
+  `--note "<reason>"`: the ledger keeps it with the findings, and agreement
+  reports them. Write it in the session log too. Once recorded, the sheet
+  never changes: step 3 on the same bytes prints `already recorded at ...`,
+  and on changed bytes it refuses, even with `--force` (see "If a hashed
+  file changed"). From now on never open the hashed sheet in Excel: open a
+  copy.
 - Step 3b: commit the worksheet and the ledger and push them to the study
-  folder's private remote, or e-mail yourself the
-  `<sha256>  worksheets/<H>-worksheet.csv` line step 3 printed. A local
-  commit alone is dated by your own clock; a push or an e-mail gives an
-  outside timestamp. Do it before step 4. Keep `-q` on every commit while
-  outputs are sealed (git's summary counts their lines).
+  folder's private remote, or e-mail yourself the worksheet file itself as
+  an attachment, with the `<sha256>  worksheets/<H>-worksheet.csv` line
+  step 3 printed in the body. A local commit alone is dated by your own
+  clock; a push or an e-mail gives an outside timestamp. Do it before
+  step 4.
 - Step 5: one live collection per revert. If step 5 stops with an error and
-  wrote no facts file, revert again (step 4) before you repeat it. If it
-  ends with `error: cannot write --output ...`, the message names the saved
+  wrote no facts file, revert again (step 4) before you repeat it. Keep the
+  options in the guide's order: `--save-facts` and `--as-of` come first and
+  `-o` last, so a line cut or wrapped anywhere when pasted is refused before
+  it connects (for example `--save-facts requires --connector`, `--connector
+  ssh-osquery requires --ssh-user and --ssh-key`, or, for a line that lost
+  its `-o`, `error: this run's report holds results, so it goes to a file
+  ...`). A `--connector` line without `--save-facts` and `--as-of` is not a
+  study run and would print the host's report. An empty `$key` stops with
+  `error: argument --ssh-key: expected one argument`. A refused line needs
+  no revert: fix it and run it. Never add `--stdout` here. If step 5 ends
+  with `error: cannot write --output ...`, the message names the saved
   facts: do not collect again, but build the CMMI report from them with
   step 6's command, with `cmmi` in place of `cisa-ztmm` (twice).
-- Steps 5 and 6: study runs never overwrite a file. A repeated command is
-  refused before anything runs (`error: refusing to replace ...`): choose a
-  new file name. `--overwrite` is for scratch files only, never `outputs\`.
-  A later re-test goes to a new folder, for example `retest-v0.2\`.
+- Steps 5 and 6: study runs never overwrite a file, and `-o` never replaces
+  a facts file. A repeated command is refused before anything runs
+  (`error: refusing to replace ...`): choose a new file name. `--overwrite`
+  is for scratch files only, never `outputs\`. A later re-test goes to a
+  new folder, for example `retest-v0.2\`.
 - Step 8: every line should start with `ok`. These are expected:
   - `ok ... extended facts: N of M items collected (not collected: ...)`:
     some extended items need elevation; no check reads them.
@@ -190,7 +226,10 @@ window, so start with the same line as Setup. Windows hosts use
   - Only in rehearsals, before the freeze: `PROBLEM ... tool_tree_clean is true`.
   For any other PROBLEM, write the line in the session log. Do not open
   anything in `outputs\`, and do not collect again; it is examined after
-  unsealing.
+  unsealing. `inputs match the ledger ...: no (...)` says what went wrong:
+  the two input files swapped, the same file given twice, or a version
+  recorded after the worksheet was hashed. agreement reports each as
+  CRITICAL.
 - Do not open anything in `outputs\` until the last worksheet is hashed.
 
 ## Evening sessions
@@ -207,22 +246,49 @@ window, so start with the same line as Setup. Windows hosts use
 ## If a hashed file changed
 
 `ledger verify` shows CHANGED, and register-sheet and agreement refuse
-("stay sealed") while any worksheet differs from its hash. Restore the exact
-bytes. The refusal names the archived copy, for example
-`(archived copy: ledger-archive/<sha256>.csv)`:
+("stay sealed") while any worksheet differs from its first hash. Only a
+byte-exact copy restores it: the `ledger-archive\` copy the message names,
+a commit made with the Setup `.gitattributes`, or the attachment of step 3b
+(saved over the file).
 
     Copy-Item ledger-archive\<sha256>.csv worksheets\H1-worksheet.csv
     & $py -m miccmac_study ledger verify --ledger ledger.csv
 
-- Or restore it from your commit or the e-mailed copy. `ledger verify` must
-  show OK again.
-- Never edit or delete a ledger row. Never record a changed worksheet
-  again: a new row does not clear the old one.
-- study.yaml or an input file corrected on purpose in time (study.yaml
-  before the first tool run, an input before that host's worksheet is
-  hashed) is recorded again with the same `--kind`, as in Setup. A later
-  change stays CHANGED: record it as a deviation in the protocol log.
-- Never open a hashed CSV in Excel, which may save it again: open a copy.
+- `ledger verify` must show OK again.
+- A file in `worksheets\`, `outputs\` or `register\` is hashed once, and
+  only under its folder's own kind (worksheet; tool-output or facts;
+  register-review or missed-gaps). `ledger record` refuses it with changed
+  bytes, even with `--force`, and names the copy to restore. A correction
+  goes in the disagreement log or the protocol log, never in the file.
+- Never edit or delete a ledger row. Never open a hashed CSV in Excel, which
+  may save it again: open a copy.
+- An input file is corrected before step 1 of its host and recorded again
+  (`--kind input`). Never during its blind pass (agreement: WARNING) or
+  after its worksheet is hashed: the tool must get the version recorded
+  before the worksheet hash (otherwise CRITICAL).
+- study.yaml:
+  - Before the first tool run, a correction is in time: record it again
+    with `--kind other` (SUPERSEDED).
+  - Edited and not recorded again, it keeps the seal closed: restore the
+    archive copy the message names, or record it.
+  - After the first tool run and before the seal opens, recorded again: a
+    deviation. The settings were fixed at the first tool run, so agreement
+    gives a WARNING and labels a run with the changed settings a
+    sensitivity run; the pre-registered analysis is the run with the
+    earlier version, which the WARNING names (`--config
+    ledger-archive\<sha256>.yaml`). `ledger verify` shows the earlier row as
+    CHANGED, and the hosts of the earlier version stay in the seal. Record
+    the deviation in the protocol log.
+  - A run whose configuration differs from study.yaml as it was when the
+    seal first opened (study.yaml recorded again after that, or a
+    `--config` with other settings or fewer hosts) is CRITICAL and labelled
+    a sensitivity run. Planned sensitivity runs use the options in "After
+    the last host".
+  - Withdrawal and `seal opened by` rows record study.yaml (or the
+    `--config` file) as it was then. Once that file changes or is moved,
+    `ledger verify` shows them as ARCHIVED, which passes: their
+    `ledger-archive\` copy keeps the recorded bytes, and the withdrawals
+    still count (`ledger status`).
 - Register sheets forced early (`register-sheet --force-before-unseal
   --reason TEXT`) are recorded in the ledger, and agreement reports them as
   CRITICAL.
@@ -235,13 +301,18 @@ fallback, decision 9) leaves the study only through a dated ledger row:
     & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H3 --reason "Windows 11 fallback: <what was decided>"
 
 - It cannot be undone. register-sheet and agreement then leave the host
-  out; agreement reports the withdrawal (time and reason) as a WARNING, and
+  out; agreement reports the withdrawal (time and reason) as a WARNING, with
+  the time of the host's tool outputs if they were already hashed, and
   `ledger status` shows the host as WITHDRAWN.
 - Do not remove the host from study.yaml, and never pass a `--config` that
   lists fewer hosts: neither opens the seal.
-- The row records study.yaml as it is, so withdraw once study.yaml is
-  final. If it must still change before the first tool run, record it again
-  with `--kind other` and once more with `--kind protocol`.
+- Withdraw before the seal opens. Once register-sheet or agreement has
+  opened it, `ledger withdraw` refuses without `--after-unseal`, and
+  agreement reports a withdrawal made with it as CRITICAL (a post-hoc
+  exclusion) and labels every later run a sensitivity run.
+- The row records study.yaml as it is, and withdraw refuses while
+  study.yaml differs from its latest ledger row. If study.yaml must still
+  change before the first tool run, record it again as in Setup.
 
 ## After the last host
 
@@ -254,11 +325,16 @@ fallback, decision 9) leaves the study only through a dated ledger row:
     & $py -m miccmac_study ledger record --ledger ledger.csv --host H1 --kind missed-gaps register\H1-missed-gaps.csv
     & $py -m miccmac_study agreement --study-dir .
 
-- `ledger verify` must show OK or SUPERSEDED on every row, and no
-  OUT OF ORDER, before you unseal.
+- `ledger verify` must show OK, SUPERSEDED or ARCHIVED on every row, and
+  no OUT OF ORDER, before you unseal (a study.yaml recorded again after the
+  first tool run stays CHANGED: see "If a hashed file changed").
 - The analysis code is frozen before unsealing: the `git status` line must
   print nothing (commit and tag any change first). agreement records
   `analysis_tree_clean`.
+- register-sheet and agreement each append a `seal opened by ...` row
+  (`ledger status` lists it as `STUDY  protocol`) on every run that opens
+  the seal. A worksheet hashed after the first such row is CRITICAL, so
+  every blind pass ends before the first register-sheet or agreement run.
 - Review sheet: accurate Y/N, actionable Y/N, prioritized Y/N/UNSURE, a
   one-line reason. Judge every entry. Missed gaps: gaps found manually that
   have no entry.
@@ -267,7 +343,9 @@ fallback, decision 9) leaves the study only through a dated ledger row:
 - `agreement` exit 0: outputs written; 3: written, with CRITICAL integrity
   problems (summary section 2); 2: nothing written. For a sensitivity run
   add `--threshold 0.75 --out analysis-t075`, or `--tool-side-rule approved
-  --overall-rule pooled-checks --out analysis-rule`; the outputs record it.
+  --overall-rule pooled-checks --out analysis-rule`; the outputs record it,
+  with no CRITICAL. Any other change of the configuration is CRITICAL (see
+  "If a hashed file changed").
 - Hand-check two or three numbers (summary section 7). Then fill in
   root_cause, action and assessor_error_note in `analysis\disagreements.csv`.
   agreement never replaces a disagreements.csv with entries, even with
@@ -295,9 +373,13 @@ before the freeze.
         tool_side: tool-cutoffs   # or approved
         overall: pooled-checks    # or mean-of-property-ratios, step4-buckets, step4-rounded, or null
 
-  - `manual` is the rule you use to turn your verdicts into levels; the
-    lint checks every level you type against it. `approved` needs
-    `manual_max_level: {cmmi: 4, cisa-ztmm: 4}`; `tool-cutoffs` needs `cmmi: 5`.
+  - `manual` is the rule you use to turn your verdicts into levels. The
+    lint checks every level you type against it, and refuses to hash a
+    sheet until it is declared (with `approved`, `overall` too, for the
+    overall levels). agreement reports a typed level that does not follow
+    it (a sheet hashed with `--force`) as a WARNING, with rule_only blank.
+    `approved` needs `manual_max_level: {cmmi: 4, cisa-ztmm: 4}`;
+    `tool-cutoffs` needs `cmmi: 5`.
   - `tool_side: tool-cutoffs` compares the levels the tool reports;
     `approved` scores the tool's check statuses with the approved rule
     (levels 1-4) and needs `overall`.
@@ -315,6 +397,10 @@ before the freeze.
     agreement in writing).
   - Option (c), both sides `approved`, with one `overall` rule: one rule,
     levels 1-4.
+- Step 3 also needs, on every check that is not UNASSESSED, a pass
+  criterion, evidence steps and a procedure source (NONE when no external
+  procedure exists), and the sheet's `assessor` and `level_rule`. `ledger
+  record` refuses a study.yaml that does not load.
 
 ## Before sharing anything
 
@@ -330,11 +416,14 @@ folder, and never share a key. The analysis CSVs contain none of these
 Work in scratch folders under `$env:TEMP\miccmac-check`, outside the
 repository and the study folder, in a window started with the Setup line.
 The synthetic outputs show the tool's detail strings, which name its policy
-limits; they describe no study host.
+limits; they describe no study host. To repeat the checklist, first remove
+the old scratch folders: `Remove-Item -Recurse -Force
+$env:TEMP\miccmac-check`.
 
 1. Tests (10 min). `Set-Location $repo; & $py -m pytest -q`: every test
-   passes; a few are skipped (the opt-in live-VM tests, and symlink tests
-   without the Windows symlink privilege).
+   passes; a few are skipped (the opt-in live-VM tests, symlink tests
+   without the Windows symlink privilege, and one POSIX-only file-mode
+   test).
 2. Synthetic study (20 min). Build it and run every command on it:
 
        & $py -m miccmac_study synthetic --out $env:TEMP\miccmac-check\synthetic
@@ -350,13 +439,14 @@ limits; they describe no study host.
    tool_tree_clean is true` and agreement WARNINGs about the tool's tree and
    the analysis code; nothing else is a PROBLEM or CRITICAL. H2's facts
    show `(not collected: audit_policy)` on an ok line, as a Windows host
-   without elevation would.
+   without elevation would. The `STUDY  protocol` row of `ledger status`
+   is register-sheet's seal opening while the kit was built.
 3. Blank worksheet (10 min). Open `blank-worksheets\H1-worksheet.csv` in
    Excel. Confirm it shows no results, thresholds, queries or level cutoffs:
    only check ids, properties, intents, control references, the
    instructions, and levels 1-4.
-4. Seal (15 min). Copy the folder, change one verdict in the copy's
-   `worksheets\H1-worksheet.csv` and save it:
+4. Seal and byte-exact copies (20 min). Copy the folder, change one verdict
+   in the copy's `worksheets\H1-worksheet.csv` and save it:
 
        Copy-Item -Recurse $env:TEMP\miccmac-check\synthetic $env:TEMP\miccmac-check\seal
        Set-Location $env:TEMP\miccmac-check\seal
@@ -365,13 +455,25 @@ limits; they describe no study host.
        & $py -m miccmac_study agreement --study-dir . --out analysis-seal
 
    register-sheet and agreement must refuse ("stay sealed", exit 2) and
-   name the archived copy; verify shows CHANGED. Restore the sheet as in
-   "If a hashed file changed": verify shows OK again.
-5. `--as-of` (15 min). `tests\test_as_of.py` checks INV-04, ASM-01, ASM-02 and
-   CUR-01 under fixed dates. To see it, in the synthetic folder (H1 is a "current" host):
+   name the archive copy; verify shows CHANGED. Restore the sheet as in
+   "If a hashed file changed": verify shows OK again. Then check that a
+   commit made with the Setup `.gitattributes` gives a facts file back byte
+   for byte (git in this scratch folder only); the last line must print
+   `True`:
+
+       New-Item -ItemType Directory $env:TEMP\miccmac-check\git-check | Out-Null; Set-Location $env:TEMP\miccmac-check\git-check
+       git init -q; git config user.name check; git config user.email check@example.invalid
+       Set-Content -Encoding ASCII .gitattributes "* -text"; git add .gitattributes; git commit -q -m "byte for byte"
+       Copy-Item $env:TEMP\miccmac-check\synthetic\outputs\H1-facts.json .; git add H1-facts.json; git commit -q -m "facts"
+       Remove-Item H1-facts.json; git checkout -- H1-facts.json
+       (Get-FileHash H1-facts.json).Hash -eq (Get-FileHash $env:TEMP\miccmac-check\synthetic\outputs\H1-facts.json).Hash
+
+5. `--as-of` (10 min). `tests\test_as_of.py` checks INV-04, ASM-01, ASM-02 and
+   CUR-01 under fixed dates. To see it, in the synthetic folder (H1 is a
+   "current" host), with `--stdout` to print the report on purpose:
 
        Set-Location $env:TEMP\miccmac-check\synthetic
-       foreach ($d in "2026-11-23", "2027-06-11") { & $py -m miccmac assess --facts outputs/H1-facts.json --attestation inputs/H1-attestation.json --inventory-record inputs/H1-inventory-record.json --as-of $d --format markdown | Select-String "INV-04|ASM-01|ASM-02|CUR-01" }
+       foreach ($d in "2026-11-23", "2027-06-11") { & $py -m miccmac assess --facts outputs/H1-facts.json --attestation inputs/H1-attestation.json --inventory-record inputs/H1-inventory-record.json --as-of $d --format markdown --stdout | Select-String "INV-04|ASM-01|ASM-02|CUR-01" }
 
    The four lines go from PASS to FAIL, with new day counts and `(as of ...)`.
    The second run warns that the date differs from the one in the facts file.
@@ -382,6 +484,10 @@ limits; they describe no study host.
        & $py -m miccmac assess --facts outputs/H1-facts.json --attestation inputs/H1-attestation.json --inventory-record inputs/H1-inventory-record.json --methodology cmmi --risk-register --format json --as-of 2026-11-23 -o $env:TEMP\miccmac-check\replay.json --overwrite
        & $py -c "import json,sys; a,b=[json.load(open(p,encoding='utf-8')) for p in sys.argv[1:]]; [d['assessment']['provenance'].pop('run_at_utc') for d in (a,b)]; print('same' if a==b else 'DIFFERENT')" outputs/H1-cmmi.json $env:TEMP\miccmac-check\replay.json
 
+   Then run the first line without its last three words (`-o`, the file,
+   `--overwrite`): as a step-5 or step-6 line that lost its `-o`, it must
+   stop with `error: this run's report holds results, so it goes to a file
+   ...` and print nothing else.
 7. Hand-check (30 min), in `analysis\SYNTHETIC-summary.md`:
    - Wilson: redo the worked example in section 7 with z = 1.959964 (4 of 5 gives 0.3755 to 0.9638).
    - Chance baseline (section 5.5): 13 of the 25 pairs of 5 x 5 levels are
@@ -398,18 +504,22 @@ limits; they describe no study host.
    `update_orchestrator_tasks`, `windows_update_results`, `hotfixes`,
    `audit_registry` and `audit_policy`. No check reads them yet. Whether the
    later CUR-01 / MON-04 re-test uses them is your decision.
-9. Rehearsal (45 min). Setup and two hosts in a FAKE study folder,
-   following Setup and Per host exactly in a new window, with only these
-   changes:
+9. Rehearsal (45 min). Setup, two hosts and a planned withdrawal in a FAKE
+   three-host study, following Setup and Per host exactly in a new window,
+   with only these changes:
    - Folder: `New-Item -ItemType Directory $env:TEMP\miccmac-check\fake-study`
-     first. In study.yaml `hosts: [H1, H2]` and `synthetic: false`; use
-     `"H1","H2"` in the `foreach` lines.
+     first. Skip the git lines (the folder is not a git repository), the
+     freeze, and Per host's steps 3b and 9.
    - In every window, also set `$syn = "$env:TEMP\miccmac-check\synthetic"`.
+   - study.yaml: `hosts: [H1, H2, H3]`, `secondary_methodologies:
+     [cisa-ztmm]`, `manual_max_level: {cmmi: 4, cisa-ztmm: 4}`, and under
+     `level_rule` `manual: approved` and `overall: pooled-checks`
+     (`tool_side` stays `tool-cutoffs`). Use `"H1","H2","H3"` in the
+     `foreach` lines.
    - Inputs: copy the synthetic ones (their `"synthetic": true` key is read
-     by no check): `Copy-Item "$syn\inputs\H1-*.json", "$syn\inputs\H2-*.json" inputs\`
-   - Skip the freeze. Per host: `$day = "2026-11-23"` (the synthetic facts'
-     date) and `$commit = git -C $repo rev-parse HEAD`; skip the git lines
-     of Per host (its steps 3b and 9).
+     by no check): `Copy-Item "$syn\inputs\H1-*.json", "$syn\inputs\H2-*.json", "$syn\inputs\H3-*.json" inputs\`
+   - Per host, for H1 and H2 only: `$day = "2026-11-23"` and
+     `$commit = git -C $repo rev-parse HEAD`.
    - Step 2: fake values. First type one level that does not follow your
      `level_rule`: step 3 must refuse with a `lint` line and record nothing.
      Correct it and run step 3 again.
@@ -418,38 +528,62 @@ limits; they describe no study host.
      expected (the facts name synthetic-H1).
 
          Copy-Item "$syn\outputs\$h-facts.json" outputs\
-         & $py -m miccmac assess $ip --facts "outputs\$h-facts.json" --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cmmi --risk-register --format json -o "outputs\$h-cmmi.json" --as-of $day
+         & $py -m miccmac assess $ip --facts "outputs\$h-facts.json" --as-of $day --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cmmi --risk-register --format json -o "outputs\$h-cmmi.json"
 
    - Step 6: run it twice; the second run must be refused (`refusing to replace`).
    - Step 8: only the `tool_tree_clean` PROBLEM lines; H2's extended facts
      show `(not collected: audit_policy)`.
-   - Then "After the last host" with `--hosts H1,H2` and fake review
+   - H3 is not assessed: withdraw it as in "Withdrawing a host", with
+     `--reason "rehearsal: Windows 11 fallback"`.
+   - Then "After the last host" with `--hosts H1,H2,H3` and fake review
      entries (the `git status` line lists files until the freeze).
-     agreement exits 3 with a synthetic CRITICAL per host, because the
-     copied facts name the synthetic connector: expected here, never on
-     study data.
-10. Seal without the synthetic flag (15 min). On a copy of the fake study,
-    drop H2's worksheet row; register-sheet and agreement must refuse
-    ("stay sealed", naming H2), also with a configuration listing only H1:
+     `ledger status` shows H3 as WITHDRAWN. agreement exits 3 with a
+     synthetic CRITICAL per host, because the copied facts name the
+     synthetic connector (expected here, never on study data), and reports
+     H3's withdrawal as a WARNING. For the same reason every analysis file
+     is named `SYNTHETIC-...`: fill in `analysis\SYNTHETIC-disagreements.csv`.
+   - `$day` is the kit's session date: the kit dates its facts on that day
+     at 12:00 UTC, so that they follow your fake worksheet hashes. From 23
+     November on they no longer do (step 8: `worksheet hashed before this
+     run: no`; agreement: `facts collected before the worksheet was
+     hashed`, CRITICAL). Then build the kit in step 2 with `--session-date`
+     set to a later day, for example `--session-date 2026-12-15`, and use
+     that day wherever steps 2 to 10 say 2026-11-23 (in step 5, with a
+     second date about 200 days later).
+10. Seal and post-unseal checks (20 min), on copies of the fake study. Drop
+    H2's worksheet row: register-sheet and agreement must refuse ("stay
+    sealed", naming H2), although the seal was opened before.
 
         Copy-Item -Recurse $env:TEMP\miccmac-check\fake-study $env:TEMP\miccmac-check\fake-seal
         Set-Location $env:TEMP\miccmac-check\fake-seal
         (Get-Content ledger.csv) | Where-Object { $_ -notlike "*worksheets/H2-worksheet.csv*" } | Set-Content -Encoding UTF8 ledger.csv
-        (Get-Content study.yaml) -replace '^hosts: .*', 'hosts: [H1]' | Set-Content -Encoding UTF8 study-h1.yaml
         & $py -m miccmac_study register-sheet --study-dir .
-        & $py -m miccmac_study register-sheet --study-dir . --config study-h1.yaml
         & $py -m miccmac_study agreement --study-dir . --out analysis-seal
-        & $py -m miccmac_study agreement --study-dir . --config study-h1.yaml --out analysis-seal
 
-    Then rehearse a withdrawal on the same copy: after the command below,
-    `ledger status` shows H2 as WITHDRAWN, and agreement runs (exit 3 here,
-    from the copied facts) and lists H2 under "Withdrawn hosts".
+    Then change one verdict in `worksheets\H1-worksheet.csv` there, save it,
+    and run step 3 for H1 again. It must refuse and name the archive copy:
+    restore the sheet from it as in "If a hashed file changed".
 
-        & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H2 --reason "rehearsal: Windows 11 fallback"
-        & $py -m miccmac_study ledger status --ledger ledger.csv --hosts H1,H2
-        & $py -m miccmac_study agreement --study-dir . --out analysis-withdrawn
+        & $py -m miccmac_study ledger record --ledger ledger.csv --host H1 --kind worksheet worksheets\H1-worksheet.csv
 
-11. Log every issue (10 min): the command, what you expected, what happened.
+    A withdrawal after the seal opened is refused, then recorded with
+    `--after-unseal`, and agreement reports it as CRITICAL (a post-hoc
+    exclusion). A configuration with another threshold is a CRITICAL,
+    labelled sensitivity run. Both agreement runs exit 3; each
+    `Select-String` line must find its CRITICAL:
+
+        Copy-Item -Recurse $env:TEMP\miccmac-check\fake-study $env:TEMP\miccmac-check\fake-late
+        Set-Location $env:TEMP\miccmac-check\fake-late
+        & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H2 --reason "rehearsal: results looked odd"
+        & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H2 --reason "rehearsal: results looked odd" --after-unseal
+        & $py -m miccmac_study agreement --study-dir . --out analysis-late
+        Select-String "post-hoc" analysis-late\SYNTHETIC-summary.md
+        Set-Location $env:TEMP\miccmac-check\fake-study
+        (Get-Content study.yaml) -replace '^threshold: .*', 'threshold: 0.60' | Set-Content -Encoding UTF8 study-t060.yaml
+        & $py -m miccmac_study agreement --study-dir . --config study-t060.yaml --out analysis-t060
+        Select-String "this run is a sensitivity run" analysis-t060\SYNTHETIC-summary.md
+
+11. Log every issue (5 min): the command, what you expected, what happened.
     Fix it or record a decision before the first session.
 
 ## Dry run
@@ -463,8 +597,8 @@ hosts; keep its files out of the study folder and its ledger.
 
 In `analysis\` (prefixed `SYNTHETIC-` for synthetic data, which also gets a banner):
 
-- `summary.md`: run information, integrity checks, H1, H2, secondary measures and a hand-check guide.
-- `summary.json`: the same content for programs, plus each pooled row's per-host (k, n) clusters and the ledger rows that are not OK.
+- `summary.md`: run information (with a sensitivity-run row that lists every override and configuration difference), integrity checks, H1, H2, secondary measures and a hand-check guide.
+- `summary.json`: the same content for programs, plus each pooled row's per-host (k, n) clusters, the ledger rows that are not OK, and what makes a run a sensitivity run (`config.overrides`, `config.config_differences` against `config.config_reference`, and `config.post_hoc_exclusions`).
 - `host_levels.csv`: per host, methodology and scope: tool level (reported, used), manual level, difference, exact, within-one, Level 5 rule flag, rule_only flag, note.
 - `agreement_h1.csv`: per methodology, scope and measure: k, n, rate, Wilson interval; threshold and result on within-one rows.
 - `pooled.csv`: pooled host x property agreement per methodology, measure and subset, with Wilson and host-bootstrap intervals and the number of hosts resampled (boot_hosts).

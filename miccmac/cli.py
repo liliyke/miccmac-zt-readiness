@@ -4,7 +4,9 @@ Command-line interface for the MICCMAC readiness toolkit.
 
 In this module, AI assistance covers the reproducible-run options (--as-of,
 --save-facts, --facts and the provenance block) and the --output safeguards
-(--overwrite, the checks in _check_output_option, the atomic write).
+(--overwrite, --stdout and the report-destination rule, the blank file-name
+checks, the checks in _check_output_option including the saved-facts guard,
+the atomic write).
 """
 from __future__ import annotations
 
@@ -33,14 +35,26 @@ from miccmac.risk_register import render as render_risk_register
 CONNECTORS = ("ssh-osquery", "ssh-osquery-windows")
 # Target used by live and stub runs when none is given.
 DEFAULT_TARGET = "localhost"
-# Options whose value must name a file. A blank value (an unset shell
-# variable passes "") would otherwise be ignored: --facts would turn into a
-# stub run, --save-facts would drop the save, and --output would send the
-# whole report to stdout.
-_FILE_NAME_OPTIONS = (("--output", "output"), ("--facts", "facts"), ("--save-facts", "save_facts"))
+# Options whose value must name a file, as (option, args attribute). A blank
+# value (an unset shell variable passes "") would otherwise be ignored or
+# misread: --facts would turn into a stub run, --save-facts would drop the
+# save, --output would send the whole report to stdout, --attestation and
+# --inventory-record would be dropped, so the input-driven checks would run
+# without them, and --config and --ssh-key would fail later with a puzzling
+# message (or not at all, without --connector).
+_FILE_NAME_OPTIONS = (("--output", "output"), ("--facts", "facts"), ("--save-facts", "save_facts"),
+                      ("--attestation", "attestation"), ("--inventory-record", "inventory_record"),
+                      ("--config", "config"), ("--ssh-key", "ssh_key"))
 # Input files that --output may never replace, as (option, args attribute).
 _INPUT_FILE_OPTIONS = (("--facts", "facts"), ("--attestation", "attestation"),
                        ("--inventory-record", "inventory_record"), ("--config", "config"))
+# A saved facts file (miccmac/facts_file.py) holds both of these near its
+# start. --output never replaces an existing file whose first 64 KiB contain
+# both, not even with --overwrite or in a plain run.
+_FACTS_FILE_MARKS = (b'"facts_format"', facts_file_mod.FACTS_FORMAT.encode("ascii"))
+_FACTS_FILE_SNIFF_BYTES = 64 * 1024
+_NO_REPORT_DESTINATION = ("this run's report holds results, so it goes to a file: give -o FILE, "
+                          "or --stdout to print it here")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,15 +78,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_assess.add_argument("--output", "-o", default=None,
                           help="Write the report to a file instead of stdout. The file is "
                                "written whole or not at all, its folder must already exist, "
-                               "and it can never be one of this command's input files. A "
-                               "study run (--connector, --facts, --save-facts or --as-of) "
-                               "refuses an existing file unless --overwrite is given; a plain "
-                               "run replaces it, as before.")
+                               "and it can never be one of this command's input files or a "
+                               "saved facts file. A study run (--connector, --facts, "
+                               "--save-facts or --as-of) refuses an existing file unless "
+                               "--overwrite is given; a plain run replaces it, as before. A run "
+                               "with --facts or --save-facts, or with --connector and --as-of, "
+                               "needs --output or --stdout.")
+    p_assess.add_argument("--stdout", action="store_true",
+                          help="Print the report on stdout. A run with --facts or --save-facts, "
+                               "or with --connector and --as-of, holds study results, so it "
+                               "prints its report only with --stdout and otherwise needs "
+                               "--output; every other run prints without it. Not allowed with "
+                               "--output.")
     p_assess.add_argument("--overwrite", action="store_true",
                           help="Let a study run replace an existing --output file. A plain run "
                                "does not need it. It never lets --output replace one of the "
-                               "run's input files, and --save-facts never overwrites a file, "
-                               "with or without it.")
+                               "run's input files or a saved facts file, and --save-facts never "
+                               "overwrites a file, with or without it.")
     p_assess.add_argument("--methodology", "-m", default=None,
                           choices=sorted(METHODOLOGY_REGISTRY),
                           help="Additionally score using a maturity-model methodology.")
@@ -218,16 +240,19 @@ def _parse_as_of_option(raw: Optional[str]) -> Optional[datetime.date]:
 
 
 def _reject_blank_file_names(args) -> None:
+    """A blank or whitespace value for an option that names a file is an
+    error, in every run and for list-checks' --config too."""
     for flag, attr in _FILE_NAME_OPTIONS:
-        value = getattr(args, attr)
+        value = getattr(args, attr, None)
         if value is not None and not value.strip():
             raise ConfigError(f"{flag} needs a file name")
 
 
 def _check_fact_options(args) -> None:
-    """Reject blank file names, conflicting fact-source options and an
-    unsafe --output before anything is read or collected, so a run that
-    would be refused neither connects nor saves facts."""
+    """Reject blank file names, conflicting fact-source options, a report
+    with no destination and an unsafe --output before anything is read or
+    collected, so a run that would be refused neither connects nor saves
+    facts."""
     _reject_blank_file_names(args)
     if args.facts and args.connector:
         raise ConfigError("--facts cannot be combined with --connector: facts are either "
@@ -240,15 +265,37 @@ def _check_fact_options(args) -> None:
                           "from a live target)")
     if args.connector in CONNECTORS and (not args.ssh_user or not args.ssh_key):
         raise ConfigError(f"--connector {args.connector} requires --ssh-user and --ssh-key")
+    _check_report_destination(args)
     _check_output_option(args)
     if args.save_facts:
         facts_file_mod.check_can_save(args.save_facts)
 
 
+def _report_holds_study_results(args) -> bool:
+    """A replay of saved facts (--facts), a live run that saves its facts
+    (--save-facts) and a live run with a reference date (--connector with
+    --as-of): the protocol's tool runs. Such a report goes to --output, or
+    to stdout only on request (--stdout), because printed by accident it
+    would show a host's results before the later hosts' blind passes."""
+    return bool(args.facts or args.save_facts or (args.connector and args.as_of is not None))
+
+
+def _check_report_destination(args) -> None:
+    """--stdout and --output exclude each other, and a report that holds
+    study results needs one of them. Every other run prints as before."""
+    to_stdout = getattr(args, "stdout", False)
+    if to_stdout and args.output is not None:
+        raise ConfigError("--stdout cannot be combined with --output: the report goes either "
+                          "to a file or to the terminal, not both")
+    if args.output is None and not to_stdout and _report_holds_study_results(args):
+        raise ConfigError(_NO_REPORT_DESTINATION)
+
+
 def _check_output_option(args) -> None:
     """The --output checks, all made before the run: --output never names
     the facts file or an input file (whatever the spelling, and through a
-    hard or symbolic link), names a file in a folder that exists, and in a
+    hard or symbolic link), names a file in a folder that exists, never
+    names a saved facts file (in any run, even with --overwrite), and in a
     study run never names an existing file unless --overwrite is given."""
     output = args.output
     if output is None:
@@ -269,6 +316,9 @@ def _check_output_option(args) -> None:
     folder = os.path.dirname(output)
     if folder and not os.path.isdir(folder):
         raise ConfigError(f"--output folder does not exist: {folder}")
+    facts_refusal = _saved_facts_refusal(output, output)
+    if facts_refusal is not None:
+        raise ConfigError(facts_refusal)
     if _refuses_existing_output(args) and os.path.lexists(output):
         raise ConfigError(_refusal_message(output))
 
@@ -295,6 +345,32 @@ def _refuses_existing_output(args) -> bool:
 def _refusal_message(path: str) -> str:
     return (f"refusing to replace {path}: study runs never overwrite a file; choose a new "
             f"file name or pass --overwrite")
+
+
+def _saved_facts_refusal(path: str, shown: str) -> Optional[str]:
+    """The refusal when the existing file at path is a saved facts file, else
+    None. ``shown`` is the --output value as typed, for the message.
+
+    A saved facts file is an existing regular file (through a symbolic link,
+    its target) whose first 64 KiB contain both '"facts_format"' and
+    'miccmac-facts/1'. A missing path, a folder, a device and a pipe are
+    never opened (reading a pipe could block). A regular file that cannot be
+    read cannot be cleared, so it is refused too: a report must never
+    replace raw study data, and a rename can replace a file its owner
+    cannot read."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_FACTS_FILE_SNIFF_BYTES)
+    except (OSError, ValueError) as exc:
+        reason = getattr(exc, "strerror", None) or exc
+        return (f"refusing to replace {shown}: it cannot be read to check that it is not a saved "
+                f"facts file ({reason})")
+    if all(mark in head for mark in _FACTS_FILE_MARKS):
+        return (f"refusing to replace {shown}: it is a saved facts file "
+                f"({facts_file_mod.FACTS_FORMAT}), which a report must never replace")
+    return None
 
 
 @dataclass
@@ -460,6 +536,7 @@ def _run_assess(args) -> str:
 
 
 def _run_list_checks(args) -> str:
+    _reject_blank_file_names(args)
     config = _load_config(args.config)
     ids = enabled_check_ids(config)
     if (args.format or "text").lower() == "json":
@@ -467,9 +544,9 @@ def _run_list_checks(args) -> str:
     return "\n".join(ids)
 
 
-class _OutputExistsError(Exception):
-    """The --output file appeared while the run was going, and this run may
-    not replace it (see _refuses_existing_output)."""
+class _OutputRefusedError(Exception):
+    """The --output file may not be replaced, as found just before the
+    write; the exception's text is the refusal message."""
 
 
 def _write_report(path: str, text: str, *, replace: bool) -> None:
@@ -477,10 +554,11 @@ def _write_report(path: str, text: str, *, replace: bool) -> None:
     same folder, written in text mode exactly as before (UTF-8, the
     platform's newlines), flushed and fsynced, then moved over path with
     os.replace. The temporary file is removed on any failure, so a failed
-    write leaves path as it was. With replace=False a path that exists by
-    then is refused (_OutputExistsError): _check_output_option refused it
-    before the run, so this only catches a file created in the meantime.
-    Raises OSError when the file cannot be written.
+    write leaves path as it was. Just before the move, a saved facts file
+    at path is refused in every run, and with replace=False so is any
+    file that exists by then (_OutputRefusedError): _check_output_option
+    refused both before the run, so this only catches a file created or
+    changed in the meantime. Raises OSError when the file cannot be written.
 
     Two kinds of path are written as the old direct write did: a symbolic
     link has its target written (atomically), and an existing device or
@@ -498,8 +576,11 @@ def _write_report(path: str, text: str, *, replace: bool) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
+        facts_refusal = _saved_facts_refusal(target, path)
+        if facts_refusal is not None:
+            raise _OutputRefusedError(facts_refusal)
         if not replace and os.path.lexists(path):
-            raise _OutputExistsError(path)
+            raise _OutputRefusedError(_refusal_message(path))
         os.replace(tmp_path, target)
     except BaseException:
         try:
@@ -535,8 +616,8 @@ def _write_failure_message(args, path: str, exc: BaseException) -> str:
     """The error for a report that could not be written. It never contains
     any part of the report. After a live run with --save-facts it says how
     to rebuild the report from the facts that were saved."""
-    if isinstance(exc, _OutputExistsError):
-        message = _refusal_message(path)
+    if isinstance(exc, _OutputRefusedError):
+        message = str(exc)
     else:
         message = f"cannot write --output {path}: {getattr(exc, 'strerror', None) or exc}"
     saved_facts = getattr(args, "save_facts", None)
@@ -569,7 +650,7 @@ def main(argv=None) -> int:
         return 0
     try:
         _write_report(output_path, output + "\n", replace=not _refuses_existing_output(args))
-    except (_OutputExistsError, OSError) as exc:
+    except (_OutputRefusedError, OSError) as exc:
         print(f"error: {_write_failure_message(args, output_path, exc)}", file=sys.stderr)
         return 2
     print(f"Report written to {output_path}")

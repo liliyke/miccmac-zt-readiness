@@ -22,7 +22,10 @@ full range, or, with --study-config, 1 up to the study's manual_max_level for
 that methodology (study.yaml), so a level the analysis would reject cannot be
 offered. With --study-config, --methodology defaults to the study's
 methodologies, every one of them must get level rows, and every host must be
-one of the study's hosts.
+one of the study's hosts. When that configuration does not yet declare the
+manual level rule the pre-hash lint checks levels against (level_rule.manual,
+and level_rule.overall under the approved rule; decision 4), the command
+says so in one note on stderr after writing the sheets (level_rule_note).
 
 Check names and control references come from a stub-mode engine run: with no
 facts every check returns its NOT_IMPLEMENTED placeholder, so no verdict
@@ -38,6 +41,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -49,7 +53,9 @@ from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
 from miccmac.model import PROPERTY_KEYS, Status
 
 from miccmac_study.formats import (
+    CONFIG_FILE,
     DEFAULT_INPUT_DRIVEN_PROPERTIES,
+    LEVEL_RULE_APPROVED,
     LEVEL_SCOPES,
     META_FIELDS,
     OVERALL,
@@ -411,6 +417,21 @@ def _study_settings(study_config: Optional[PathLike], hosts: Sequence[str],
     return chosen, {name: study.manual_max(name) for name in chosen}
 
 
+def level_rule_note(study: StudyConfig, name: str = CONFIG_FILE) -> Optional[str]:
+    """The note `worksheet --study-config` prints (stderr) when the study
+    configuration (file name `name`) does not yet declare the manual level
+    rule the pre-hash lint checks typed levels against (decision 4), or
+    None when it does: no level_rule.manual, or manual approved without a
+    level_rule.overall for the overall levels."""
+    if study.manual_level_rule is None:
+        return (f"note: {name} declares no level_rule.manual yet (decision 4); ledger record will refuse to hash a "
+                "filled worksheet until it does")
+    if study.manual_level_rule == LEVEL_RULE_APPROVED and study.overall_rule is None:
+        return (f"note: {name} declares no level_rule.overall, which the approved manual rule needs for the overall "
+                "levels (decision 4); ledger record will refuse to hash a filled worksheet until it does")
+    return None
+
+
 # ------------------------------------------------------------------ library entry point
 def generate_worksheets(list_checks: PathLike, hosts: Sequence[str], out_dir: PathLike,
                         miccmac_config: Optional[PathLike] = None,
@@ -469,7 +490,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--study-config", default=None, metavar="FILE",
                         help="The study.yaml: each level row then states the study's allowed range "
                              "(manual_max_level), --methodology defaults to the study's methodologies, and "
-                             "every host must be one of the study's hosts.")
+                             "every host must be one of the study's hosts. A note on stderr says when it "
+                             "declares no manual level rule yet.")
     parser.add_argument("--methodology", action="append", default=None,
                         choices=sorted(METHODOLOGY_REGISTRY),
                         help=f"Add level rows for a methodology (repeatable; default {DEFAULT_METHODOLOGY}, "
@@ -496,4 +518,8 @@ def run(args: argparse.Namespace) -> int:
     )
     for path in paths:
         print(path)
+    if args.study_config is not None:
+        note = level_rule_note(load_config(args.study_config), Path(args.study_config).name)
+        if note:
+            print(note, file=sys.stderr)
     return 0

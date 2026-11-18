@@ -1,8 +1,9 @@
 """Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 Tests for miccmac_study.health: the sealed-output health check, its
-comparison with a host's ledger rows (--ledger/--host) and the pre-study
-check of the input files' dates (--inputs).
+comparison with a host's ledger rows (--ledger/--host: input files in their
+own roles and the versions the assessor had, facts file, worksheet hashed
+before the run) and the pre-study check of the input files' dates (--inputs).
 
 Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts (in the style of tests/test_windows_checks.py), with a
@@ -14,6 +15,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import shutil
 
 import pytest
 
@@ -88,7 +90,7 @@ def _write_output(study, host, facts, methodology="cmmi", as_of=AS_OF, register=
     attestation = ATTESTATION if attestation is None else attestation
     inputs = study / "inputs"
     attestation_path = _write_json(inputs / f"{host}-attestation.json", attestation)
-    inventory_path = _write_json(inputs / f"{host}-inventory.json", INVENTORY)
+    inventory_path = _write_json(inputs / f"{host}-inventory-record.json", INVENTORY)
     facts_path = study / "outputs" / f"{host}-facts.json"
     config = Config(excluded_checks={c: "Not in the synthetic lab." for c in excluded})
     assessment = run_assessment(target, context={"facts": facts, "attestation": attestation,
@@ -107,7 +109,8 @@ def _write_output(study, host, facts, methodology="cmmi", as_of=AS_OF, register=
                        if facts_path.exists() else None),
         "inputs": {
             "attestation": {"path": f"inputs/{host}-attestation.json", "sha256": sha256_file(attestation_path)},
-            "inventory_record": {"path": f"inputs/{host}-inventory.json", "sha256": sha256_file(inventory_path)},
+            "inventory_record": {"path": f"inputs/{host}-inventory-record.json",
+                                 "sha256": sha256_file(inventory_path)},
             "config": None,
         },
         "enabled_check_ids": enabled,
@@ -322,7 +325,7 @@ def test_facts_without_an_extended_section_is_a_problem(study, capsys, facts, re
     (lambda d: d["assessment"]["provenance"].update(tool_commit=None),
      f"tool_commit starts with {COMMIT[:12]}: tool_commit not recorded"),
     (lambda d: d["assessment"]["provenance"].update(tool_tree_clean=False),
-     "tool_tree_clean is true: the tool's working tree had uncommitted changes"),
+     "tool_tree_clean is true: the tool's working tree had uncommitted changes or untracked files"),
     (lambda d: d["assessment"]["provenance"].update(provenance_format="miccmac-provenance/0"),
      "provenance present (miccmac-provenance/1): unexpected provenance_format"),
     (lambda d: d["assessment"]["provenance"].update(enabled_check_ids_fingerprint="0" * 16),
@@ -537,7 +540,7 @@ def _protocol_ledger(study, worksheet_time="2026-11-23T18:00:00Z", inputs=True, 
     rows = []
     if inputs:
         rows += [("2026-11-23T09:00:00Z", "H1", "input", "inputs/H1-attestation.json"),
-                 ("2026-11-23T09:00:00Z", "H1", "input", "inputs/H1-inventory.json")]
+                 ("2026-11-23T09:00:00Z", "H1", "input", "inputs/H1-inventory-record.json")]
     rows.append((worksheet_time, "H1", "worksheet", "worksheets/H1-worksheet.csv"))
     if facts:
         rows.append(("2026-11-23T19:10:00Z", "H1", "facts", "outputs/H1-facts.json"))
@@ -580,14 +583,103 @@ def test_ledger_mode_catches_another_hosts_input_files(study, capsys):
         attestation={"path": "inputs/H2-attestation.json", "sha256": sha256_file(path)}))
     rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
     assert rc == 1
+    # Reworded on purpose (V1-N4): the reason names the input and a hash prefix, not only the key.
     assert _ledger_lines(lines)[:2] == [
-        "PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (attestation)",
+        f"PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (the attestation the tool used (sha256 "
+        f"{sha256_file(path)[:12]}...) is not one of the input files recorded for H1 in the ledger)",
         "ok      outputs/H1-cmmi.json: inputs given: yes",
     ]
 
 
-@pytest.mark.parametrize("nulls, given", [(("attestation", "inventory_record"), 0), (("inventory_record",), 1)])
-def test_ledger_mode_flags_inputs_not_given(study, capsys, nulls, given):
+def _set_inputs(study, attestation, inventory_record):
+    """Make H1's CMMI provenance name the given input files (paths relative to the study)."""
+    def change(data):
+        data["assessment"]["provenance"]["inputs"].update(
+            attestation={"path": attestation, "sha256": sha256_file(study / attestation)},
+            inventory_record={"path": inventory_record, "sha256": sha256_file(study / inventory_record)})
+    _edit(study / "outputs" / "H1-cmmi.json", change)
+
+
+def test_ledger_mode_catches_swapped_input_files(study, capsys):
+    """V1-N4: H1 run with --attestation and --inventory-record swapped printed 'yes' twice."""
+    _protocol_ledger(study)
+    _set_inputs(study, "inputs/H1-inventory-record.json", "inputs/H1-attestation.json")
+    att, inv = (sha256_file(study / "inputs" / name) for name in ("H1-attestation.json", "H1-inventory-record.json"))
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert rc == 1
+    assert _ledger_lines(lines)[:2] == [
+        f"PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (the attestation the tool used (sha256 "
+        f"{inv[:12]}...) is inputs/H1-inventory-record.json, H1's inventory record as recorded at 2026-11-23T09:00:00Z: "
+        f"the two input files were swapped or mixed up; the inventory record the tool used (sha256 {att[:12]}...) is "
+        "inputs/H1-attestation.json, H1's attestation as recorded at 2026-11-23T09:00:00Z: the two input files were "
+        "swapped or mixed up)",
+        "ok      outputs/H1-cmmi.json: inputs given: yes",
+    ]
+
+
+def test_ledger_mode_catches_one_input_file_given_twice(study, capsys):
+    _protocol_ledger(study)
+    _set_inputs(study, "inputs/H1-attestation.json", "inputs/H1-attestation.json")
+    att = sha256_file(study / "inputs" / "H1-attestation.json")
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert rc == 1
+    assert _ledger_lines(lines)[:2] == [
+        f"PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (the run was given the same file (sha256 "
+        f"{att[:12]}...) as --attestation and as --inventory-record: inputs/H1-attestation.json as recorded at "
+        "2026-11-23T09:00:00Z)",
+        "ok      outputs/H1-cmmi.json: inputs given: yes",
+    ]
+
+
+def test_ledger_mode_catches_an_input_recorded_again_after_the_worksheet_hash(study, capsys):
+    """V1-N5: an input changed and recorded again after H1's worksheet was hashed, then used by the tool."""
+    ledger_file = _protocol_ledger(study)
+    attestation = study / "inputs" / "H1-attestation.json"
+    attestation.write_text(json.dumps(dict(ATTESTATION, identity_aware_access={"enabled": True})), encoding="utf-8")
+    with open(ledger_file, "a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["2026-11-23T19:20:00Z", "H1", "input", "inputs/H1-attestation.json",
+                                 sha256_file(attestation), "1", "changed after the worksheet hash"])
+    _set_inputs(study, "inputs/H1-attestation.json", "inputs/H1-inventory-record.json")
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert rc == 1
+    assert _ledger_lines(lines)[0] == (
+        "PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (the tool used inputs/H1-attestation.json as "
+        "recorded at 2026-11-23T19:20:00Z, after H1's worksheet was hashed at 2026-11-23T18:00:00Z; the assessor had "
+        "the version recorded at 2026-11-23T09:00:00Z)")
+
+
+def test_ledger_mode_notes_an_input_whose_name_gives_no_role(study, capsys):
+    _protocol_ledger(study)
+    named = study / "inputs" / "H1-inventory.json"
+    shutil.copyfile(str(study / "inputs" / "H1-inventory-record.json"), str(named))
+    ledger_file = study / "ledger.csv"
+    ledger_file.write_text(ledger_file.read_text(encoding="utf-8-sig").replace(
+        "inputs/H1-inventory-record.json", "inputs/H1-inventory.json"), encoding="utf-8-sig")
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert rc == 0, lines
+    assert _ledger_lines(lines)[:2] == [
+        "ok      outputs/H1-cmmi.json: inputs match the ledger for H1: yes (cannot tell whether inputs/H1-inventory.json "
+        "is an attestation or an inventory record: name it H1-attestation.json or H1-inventory-record.json)",
+        "ok      outputs/H1-cmmi.json: inputs given: yes",
+    ]
+    _edit(study / "outputs" / "H1-cmmi.json",
+          lambda d: d["assessment"]["provenance"]["inputs"].update(inventory_record=None))
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert _ledger_lines(lines)[1] == (
+        "PROBLEM outputs/H1-cmmi.json: inputs given: no (the ledger holds 2 input file(s) for H1, but the run had 1 of "
+        "--attestation and --inventory-record)")
+
+
+NO_ATTESTATION = ("the run had no --attestation, although the ledger holds H1's attestation "
+                  "inputs/H1-attestation.json")
+NO_INVENTORY = ("the run had no --inventory-record, although the ledger holds H1's inventory record "
+                "inputs/H1-inventory-record.json")
+
+
+@pytest.mark.parametrize("nulls, reasons", [(("attestation", "inventory_record"), [NO_ATTESTATION, NO_INVENTORY]),
+                                            (("inventory_record",), [NO_INVENTORY])])
+def test_ledger_mode_flags_inputs_not_given(study, capsys, nulls, reasons):
+    # Reworded on purpose (V1-N4): each input file is needed in its own role.
     _protocol_ledger(study)
     _edit(study / "outputs" / "H1-cmmi.json",
           lambda d: d["assessment"]["provenance"]["inputs"].update({key: None for key in nulls}))
@@ -595,8 +687,7 @@ def test_ledger_mode_flags_inputs_not_given(study, capsys, nulls, given):
     assert rc == 1
     assert _ledger_lines(lines)[:2] == [
         "ok      outputs/H1-cmmi.json: inputs match the ledger for H1: yes",
-        f"PROBLEM outputs/H1-cmmi.json: inputs given: no (the ledger holds 2 input file(s) for H1, but the run "
-        f"had {given} of --attestation and --inventory-record)",
+        f"PROBLEM outputs/H1-cmmi.json: inputs given: no ({'; '.join(reasons)})",
     ]
 
 
@@ -627,7 +718,9 @@ def test_ledger_mode_a_miccmac_config_may_match_a_study_row(study, capsys):
     _edit(study / "outputs" / "H1-cmmi.json", lambda d: d["assessment"]["provenance"]["inputs"].update(
         config={"path": "inputs/miccmac-config.yaml", "sha256": sha256_file(config)}))
     rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
-    assert "PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (config)" in lines
+    assert (f"PROBLEM outputs/H1-cmmi.json: inputs match the ledger for H1: no (the miccmac config the tool used "
+            f"(sha256 {sha256_file(config)[:12]}...) is not one of the files recorded for H1 or as a STUDY row)"
+            ) in lines
     with open(study / "ledger.csv", "a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow(["2026-11-23T09:00:00Z", "STUDY", "other", "inputs/miccmac-config.yaml",
                                  sha256_file(config), "1", ""])
@@ -651,20 +744,31 @@ def test_ledger_mode_facts_file(study, capsys, change, facts_rows, expected):
     assert _ledger_lines(lines)[2] == expected
 
 
-@pytest.mark.parametrize("worksheet_time, ok", [
-    ("2026-11-23T19:04:59Z", True),   # before the facts were collected (19:05:00) and the run (19:06:00)
-    ("2026-11-23T19:05:00Z", False),  # the same second as the collection is not before it
-    ("2026-11-23T19:05:30Z", False),  # after the collection, before the run
-    ("2026-11-23T19:07:00Z", False),  # after the run
+@pytest.mark.parametrize("worksheet_time, reason", [
+    ("2026-11-23T19:04:59Z", None),  # before the facts were collected (19:05:00) and the run (19:06:00)
+    # The same second as the collection is not before it (worded since V3-N8).
+    ("2026-11-23T19:05:00Z", "no (same second as the worksheet hash)"),
+    ("2026-11-23T19:05:30Z", "no"),  # after the collection, before the run
+    ("2026-11-23T19:06:00Z", "no"),  # the same second as the run, but after the collection
+    ("2026-11-23T19:07:00Z", "no"),  # after the run
 ])
-def test_ledger_mode_worksheet_hashed_strictly_before_the_run(study, capsys, worksheet_time, ok):
+def test_ledger_mode_worksheet_hashed_strictly_before_the_run(study, capsys, worksheet_time, reason):
     _protocol_ledger(study, worksheet_time=worksheet_time)
     rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
     line = _ledger_lines(lines)[3]
-    if ok:
+    if reason is None:
         assert line == "ok      outputs/H1-cmmi.json: worksheet hashed before this run: yes"
     else:
-        assert line == "PROBLEM outputs/H1-cmmi.json: worksheet hashed before this run: no"
+        assert line == f"PROBLEM outputs/H1-cmmi.json: worksheet hashed before this run: {reason}"
+
+
+def test_ledger_mode_a_run_and_a_worksheet_hash_in_the_same_second(study, capsys):
+    _protocol_ledger(study, worksheet_time="2026-11-23T19:04:00Z")
+    _edit(study / "outputs" / "H1-cmmi.json", lambda d: d["assessment"]["provenance"].update(
+        run_at_utc="2026-11-23T19:04:00Z", facts_collected_at_utc="2026-11-23T19:04:00Z"))
+    rc, lines = _health(capsys, *LEDGER_OPTIONS, "outputs/H1-cmmi.json")
+    assert _ledger_lines(lines)[3] == ("PROBLEM outputs/H1-cmmi.json: worksheet hashed before this run: no (same "
+                                       "second as the worksheet hash)")
 
 
 def test_ledger_mode_counts_only_the_hosts_own_worksheet_path(study, capsys):

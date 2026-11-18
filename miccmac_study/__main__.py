@@ -24,7 +24,7 @@ COMMANDS = {
     "worksheet": ("miccmac_study.worksheet",
                   "Generate blank per-host manual worksheets (no tool results in them)."),
     "ledger": ("miccmac_study.ledger",
-               "Record (lint, hash and archive), verify, list or withdraw: the SHA-256 ledger of study files."),
+               "Record (lint, hash and archive), verify, status or withdraw: the SHA-256 ledger of study files."),
     "health": ("miccmac_study.health",
                "Check tool outputs, facts files or input files without revealing any result."),
     "register-sheet": ("miccmac_study.register_sheet",

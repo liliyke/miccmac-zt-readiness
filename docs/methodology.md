@@ -509,8 +509,9 @@ against the reference date instead.
 refuses a FILE that already exists (raw study data is never replaced; not
 even `--overwrite` changes that) or whose folder does not exist, and checks
 `--output` as described below, so a foreseeable `--output` problem (a blank
-name, a missing folder, an existing file, an input file) stops the run
-before it connects or saves facts. After collection it writes FILE in one step (a
+name, no `--output` and no `--stdout`, a missing folder, an existing file,
+an input file, a saved facts file) stops the run before it connects or
+saves facts. After collection it writes FILE in one step (a
 temporary file in the same folder, then a rename) before any check runs, so
 the raw facts survive a later failure; the checks then read the facts back
 as written, exactly as a replay will. The file is JSON (UTF-8, indented by
@@ -540,7 +541,9 @@ explicit `--as-of` that differs from the file's `as_of` prints a warning, and
 so does one earlier than the UTC collection date, unless it equals the
 file's `as_of`: replaying an evening session with its own session date (one
 day before the UTC collection date) is the normal case and prints nothing.
-Notes and warnings go to stderr, so JSON on stdout stays parseable.
+A replay writes its report to `--output`, or prints it only with `--stdout`
+(see "Report file" below). Notes and warnings go to stderr, so a JSON report
+printed with `--stdout` stays parseable.
 
 A replay repeats the checks' inputs, not the device. If the check logic, the
 control mappings, the configuration or the input files change, the result
@@ -591,26 +594,57 @@ only `Report written to FILE`. These checks are made before anything is read
 for scoring, before any connection and before `--save-facts` writes
 anything:
 
-- A blank file name for `--output`, `--facts` or `--save-facts` is an error
-  (`error: --output needs a file name`): an unset shell variable passes an
-  empty value, which would otherwise send the whole report to stdout, turn a
-  replay into a stub run, or drop the facts save.
+- A blank file name for `--output`, `--facts`, `--save-facts`,
+  `--attestation`, `--inventory-record`, `--config` or `--ssh-key` is an
+  error, `error: <option> needs a file name` (for example `error: --output
+  needs a file name`; also for `list-checks --config`): in bash an unset
+  `"$VAR"` passes an empty value, which would otherwise send the whole
+  report to stdout, turn a replay into a stub run, drop the facts save, or
+  drop an input file, so that the input-driven checks would run without it.
+  Windows PowerShell 5.1 drops an empty variable from a native command line
+  instead; the run then stops with argparse's `error: argument <option>:
+  expected one argument` (or, before the target, takes the target as the
+  file name and cannot read it), exit 2 in every case.
+- A run whose report holds study results, one with `--facts` or
+  `--save-facts`, or with `--connector` and `--as-of` (the protocol's tool
+  runs), needs `-o FILE` or `--stdout`. With neither it stops with `error:
+  this run's report holds results, so it goes to a file: give -o FILE, or
+  --stdout to print it here`. The study guide's step-5 command starts with
+  `--save-facts` and `--as-of` and ends with `-o`, and its step-6 command
+  starts with `--facts`, so either command cut or wrapped anywhere when
+  pasted is refused before it connects or prints, and cannot show a host's
+  results on the terminal before the later hosts' blind passes (a test
+  checks every cut of the step-5 line). `--stdout` prints the report on
+  purpose, for example in a rehearsal on synthetic data, and `--stdout`
+  with `-o` is an error. Every other run (a plain run, `--connector`
+  without `--as-of`, `--as-of` alone) prints as before, with or without
+  `--stdout`.
 - FILE's folder must exist, and FILE must not be a folder.
 - FILE can never be one of the run's input files (`--attestation`,
   `--inventory-record`, `--config`, `--facts`), whatever the spelling and
   also through a hard or symbolic link, nor the `--save-facts` file.
+- FILE is never a saved facts file, in any run and even with
+  `--overwrite`. When FILE exists and its first 64 KiB contain both
+  `"facts_format"` and `miccmac-facts/1` (through a link, its target's), the
+  run stops with `error: refusing to replace FILE: it is a saved facts file
+  (miccmac-facts/1), which a report must never replace`. An existing file
+  that cannot be read cannot be checked, so it is refused too (`error:
+  refusing to replace FILE: it cannot be read to check that it is not a
+  saved facts file (<reason>)`). The check is made again just before the
+  report replaces FILE.
 - A study run (one with `--connector`, `--facts`, `--save-facts` or
   `--as-of`) refuses an existing FILE unless `--overwrite` is given:
   `error: refusing to replace FILE: study runs never overwrite a file; choose
   a new file name or pass --overwrite`. A plain run replaces an existing
   FILE, as it always did. `--overwrite` never lets FILE replace one of the
-  run's input files, and `--save-facts` never overwrites a file, with or
-  without it.
+  run's input files or a saved facts file, and `--save-facts` never
+  overwrites a file, with or without it.
 
 The report is written whole or not at all: to a temporary file in the same
 folder, flushed to disk, then renamed over FILE. On any failure the
 temporary file is removed and an existing FILE is left as it was; the error
-is `error: cannot write --output FILE: <reason>` with exit status 2, and
+is `error: cannot write --output FILE: <reason>` (or, for a file that
+appeared during the run, one of the refusals above) with exit status 2, and
 after a live run with `--save-facts` it adds that the facts were saved, so
 the report can be rebuilt from them with `--facts` and no new collection.
 The file's bytes are the same as before these safeguards existed (UTF-8

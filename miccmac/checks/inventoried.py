@@ -1,4 +1,6 @@
-"""MICCMAC property: Inventoried (I).
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+MICCMAC property: Inventoried (I).
 
 Intent: The device is known to the organization and tracked in an authoritative hardware and software inventory.
 
@@ -25,6 +27,9 @@ unchanged from the Alpha scaffold.
 INV-04 counts the age of the last review against miccmac.clock's reference
 date: the --as-of date when one was given (context["as_of"]), otherwise
 today.
+
+In this module, AI assistance covers the --as-of reference date of INV-04
+(the today and as_of_label parameters and the " (as of ...)" detail suffix).
 """
 from __future__ import annotations
 
