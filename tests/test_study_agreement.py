@@ -1,24 +1,31 @@
 """Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 Tests for miccmac_study.agreement (protocol section 8): the seal it waits
-for (ledger.seal_status), its integrity checks against the ledger, the
-pre-hash worksheet lint (lint_worksheet), and the study.yaml level_rule
-settings and decoding it reads (miccmac_study.formats).
+for (ledger.seal_status) and the seal-opening row it records, its integrity
+checks against the ledger (inputs by role, the pre-registered study.yaml
+and sensitivity runs, worksheets hashed and hosts withdrawn after the seal
+opened, worksheets recorded with --force, typed levels against the declared
+manual rule), the pre-hash worksheet lint (lint_worksheet), and the
+study.yaml level_rule settings and decoding it reads (miccmac_study.formats).
 
 Each test builds a small synthetic study folder in tmp_path: worksheets
 written with formats.write_csv in the WORKSHEET_COLUMNS layout, tool JSONs
 made by running miccmac.engine.run_assessment on fake Linux/Windows facts
 (dateless, so verdicts never depend on today's date) with a provenance block
 attached, risk registers from miccmac.risk_register.build_risk_register,
-input and facts files, and a ledger written in the protocol's order. No
-network, no real hosts; only synthetic values. Level-rule expectations are
-worked out by hand in the comments.
+input and facts files, and a ledger written in the protocol's order. Rows
+the commands append themselves (agreement's seal-opening row, ledger
+record, ledger withdraw) get a pinned ledger time after every hand-written
+row (the ledger_clock fixture). No network, no real hosts; only synthetic
+values. Level-rule expectations are worked out by hand in the comments.
 """
 from __future__ import annotations
 
 import copy
 import csv
+import dataclasses
 import datetime as dt
+import hashlib
 import json
 import subprocess
 from fractions import Fraction
@@ -45,6 +52,21 @@ def committed_analysis_code(monkeypatch):
     so the tests pin it as committed; the tests of the git check itself use
     REAL_ANALYSIS_TREE_CLEAN with a fake git."""
     monkeypatch.setattr(agreement, "_analysis_tree_clean", lambda package_dir: True)
+
+
+# When the rows that commands append are recorded: agreement's seal-opening row,
+# `ledger record` and `ledger withdraw`. After every row StudyBuilder writes (its
+# sessions are in late November 2026), so they stay in time order whatever today is.
+LEDGER_NOW = "2026-12-01T09:00:00Z"
+
+
+@pytest.fixture(autouse=True)
+def ledger_clock(monkeypatch):
+    """The ledger's clock, pinned to LEDGER_NOW; a test moves it on with clock['now'] = ..."""
+    clock = {"now": LEDGER_NOW}
+    monkeypatch.setattr(ledger, "utc_now_iso", lambda: clock["now"])
+    return clock
+
 
 HOSTS = ("H1", "H2", "H3", "H4", "H5")
 SESSION = dt.date(2026, 11, 23)
@@ -156,9 +178,10 @@ class StudyBuilder:
     (capped at manual_max_level). The ledger holds what the protocol has the
     researcher record, in time order: at setup (the day before the first
     session) study.yaml, inputs/list-checks.json and each host's attestation
-    and inventory record; per host its worksheet (18:00 on its session day)
-    and, after the 19:05 tool run, its facts file (and tool outputs with
-    ledger_outputs). Change the attributes, then build()."""
+    and inventory record; per host its worksheet (generated at 09:00 and
+    hashed at 18:00 on its session day) and, after the 19:05 tool run, its
+    facts file (and tool outputs with ledger_outputs). Change the
+    attributes, then build()."""
 
     def __init__(self, root: Path, hosts=HOSTS, methodologies=("cmmi",), **config):
         self.root = Path(root)
@@ -188,6 +211,10 @@ class StudyBuilder:
         self.absent: List[str] = []                    # hosts in study.yaml with no file at all
         self.drop_checks: Dict[str, List[str]] = {h: [] for h in self.hosts}   # check rows left off before hashing
         self.inputs_of: Dict[str, str] = {}            # host -> host whose input files its tool run used
+        # host -> provenance input key -> the role of the input file given for it (a swap or a duplicate)
+        self.run_inputs: Dict[str, Dict[str, str]] = {}
+        self.sheet_notes: Dict[str, str] = {}          # host -> note of its worksheet row
+        self.cell_edits: Dict[str, Dict[str, Dict[str, str]]] = {h: {} for h in self.hosts}  # check -> column -> value
         self.miccmac_config: Dict[str, Path] = {}      # host -> miccmac config file its tool run used (--config)
         self.study_files: List[Path] = []              # more files recorded at setup as STUDY rows (kind other)
         self.list_checks = enabled_ids()               # inputs/list-checks.json as exported at setup
@@ -239,8 +266,10 @@ class StudyBuilder:
         day = self.session[host].isoformat()
         facts = self.root / formats.OUTPUTS_DIR / formats.facts_name(host)
         # As typed on the command line (backslashes): agreement matches inputs by hash, never by path.
-        inputs = {key: {"path": "inputs\\" + path.name, "sha256": formats.sha256_file(path)}
-                  for key, path in self.input_paths(self.inputs_of.get(host, host)).items()}
+        files = self.input_paths(self.inputs_of.get(host, host))
+        roles = self.run_inputs.get(host, {})
+        inputs = {key: {"path": "inputs\\" + files[roles.get(key, key)].name,
+                        "sha256": formats.sha256_file(files[roles.get(key, key)])} for key in files}
         settings = self.miccmac_config.get(host)
         config = {"path": settings.name, "sha256": formats.sha256_file(settings)} if settings else None
         block = {
@@ -269,11 +298,12 @@ class StudyBuilder:
     def worksheet_rows(self, host: str) -> List[dict]:
         primary = self.assessment(host, self.methodologies[0])
         ids = enabled_ids()
+        # Generated at step 1 of the session, after Setup recorded the inputs.
         meta = {"worksheet_format": formats.WORKSHEET_FORMAT, "host_code": host,
                 "session_date": self.session[host].isoformat(), "assessor": "assessor",
                 "level_rule": "approved rule", "methodologies": ";".join(self.methodologies),
                 "enabled_checks_fingerprint": formats.check_ids_fingerprint(ids),
-                "generated_at_utc": "2026-11-20T10:00:00Z", "synthetic": "no"}
+                "generated_at_utc": f"{self.session[host].isoformat()}T09:00:00Z", "synthetic": "no"}
         meta.update(self.meta[host])
         rows = [{"row_type": "meta", "item": k, "value": v} for k, v in meta.items()]
         for prop in primary.properties:
@@ -284,11 +314,11 @@ class StudyBuilder:
                                                         (_MANUAL_DEFAULT[check.status.value], ""))
                 if value == "UNASSESSED" and check.check_id not in self.verdicts[host]:
                     reason = "check logic not implemented"
-                rows.append({"row_type": "check", "item": check.check_id, "property": prop.key,
-                             "description": check.name, "control_refs": "; ".join(check.control_refs),
-                             "value": value, "pass_criterion": "synthetic criterion",
-                             "evidence_procedure": "synthetic step", "procedure_source": "synthetic source",
-                             "unassessed_reason": reason})
+                rows.append(dict({"row_type": "check", "item": check.check_id, "property": prop.key,
+                                  "description": check.name, "control_refs": "; ".join(check.control_refs),
+                                  "value": value, "pass_criterion": "synthetic criterion",
+                                  "evidence_procedure": "synthetic step", "procedure_source": "synthetic source",
+                                  "unassessed_reason": reason}, **self.cell_edits[host].get(check.check_id, {})))
         for methodology in self.methodologies:
             tool = self.tool_levels(host, methodology)
             cap = self.manual_cap(methodology)
@@ -329,7 +359,8 @@ class StudyBuilder:
             day = self.session[host].isoformat()
             sheet = root / formats.WORKSHEETS_DIR / formats.worksheet_name(host)
             formats.write_csv(sheet, formats.WORKSHEET_COLUMNS, self.worksheet_rows(host))
-            ledger_rows.append(self.ledger_row(day + self.hashed_at[host], host, "worksheet", sheet))
+            ledger_rows.append(self.ledger_row(day + self.hashed_at[host], host, "worksheet", sheet,
+                                               self.sheet_notes.get(host, "")))
             methodologies = [m for m in self.methodologies if (host, m) not in self.skip_outputs]
             if methodologies:
                 facts = formats.write_json(root / formats.OUTPUTS_DIR / formats.facts_name(host),
@@ -437,6 +468,29 @@ def append_row(root: Path, when: str, host: str, kind: str, path: Path, note: st
     with open(ledger_file, "a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow([when, host, kind, formats.ledger_relpath(ledger_file, path),
                                  sha256 or formats.sha256_file(path), path.stat().st_size, note])
+
+
+def row_for(root: Path, when: str, host: str, kind: str, path: Path, note: str = "") -> Dict[str, object]:
+    """A ledger row for a file as it is now, at a chosen time."""
+    return {"recorded_at_utc": when, "host_code": host, "kind": kind,
+            "path": formats.ledger_relpath(root / formats.LEDGER_FILE, path), "sha256": formats.sha256_file(path),
+            "bytes": path.stat().st_size, "note": note}
+
+
+def insert_rows(root: Path, *rows: Dict[str, object]) -> None:
+    """Rows recorded at their own times, as if appended then (the ledger stays in time order)."""
+    write_ledger(root, sorted(ledger_rows(root) + list(rows), key=lambda row: row["recorded_at_utc"]))
+
+
+def point_outputs_at(root: Path, host: str, key: str, path: Path) -> None:
+    """Every tool output of `host` names `path` (its current hash) as its `key` input, as a run given that file."""
+    for output in sorted((root / formats.OUTPUTS_DIR).glob(f"{host}-*.json")):
+        if output.name == formats.facts_name(host):
+            continue
+        data = json.loads(output.read_text(encoding="utf-8"))
+        data["assessment"]["provenance"]["inputs"][key] = {"path": "inputs\\" + path.name,
+                                                           "sha256": formats.sha256_file(path)}
+        formats.write_json(output, data, overwrite=True)
 
 
 # ------------------------------------------------------------------ fixture sanity
@@ -832,6 +886,10 @@ def test_a_withdrawn_host_is_left_out_with_its_time_and_reason(tmp_path, capsys)
     assert details(root, "hosts", "WARNING") == [
         ("H5", "withdrawn in the ledger at 2026-11-29T09:00:00Z: Windows 11 VM could not be rearmed; left out of "
                "the analysis")]
+    # A planned withdrawal (before the seal opened, before any tool output of H5): that WARNING and nothing else.
+    assert [(r["check"], r["result"]) for r in data["integrity"]["checks"] if r["result"] != "OK"] == [
+        ("hosts", "WARNING")]
+    assert data["config"]["sensitivity_run"] is False
     assert h1(root, "cmmi", "overall")["n"] == "4"
     assert "H5" not in {r["host"] for r in csv_rows(out_file(root, "host_levels.csv"))}
     text = out_file(root, "summary.md").read_text(encoding="utf-8")
@@ -840,17 +898,28 @@ def test_a_withdrawn_host_is_left_out_with_its_time_and_reason(tmp_path, capsys)
 
 
 def test_a_host_outside_the_configuration_is_left_out_with_a_warning(tmp_path):
+    # Deliberately changed (V1-N3 b): a --config that leaves hosts out is no longer exit 0. It differs from
+    # study.yaml as recorded when the seal opened, so it is a CRITICAL config finding and a labelled sensitivity run.
     root = StudyBuilder(tmp_path / "study").build()     # every host hashed: the seal is open
     subset = tmp_path / "first-three.yaml"
     subset.write_text(SUBSET_CONFIG, encoding="utf-8")
-    assert run_agreement(root, "--config", str(subset)) == 0
+    assert run_agreement(root, "--config", str(subset)) == 3
     assert details(root, "hosts", "WARNING") == [("H4", "has study files but is not in first-three.yaml; left out"),
                                                  ("H5", "has study files but is not in first-three.yaml; left out")]
     assert details(root, "config", "WARNING") == [
         ("", "first-three.yaml was never recorded in the ledger, so the settings used cannot be shown to be the "
              "ones fixed in advance")]
-    assert summary(root)["config"]["other_hosts"] == ["H4", "H5"]
+    assert details(root, "config") == [
+        ("", "the configuration used (first-three.yaml) differs from study.yaml as it was when the seal first opened "
+             "(ledger line 2): hosts: H4, H5 left out; this run is a sensitivity run, not the pre-registered analysis")]
+    config = summary(root)["config"]
+    assert config["other_hosts"] == ["H4", "H5"]
+    assert (config["sensitivity_run"], config["overrides"], config["config_differences"]) == (
+        True, [], ["hosts: H4, H5 left out"])
     assert h1(root, "cmmi", "overall")["n"] == "3"
+    text = out_file(root, "summary.md").read_text(encoding="utf-8")
+    assert ("| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: first-three.yaml differs "
+            "from study.yaml as recorded at ledger line 2, when the seal first opened: hosts: H4, H5 left out |") in text
 
 
 def test_every_host_withdrawn_leaves_nothing_to_analyse(tmp_path, capsys):
@@ -930,10 +999,19 @@ def test_second_run_identical_except_timestamps(tmp_path):
     assert run_agreement(root, "--out", str(root / "again")) == 0
     first = sorted(p.name for p in (root / "analysis").iterdir())
     assert first == sorted(p.name for p in (root / "again").iterdir())
+    # Changed with the seal-opening rows: each run appends its own, so the second run's ledger has one row more.
+    rows = len(ledger_rows(root))
+
+    def same(line: str) -> bool:
+        return "generated_at_utc" not in line and f"{rows - 1} rows in all" not in line \
+            and f"{rows} rows in all" not in line and line.strip() not in (f'"rows": {rows - 1},', f'"rows": {rows},')
+
     for name in first:
         a = (root / "analysis" / name).read_text(encoding="utf-8").splitlines()
         b = (root / "again" / name).read_text(encoding="utf-8").splitlines()
-        assert [l for l in a if "generated_at_utc" not in l] == [l for l in b if "generated_at_utc" not in l], name
+        assert [l for l in a if same(l)] == [l for l in b if same(l)], name
+    assert summary(root)["ledger"]["rows"] == rows - 1
+    assert json.loads((root / "again" / "summary.json").read_text(encoding="utf-8"))["ledger"]["rows"] == rows
 
 
 def test_refuses_to_overwrite_without_flag(tmp_path, capsys):
@@ -1371,6 +1449,11 @@ def test_tool_side_approved_end_to_end(tmp_path):
     root = builder.build()
     assert run_agreement(root) == 0
     data = summary(root)
+    # Deliberately changed (V2-N1): H2's controlled 3 does not follow the declared manual rule (approved: 1/1 -> 4),
+    # so it is a levels WARNING and its rule_only is left blank (it was yes). The counts are unchanged.
+    assert details(root, "levels", "WARNING") == [
+        ("H2", "cmmi controlled: level 3 entered, but this worksheet's verdicts give level 4 under the declared manual "
+               "rule (approved, overall mean-of-property-ratios)")]
     # The reported levels still reproduce with miccmac's own cutoffs.
     assert {r["check"]: r["result"] for r in data["integrity"]["checks"]}["reproduce"] == "OK"
     row = level_row(root, "H1", "cmmi", "controlled")
@@ -1382,8 +1465,10 @@ def test_tool_side_approved_end_to_end(tmp_path):
         assert h1(root, "cisa-ztmm", scope, "exact")["k"] == "5"
         assert h1(root, "cmmi", scope, "exact")["k"] == ("4" if scope == "controlled" else "5")
     mismatch = level_row(root, "H2", "cmmi", "controlled")
+    # l5_rule_only is blank too (round 3): an off-rule level is not classified as a Level 5 case either.
     assert (mismatch["tool_level_used"], mismatch["manual_level"], mismatch["within_one"], mismatch["l5_rule_only"],
-            mismatch["rule_only"]) == ("4", "3", "yes", "no", "yes")
+            mismatch["rule_only"]) == ("4", "3", "yes", "", "")
+    assert mismatch["note"] == agreement.OFF_RULE_NOTE == "typed level does not follow the declared manual rule"
     # Every scale-dependent part uses the approved scale of 4 levels.
     assert data["config"]["tool_max_level"] == {"cmmi": 4, "cisa-ztmm": 4}
     chance = {r["methodology"]: r for r in data["chance_baselines"]}
@@ -1397,11 +1482,11 @@ def test_tool_side_approved_end_to_end(tmp_path):
     assert all(r["l5_rule_applies"] is False and r["l5_rule_only"] == 0 for r in l5)
     text = out_file(root, "summary.md").read_text(encoding="utf-8")
     assert "Tool levels: the tool's check statuses scored with the approved rule" in text
-    assert "| cmmi | 4 | 4 | 40 | 1 | not applicable | 1 |" in text
+    assert "| cmmi | 4 | 4 | 40 | 1 | not applicable | 0 (1 not classified) |" in text
     assert "| Level rule (study.yaml level_rule) | manual: approved; tool_side: approved; overall: " \
            "mean-of-property-ratios |" in text
     assert [(r["item"], r["rule_only"]) for r in csv_rows(out_file(root, "disagreements.csv"))] == [
-        ("controlled", "yes")]
+        ("controlled", "")]
 
 
 def test_rule_only_flag_yes_no_and_blank(tmp_path):
@@ -1440,6 +1525,7 @@ def test_level_rule_overrides_are_a_recorded_sensitivity_run(tmp_path):
     assert run_agreement(root) == 0
     base = summary(root)["config"]
     assert (base["sensitivity_run"], base["overrides"], base["tool_max_level"]) == (False, [], {"cmmi": 5})
+    assert base["config_differences"] == []
     assert run_agreement(root, "--tool-side-rule", "approved", "--overall-rule", "pooled-checks",
                          "--out", str(root / "sensitivity")) == 0
     config = json.loads((root / "sensitivity" / "summary.json").read_text(encoding="utf-8"))["config"]
@@ -1447,11 +1533,13 @@ def test_level_rule_overrides_are_a_recorded_sensitivity_run(tmp_path):
     assert config["config_level_rule"] == {"manual": None, "tool_side": "tool-cutoffs", "overall": None}
     assert config["sensitivity_run"] is True
     assert config["overrides"] == ["--tool-side-rule approved", "--overall-rule pooled-checks"]
+    assert config["config_differences"] == []                  # command-line overrides alone: labelled, no finding
     assert config["level_rule_source"]["tool_side"] == "--tool-side-rule (sensitivity check)"
     assert config["tool_max_level"] == {"cmmi": 4}
     text = (root / "sensitivity" / "summary.md").read_text(encoding="utf-8")
-    assert "| Sensitivity run (command-line overrides) | yes: --tool-side-rule approved, --overall-rule " \
-           "pooled-checks |" in text
+    # The row's label changed on purpose: it now also lists configuration differences (V1-N3).
+    assert "| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: --tool-side-rule approved, " \
+           "--overall-rule pooled-checks |" in text
     assert "| Tool-side level rule used | approved, from --tool-side-rule (sensitivity check); the study " \
            "configuration has tool-cutoffs |" in text
     assert "Tool levels: the tool's check statuses scored with the approved rule" in text
@@ -1460,7 +1548,9 @@ def test_level_rule_overrides_are_a_recorded_sensitivity_run(tmp_path):
     assert (rows["overall"]["tool_level_reported"], rows["overall"]["tool_level_used"]) == ("4", "3")
     assert (rows["controlled"]["tool_level_used"], rows["controlled"]["manual_level"]) == ("4", "4")
     base_text = out_file(root, "summary.md").read_text(encoding="utf-8")
-    assert "| Sensitivity run (command-line overrides) | no |" in base_text
+    assert "| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | no |" in base_text
+    sensitivity = json.loads((root / "sensitivity" / "summary.json").read_text(encoding="utf-8"))
+    assert [r for r in sensitivity["integrity"]["checks"] if r["result"] != "OK"] == []
     assert "Tool levels: miccmac's own scoring and the cmmi cutoffs, as the tool reports them" in base_text
 
 
@@ -1656,20 +1746,32 @@ def test_outputs_scored_with_another_hosts_inputs_are_critical(tmp_path):
     root = builder.build()
     assert run_agreement(root) == 3
     # Every host has the same attestation bytes here, so only the inventory record gives the slip away.
+    # The message is ledger.check_run_inputs' (V1-N4), the rule health uses; it used to add "or that file changed".
     sha = formats.sha256_file(root / "inputs" / "H2-inventory-record.json")
     assert details(root, "inputs") == [
         ("H1", f"H1-cmmi.json: the inventory record the tool used (sha256 {sha[:12]}...) is not one of the input "
-               "files recorded for H1 in the ledger, or that file changed since")]
+               "files recorded for H1 in the ledger")]
 
 
 def test_a_run_without_inputs_is_critical_when_the_host_has_input_rows(tmp_path):
+    # Changed with ledger.check_run_inputs (V1-N4): one finding per input the ledger holds for the host by role.
     builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2"))
     builder.provenance["H2"]["cmmi"] = {"inputs": {"attestation": None, "inventory_record": None, "config": None}}
     root = builder.build()
     assert run_agreement(root) == 3
     assert details(root, "inputs") == [
-        ("H2", "H2-cmmi.json: run without --attestation and --inventory-record, although the ledger holds 2 input "
-               "file(s) for H2 and 10 input-driven check(s) are enabled")]
+        ("H2", "H2-cmmi.json: the run had no --attestation, although the ledger holds H2's attestation "
+               "inputs/H2-attestation.json"),
+        ("H2", "H2-cmmi.json: the run had no --inventory-record, although the ledger holds H2's inventory record "
+               "inputs/H2-inventory-record.json")]
+
+
+def test_a_run_without_inputs_is_accepted_when_no_input_driven_check_is_enabled(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",), input_driven_checks=[])
+    builder.provenance["H1"]["cmmi"] = {"inputs": {"attestation": None, "inventory_record": None, "config": None}}
+    root = builder.build()
+    assert run_agreement(root) == 0
+    assert details(root, "inputs") == details(root, "inputs", "WARNING") == []
 
 
 def test_inputs_without_ledger_rows_are_a_warning(tmp_path):
@@ -1683,14 +1785,14 @@ def test_inputs_without_ledger_rows_are_a_warning(tmp_path):
 
 
 def test_an_input_file_changed_after_it_was_hashed(tmp_path):
+    # Deliberately changed (V1-N4, V1-N5): the identical-inputs rule now asks whether the tool used the version
+    # the assessor had (ledger.check_run_inputs). Here it did (its hash is the recorded one): no inputs CRITICAL
+    # (it was one). The file edited afterwards stays a ledger_rows WARNING.
     root = StudyBuilder(tmp_path / "study", hosts=("H1", "H2")).build()
     inventory = root / "inputs" / "H2-inventory-record.json"
-    used = formats.sha256_file(inventory)
     inventory.write_text(json.dumps({"device_id": "synthetic-H2", "tracked": False}), encoding="utf-8")
-    assert run_agreement(root) == 3
-    assert details(root, "inputs") == [
-        ("H2", f"H2-cmmi.json: the inventory record the tool used (sha256 {used[:12]}...) is not one of the input "
-               "files recorded for H2 in the ledger, or that file changed since")]
+    assert run_agreement(root) == 0
+    assert details(root, "inputs") == []
     changed = details(root, "ledger_rows", "WARNING")
     assert [h for h, _ in changed] == ["H2"]
     assert changed[0][1].startswith("inputs/H2-inventory-record.json changed after it was hashed (input, ledger line ")
@@ -1755,8 +1857,8 @@ def test_register_sheets_forced_before_the_seal_opened_are_critical(tmp_path):
     root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
     append_row(root, "2026-11-24T08:00:00Z", "STUDY", "other", root / formats.CONFIG_FILE,
                note=ledger.FORCE_NOTE_PREFIX + "checking the pipeline early")
+    line = len(ledger_rows(root)) + 1        # before the run, which appends its own seal-opening row
     assert run_agreement(root) == 3
-    line = len(ledger_rows(root)) + 1
     assert details(root, "seal") == [
         ("", f"register sheets were generated before every worksheet was hashed (--force-before-unseal, ledger line "
              f"{line}, recorded 2026-11-24T08:00:00Z); reason given: checking the pipeline early")]
@@ -1783,17 +1885,42 @@ def test_register_sheets_changed_or_missing_after_hashing_are_critical(tmp_path)
     assert found[1][1].startswith("register/H2-missed-gaps.csv is missing or unreadable (missed-gaps, ledger line ")
 
 
+def test_a_register_sheet_recorded_under_another_kind_is_still_frozen(tmp_path):
+    """V1-N6: register/<H>-register-review.csv and <H>-missed-gaps.csv are sealed files whatever kind their rows
+    were given, so a change is CRITICAL (it was a ledger_rows WARNING)."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.judge_all("H1")
+    root = builder.build()
+    review = root / formats.REGISTER_DIR / formats.register_review_name("H1")
+    gaps = root / formats.REGISTER_DIR / formats.missed_gaps_name("H1")
+    append_row(root, "2026-11-25T10:00:00Z", "H1", "other", review, note="judged")
+    line = len(ledger_rows(root)) + 1
+    append_row(root, "2026-11-25T10:00:00Z", "H1", "other", gaps, note="judged")
+    rows = csv_rows(review)
+    rows[0]["actionable"] = "N"
+    formats.write_csv(review, formats.REGISTER_REVIEW_COLUMNS, rows, overwrite=True)
+    gaps.unlink()
+    assert run_agreement(root) == 3
+    found = details(root, "ledger_hash")
+    assert [h for h, _ in found] == ["H1", "H1"]
+    assert found[0][1].startswith(f"register/H1-register-review.csv changed after it was hashed (other, ledger line "
+                                  f"{line})")
+    assert found[1][1].startswith(f"register/H1-missed-gaps.csv is missing or unreadable (other, ledger line "
+                                  f"{line + 1})")
+    assert details(root, "ledger_rows", "WARNING") == []
+
+
 def test_a_ledger_row_out_of_time_order_is_critical(tmp_path):
     root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
     append_row(root, "2026-11-23T18:30:00Z", "H1", "other", root / "inputs" / "list-checks.json",
                note="dated back by hand")
+    line = len(ledger_rows(root)) + 1        # before the run, which appends its own seal-opening row
     assert run_agreement(root) == 3
-    line = len(ledger_rows(root)) + 1
     assert details(root, "ledger_order") == [
         ("H1", f"ledger line {line} (inputs/list-checks.json, other) is out of order: recorded 2026-11-23T18:30:00Z, "
                "earlier than 2026-11-23T19:10:00Z above it")]
     rows = ledger_rows(root)
-    rows[-1]["recorded_at_utc"] = "11/24/2026 10:00"     # an Excel-style time is no proof of order either
+    rows[line - 2]["recorded_at_utc"] = "11/24/2026 10:00"     # an Excel-style time is no proof of order either
     write_ledger(root, rows)
     assert run_agreement(root, "--overwrite") == 3
     assert details(root, "ledger_order") == [
@@ -1818,23 +1945,250 @@ def test_superseded_rows_are_information_and_other_changed_rows_a_warning(tmp_pa
     assert "- line 2: SUPERSEDED study.yaml (other, STUDY, recorded 2026-11-22T09:00:00Z)" in text
 
 
-def test_the_study_configuration_must_match_its_latest_ledger_row(tmp_path):
+def record(root: Path, host: str, kind: str, *paths: Path, note: str = "") -> int:
+    """`ledger record` as the guide runs it (at the pinned ledger clock)."""
+    extra = ["--note", note] if note else []
+    return main(["ledger", "record", "--ledger", str(root / formats.LEDGER_FILE), "--host", host, "--kind", kind,
+                 *extra, *(str(p) for p in paths)])
+
+
+def edit_threshold(path: Path, value: str) -> None:
+    path.write_text(path.read_text(encoding="utf-8").replace("threshold: 0.8", f"threshold: {value}"),
+                    encoding="utf-8")
+
+
+def test_the_study_configuration_must_match_its_latest_ledger_row(tmp_path, capsys):
+    # Deliberately changed (V1-N3, task 2c). Editing study.yaml after its last row now closes the seal (the ledger
+    # checks it), so the config CRITICAL is shown with a --config file; its advice no longer says "record the one
+    # used": recording it again after the first tool run does not make it pre-registered.
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    config = root / formats.CONFIG_FILE
+    original = config.read_bytes()
+    edit_threshold(config, "0.6")
+    assert run_agreement(root) == 2
+    assert "STUDY (study.yaml changed since it was last recorded (ledger line 2" in capsys.readouterr().err
+    config.write_bytes(original)                                    # restored: the bytes are the recorded ones
+    other = root / "study-copy.yaml"
+    other.write_bytes(config.read_bytes())
+    assert record(root, "STUDY", "other", other, note="a copy of the configuration") == 0
+    recorded = formats.sha256_file(other)
+    line = len(ledger_rows(root)) + 1
+    edit_threshold(other, "0.6")
+    edited = formats.sha256_file(other)
+    assert run_agreement(root, "--config", str(other)) == 3
+    assert details(root, "config") == [
+        ("", f"study-copy.yaml changed after it was last recorded in the ledger (line {line}, {LEDGER_NOW}): ledger "
+             f"{recorded[:12]}..., file now {edited[:12]}...; restore the recorded file from "
+             f"ledger-archive/{recorded}.yaml; recording it again after the first tool run does not make it "
+             "pre-registered"),
+        ("", "the configuration used (study-copy.yaml) differs from study.yaml as it was when the seal first opened "
+             "(ledger line 2): threshold 0.80 -> 0.60; this run is a sensitivity run, not the pre-registered "
+             "analysis")]
+    assert details(root, "ledger_rows", "WARNING")[0][1].startswith(
+        f"study-copy.yaml changed after it was hashed (other, ledger line {line})")
+
+
+def test_a_config_with_another_threshold_after_unsealing_is_critical_and_labelled(tmp_path):
+    """V1-N3 (c): a separate configuration with threshold 0.60, recorded after the seal opened."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1", "H2")).build()
+    assert run_agreement(root) == 0                                 # the seal opens
+    final = root / "study-final.yaml"
+    final.write_bytes((root / formats.CONFIG_FILE).read_bytes())
+    edit_threshold(final, "0.60")
+    assert record(root, "STUDY", "other", final, note="final configuration") == 0
+    assert run_agreement(root, "--config", str(final), "--out", str(root / "final")) == 3
+    data = json.loads((root / "final" / "summary.json").read_text(encoding="utf-8"))
+    critical = [(r["check"], r["detail"]) for r in data["integrity"]["checks"] if r["result"] == "CRITICAL"]
+    assert critical == [
+        ("config", "the configuration used (study-final.yaml) differs from study.yaml as it was when the seal first "
+                   "opened (ledger line 2): threshold 0.80 -> 0.60; this run is a sensitivity run, not the "
+                   "pre-registered analysis")]
+    assert (data["config"]["sensitivity_run"], data["config"]["overrides"], data["config"]["config_differences"]) == (
+        True, [], ["threshold 0.80 -> 0.60"])
+    assert data["config"]["threshold"] == 0.6                       # the run still uses the configuration given
+    text = (root / "final" / "summary.md").read_text(encoding="utf-8")
+    assert text.startswith(agreement.INTEGRITY_BANNER)
+    assert ("| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: study-final.yaml differs "
+            "from study.yaml as recorded at ledger line 2, when the seal first opened: threshold 0.80 -> 0.60 |") in text
+    # With a --threshold override on top, both are listed.
+    assert run_agreement(root, "--config", str(final), "--threshold", "0.75", "--out", str(root / "both")) == 3
+    text = (root / "both" / "summary.md").read_text(encoding="utf-8")
+    assert ("| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: --threshold 0.75; "
+            "study-final.yaml differs from study.yaml as recorded at ledger line 2, when the seal first opened: "
+            "threshold 0.80 -> 0.60 |") in text
+
+
+def test_study_yaml_recorded_again_after_unsealing_is_a_sensitivity_run(tmp_path, ledger_clock):
+    """V1-N3 (d), V3-N3: study.yaml's threshold changed and recorded again after the seal opened. Following the
+    old advice ("record the one used") no longer gives a clean-looking exit 0."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1", "H2")).build()
+    assert run_agreement(root) == 0                                 # the seal opens; its row archives study.yaml
+    config = root / formats.CONFIG_FILE
+    edit_threshold(config, "0.6")
+    ledger_clock["now"] = "2026-12-02T09:00:00Z"
+    assert record(root, "STUDY", "other", config, note="threshold corrected") == 0
+    assert run_agreement(root, "--out", str(root / "again")) == 3
+    data = json.loads((root / "again" / "summary.json").read_text(encoding="utf-8"))
+    found = [(r["result"], r["detail"]) for r in data["integrity"]["checks"] if r["check"] == "config"]
+    assert found == [
+        ("CRITICAL", "the configuration used (study.yaml) differs from study.yaml as it was when the seal first "
+                     "opened (ledger line 2): threshold 0.80 -> 0.60; this run is a sensitivity run, not the "
+                     "pre-registered analysis")]
+    assert data["config"]["sensitivity_run"] is True and data["config"]["config_differences"] == [
+        "threshold 0.80 -> 0.60"]
+    changed = [r["detail"] for r in data["integrity"]["checks"] if r["check"] == "ledger_rows"]
+    assert changed[0].startswith("study.yaml changed after it was hashed (other, ledger line 2)")
+
+
+def test_study_yaml_changed_after_the_first_tool_run_is_a_labelled_deviation(tmp_path):
+    """Deliberately changed (round 3, V3-N3 residual): study.yaml recorded again after the first tool run but before
+    the seal opened. The settings were fixed before the first tool run (protocol section 6), so a run with the
+    changed settings is a WARNING (the change was made blind) and is labelled a sensitivity run; the pre-registered
+    analysis is the run with the earlier version (its archive copy), which is clean and not labelled."""
     root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
     config = root / formats.CONFIG_FILE
     recorded = formats.sha256_file(config)
-    config.write_text(config.read_text(encoding="utf-8").replace("threshold: 0.8", "threshold: 0.6"),
-                      encoding="utf-8")
-    edited = formats.sha256_file(config)
-    assert run_agreement(root) == 3
-    assert details(root, "config") == [
-        ("", f"study.yaml changed after it was last recorded in the ledger (line 2, 2026-11-22T10:00:00Z): ledger "
-             f"{recorded[:12]}..., file now {edited[:12]}...; restore the recorded file, or record the one used and "
-             "say why in the protocol log")]
-    assert details(root, "ledger_rows", "WARNING")[0][1].startswith(
-        "study.yaml changed after it was hashed (other, ledger line 2)")
-    # Recorded again (too late to be superseded): the CRITICAL goes, the old row stays a WARNING.
+    archive = root / "ledger-archive" / f"{recorded}.yaml"           # what `ledger record` keeps at Setup
+    archive.parent.mkdir()
+    archive.write_bytes(config.read_bytes())
+    edit_threshold(config, "0.6")
     append_row(root, "2026-11-24T09:00:00Z", "STUDY", "other", config, note="threshold corrected")
+    line = len(ledger_rows(root)) + 1
+    changed = (f"study.yaml changed after the first tool run (version at the first tool run: ledger line 2; version "
+               f"when the seal opened: line {line}): threshold 0.80 -> 0.60; record this deviation in the protocol log")
+    assert run_agreement(root) == 0
+    assert details(root, "config", "WARNING") == [
+        ("", f"{changed}; this run uses the settings changed since then, so it is labelled a sensitivity run; the "
+             f"pre-registered analysis uses those of ledger line 2 (--config ledger-archive/{recorded}.yaml)")]
+    assert details(root, "config") == []
+    data = summary(root)["config"]
+    assert (data["sensitivity_run"], data["config_differences"], data["threshold"]) == (
+        True, ["threshold 0.80 -> 0.60"], 0.6)
+    assert data["config_reference"] == ("the pre-registered settings (study.yaml as recorded at ledger line 2, in "
+                                        "force at the first tool run)")
+    text = out_file(root, "summary.md").read_text(encoding="utf-8")
+    assert ("| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: "
+            "study.yaml differs from the pre-registered settings (study.yaml as recorded at ledger line 2, in force at "
+            "the first tool run): threshold 0.80 -> 0.60 |") in text
+    # The pre-registered analysis: the archive copy of the version in force at the first tool run.
+    assert run_agreement(root, "--config", str(archive), "--out", str(root / "pre")) == 0
+    pre = json.loads((root / "pre" / "summary.json").read_text(encoding="utf-8"))
+    assert (pre["config"]["sensitivity_run"], pre["config"]["config_differences"], pre["config"]["threshold"]) == (
+        False, [], 0.8)
+    found = [(r["result"], r["detail"]) for r in pre["integrity"]["checks"] if r["check"] == "config"]
+    assert found == [("WARNING", f"{changed}; this run uses the settings in force at the first tool run, as "
+                                 "pre-registered")]
+    assert {r["check"]: r["result"] for r in pre["integrity"]["checks"]}["config"] == "WARNING"
+    # Without the archive copy the version at the first tool run cannot be read; the seal stays closed then too.
+    archive.unlink()
+    assert run_agreement(root, "--out", str(root / "again")) == 2
+
+
+def test_a_setting_changed_mid_study_and_again_after_unsealing_is_critical_against_the_opening(tmp_path,
+                                                                                               ledger_clock):
+    """Round 3: 0.80 at the first tool run, 0.75 when the seal opened, then a --config with 0.60. The CRITICAL
+    compares with the version in force when the seal opened; the label compares with the pre-registered 0.80."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    config = root / formats.CONFIG_FILE
+    recorded = formats.sha256_file(config)
+    (root / "ledger-archive").mkdir()
+    (root / "ledger-archive" / f"{recorded}.yaml").write_bytes(config.read_bytes())
+    edit_threshold(config, "0.75")
+    append_row(root, "2026-11-24T09:00:00Z", "STUDY", "other", config, note="threshold changed")
+    line = len(ledger_rows(root)) + 1
+    assert run_agreement(root) == 0                                  # the seal opens
+    late = root / "study-t060.yaml"
+    late.write_text(config.read_text(encoding="utf-8").replace("threshold: 0.75", "threshold: 0.60"), encoding="utf-8")
+    assert run_agreement(root, "--config", str(late), "--out", str(root / "late")) == 3
+    data = json.loads((root / "late" / "summary.json").read_text(encoding="utf-8"))
+    assert [r["detail"] for r in data["integrity"]["checks"] if r["check"] == "config" and r["result"] == "CRITICAL"] == [
+        f"the configuration used (study-t060.yaml) differs from study.yaml as it was when the seal first opened "
+        f"(ledger line {line}): threshold 0.75 -> 0.60; this run is a sensitivity run, not the pre-registered analysis"]
+    assert data["config"]["config_differences"] == ["threshold 0.80 -> 0.60"]
+    # Putting the setting back to its value at the first tool run is no change after unsealing.
+    back = root / "study-t080.yaml"
+    back.write_text(config.read_text(encoding="utf-8").replace("threshold: 0.75", "threshold: 0.80"), encoding="utf-8")
+    assert run_agreement(root, "--config", str(back), "--out", str(root / "back")) == 0
+    data = json.loads((root / "back" / "summary.json").read_text(encoding="utf-8"))
+    assert (data["config"]["sensitivity_run"], data["config"]["config_differences"]) == (False, [])
+
+
+def test_configuration_differences_name_every_setting():
+    base = formats.study_config_from_dict({"hosts": ["H1", "H2", "H3"]})
+    other = formats.study_config_from_dict({
+        "hosts": ["H1", "H2", "H4"], "threshold": "3/4", "primary_methodology": "cisa-ztmm",
+        "secondary_methodologies": ["cmmi"], "manual_max_level": {"cmmi": 4, "cisa-ztmm": 4},
+        "input_driven_checks": ["INV-01"], "input_driven_properties": ["claimed", "assessed", "current"],
+        "bootstrap": {"iterations": 2000, "seed": 1, "exact_limit": 0}, "weighted_kappa": True, "synthetic": True,
+        "level_rule": {"manual": "approved", "tool_side": "approved", "overall": "pooled-checks"}})
+    assert agreement._config_differences(base, other) == [
+        "hosts: H3 left out", "hosts: H4 added",
+        "input_driven_checks: INV-04, CTL-03, CLM-01, CLM-02, CLM-03, ASM-01, ASM-02, ASM-03, CUR-03 removed",
+        "input_driven_properties: current added", "threshold 0.80 -> 0.75", "primary_methodology cmmi -> cisa-ztmm",
+        "secondary_methodologies [] -> [cmmi]", "manual_max_level cmmi 5 -> 4", "bootstrap.iterations 10000 -> 2000",
+        "bootstrap.seed 20261122 -> 1", "bootstrap.exact_limit 1000000 -> 0", "weighted_kappa false -> true",
+        "synthetic false -> true", "level_rule.manual null -> approved", "level_rule.tool_side tool-cutoffs -> approved",
+        "level_rule.overall null -> pooled-checks"]
+    assert agreement._config_differences(base, base) == []
+    # Hosts compare as a set, and a cap written out equals the same cap left at its default.
+    same = formats.study_config_from_dict({"hosts": ["H3", "H1", "H2"], "manual_max_level": {"cmmi": 5}})
+    assert agreement._config_differences(base, same) == []
+    assert agreement._config_differences(base, dataclasses.replace(base, threshold=Fraction(2, 3))) == [
+        "threshold 0.80 -> 2/3"]
+    # Every StudyConfig setting is compared by name (a new one would be compared generically).
+    assert {item.name for item in dataclasses.fields(formats.StudyConfig)} == agreement._COMPARED_FIELDS
+
+
+def test_a_recorded_version_that_cannot_be_read_is_critical(tmp_path, monkeypatch):
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    assert run_agreement(root) == 0
+    rows = ledger_rows(root)
+    # As if the configuration had been hashed with other bytes and its archive copy were lost: the seal (whose own
+    # check is the ledger's) is let through here, so that agreement's comparison is reached.
+    rows[0]["sha256"] = "a" * 64
+    write_ledger(root, rows)
+    real = ledger.seal_status
+
+    def without_problems(*args, **kwargs):
+        status = real(*args, **kwargs)
+        return ledger.SealStatus(hosts=status.hosts, withdrawn=status.withdrawn, problems=[])
+
+    monkeypatch.setattr(ledger, "seal_status", without_problems)
+    assert run_agreement(root, "--out", str(root / "again")) == 3
+    found = json.loads((root / "again" / "summary.json").read_text(encoding="utf-8"))["integrity"]["checks"]
+    assert ("CRITICAL", "cannot load study.yaml as recorded at ledger line 2 (archive copy missing): the "
+                        "configuration used cannot be compared with the pre-registered one") in [
+        (r["result"], r["detail"]) for r in found if r["check"] == "config"]
+
+
+def test_study_yaml_first_recorded_after_the_first_tool_run_is_a_warning(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.ledger_setup = False
+    root = builder.build()
+    append_row(root, "2026-11-24T09:00:00Z", "STUDY", "other", root / formats.CONFIG_FILE, note="recorded late")
+    line = len(ledger_rows(root)) + 1
+    tool = next(i for i, r in enumerate(ledger_rows(root)) if r["kind"] == "facts") + 2
+    assert run_agreement(root) == 0
+    assert details(root, "config", "WARNING") == [
+        ("", f"study.yaml was first recorded at ledger line {line}, after the first tool run (ledger line {tool}), so "
+             "the version in force at the first tool run is unknown; record this deviation in the protocol log")]
+    assert details(root, "config") == [] and summary(root)["config"]["sensitivity_run"] is False
+
+
+def test_rows_of_study_yaml_recorded_only_after_the_seal_opened_are_a_warning(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.ledger_setup = False
+    root = builder.build()
+    assert run_agreement(root) == 0                                 # never recorded: the WARNING of today
+    assert record(root, "STUDY", "other", root / formats.CONFIG_FILE, note="recorded late") == 0
     assert run_agreement(root, "--out", str(root / "again")) == 0
+    found = json.loads((root / "again" / "summary.json").read_text(encoding="utf-8"))["integrity"]["checks"]
+    lines = [r["detail"] for r in found if r["check"] == "config" and r["result"] == "WARNING"]
+    rows = ledger_rows(root)
+    late = next(i for i, r in enumerate(rows) if r["note"] == "recorded late") + 2
+    opened = next(i for i, r in enumerate(rows) if r["note"].startswith(ledger.SEAL_OPENED_NOTE_PREFIX)) + 2
+    assert lines == [f"study.yaml was first recorded at ledger line {late}, after the seal was first opened (ledger "
+                     f"line {opened}), so the settings used cannot be shown to be the ones fixed in advance"]
 
 
 def test_a_configuration_never_recorded_is_a_warning(tmp_path):
@@ -1847,6 +2201,270 @@ def test_a_configuration_never_recorded_is_a_warning(tmp_path):
              "in advance")]
     row = next(r for r in summary(root)["integrity"]["checks"] if r["check"] == "list_checks")
     assert (row["result"], row["detail"]) == ("OK", "no STUDY list-checks row in the ledger, so nothing to compare")
+
+
+# ------------------------------------------------------------------ the seal-opening row (RD-03, V1-N2)
+def test_every_run_that_opens_the_seal_records_it_in_the_ledger(tmp_path, ledger_clock):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2", "H3"))
+    builder.absent = ["H3"]
+    root = builder.build()
+    before = ledger_rows(root)
+    assert run_agreement(root) == 2                       # sealed (H3 neither hashed nor withdrawn): no row
+    assert ledger_rows(root) == before
+    append_row(root, "2026-11-29T09:00:00Z", "H3", "protocol", root / formats.CONFIG_FILE, note="withdrawn: VM lost")
+    assert run_agreement(root) == 0
+    rows = ledger_rows(root)
+    config = root / formats.CONFIG_FILE
+    assert len(rows) == len(before) + 2
+    assert rows[-1] == {"recorded_at_utc": LEDGER_NOW, "host_code": "STUDY", "kind": "protocol", "path": "study.yaml",
+                        "sha256": formats.sha256_file(config), "bytes": str(config.stat().st_size),
+                        "note": "seal opened by agreement: hosts H1, H2; withdrawn: H3"}
+    assert (root / "ledger-archive" / f"{rows[-1]['sha256']}.yaml").read_bytes() == config.read_bytes()
+    assert summary(root)["ledger"]["rows"] == len(rows)    # the run reports the ledger with its own row
+    assert run_agreement(root) == 2                       # refused (its outputs exist): no row
+    assert len(ledger_rows(root)) == len(rows)
+    ledger_clock["now"] = "2026-12-02T09:00:00Z"
+    assert run_agreement(root, "--out", str(root / "again")) == 0     # every opening is a row of its own
+    assert [(r["recorded_at_utc"], r["note"]) for r in ledger_rows(root)[len(rows) - 1:]] == [
+        (LEDGER_NOW, rows[-1]["note"]), ("2026-12-02T09:00:00Z", rows[-1]["note"])]
+
+
+def test_a_seal_opening_that_cannot_be_recorded_stops_the_run_before_any_tool_output_is_read(tmp_path, capsys,
+                                                                                             monkeypatch):
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    before = (root / formats.LEDGER_FILE).read_bytes()
+
+    def locked(ledger_file, rows):
+        raise formats.StudyError(f"cannot write ledger {ledger_file}: [Errno 13] Permission denied")
+
+    monkeypatch.setattr(ledger, "_append_rows", locked)
+    monkeypatch.setattr(agreement, "load_tool_output", lambda path: pytest.fail("a tool output was read"))
+    assert run_agreement(root) == 2
+    err = capsys.readouterr().err
+    assert ("error: cannot record the seal opening in the ledger (cannot write ledger ledger.csv: [Errno 13] "
+            "Permission denied); no tool output was read and no analysis file was written") in err
+    assert not (root / formats.ANALYSIS_DIR).exists()
+    assert (root / formats.LEDGER_FILE).read_bytes() == before
+
+
+def test_a_host_added_and_hashed_after_the_seal_opened_is_critical(tmp_path):
+    """V1-N2 (b): the seal opened (register-sheet) while study.yaml listed H1-H3; H4 was then added to study.yaml,
+    recorded, and its worksheet hashed. Its blind pass came after tool results were available."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2", "H3", "H4"))
+    root = builder.build()
+    config = root / formats.CONFIG_FILE
+    first = yaml.safe_dump(dict(builder.config, hosts=["H1", "H2", "H3"]), sort_keys=False).encode("utf-8")
+    first_sha = hashlib.sha256(first).hexdigest()
+    (root / "ledger-archive").mkdir()
+    (root / "ledger-archive" / f"{first_sha}.yaml").write_bytes(first)      # as `ledger record` kept it
+    rows = [row for row in ledger_rows(root) if not (row["host_code"] == "H4" and row["kind"] == "input")]
+    rows[0].update(sha256=first_sha, bytes=str(len(first)))                    # study.yaml at Setup: H1-H3
+    write_ledger(root, rows)
+    insert_rows(root,
+                dict(rows[0], recorded_at_utc="2026-11-26T08:00:00Z", kind="protocol",
+                     note="seal opened by register-sheet: hosts H1, H2, H3; withdrawn: none"),
+                row_for(root, "2026-11-26T09:00:00Z", "STUDY", "other", config, note="H4 added"))
+    opened = next(i for i, r in enumerate(ledger_rows(root)) if r["note"].startswith("seal opened by")) + 2
+    assert run_agreement(root) == 3
+    assert details(root, "ledger_order") == [
+        ("H4", f"H4's worksheet was hashed at 2026-11-26T18:00:00Z, after the seal was first opened at "
+               f"2026-11-26T08:00:00Z (ledger line {opened}): its blind pass may have seen tool results")]
+    assert details(root, "config") == [
+        ("", "the configuration used (study.yaml) differs from study.yaml as it was when the seal first opened (ledger "
+             "line 2): hosts: H4 added; this run is a sensitivity run, not the pre-registered analysis")]
+    assert summary(root)["config"]["config_differences"] == ["hosts: H4 added"]
+
+
+def test_a_withdrawal_after_the_seal_opened_is_a_post_hoc_exclusion(tmp_path, capsys, ledger_clock):
+    """V1-N3 (a): a host withdrawn once its results were available."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1", "H2", "H3")).build()
+    assert run_agreement(root) == 0
+    opened = len(ledger_rows(root)) + 1                      # that run's seal-opening row, the last one
+    ledger_clock["now"] = "2026-12-02T09:00:00Z"
+    withdraw = ["ledger", "withdraw", "--ledger", str(root / formats.LEDGER_FILE), "--host", "H3",
+                "--reason", "results looked odd"]
+    assert main(withdraw) == 2 and "add --after-unseal" in capsys.readouterr().err
+    assert main(withdraw + ["--after-unseal"]) == 0
+    assert run_agreement(root, "--out", str(root / "again")) == 3
+    data = json.loads((root / "again" / "summary.json").read_text(encoding="utf-8"))
+    assert [(r["result"], r["host"], r["detail"]) for r in data["integrity"]["checks"] if r["check"] == "hosts"] == [
+        ("CRITICAL", "H3", f"H3 was withdrawn at 2026-12-02T09:00:00Z, after the seal was first opened at {LEDGER_NOW} "
+                           f"(ledger line {opened}): a post-hoc exclusion; the pre-registered analysis includes H3")]
+    assert data["config"]["hosts"] == ["H1", "H2"]
+    assert data["config"]["withdrawn"]["H3"]["reason"] == "(after the seal was opened) results looked odd"
+    # Round 3 (V1, V2): the run is also labelled a sensitivity run, as a --config with fewer hosts is.
+    assert (data["config"]["sensitivity_run"], data["config"]["post_hoc_exclusions"]) == (
+        True, ["H3 withdrawn after the seal first opened (a post-hoc exclusion)"])
+    text = (root / "again" / "summary.md").read_text(encoding="utf-8")
+    assert ("| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: H3 "
+            "withdrawn after the seal first opened (a post-hoc exclusion) |") in text
+
+
+def test_a_withdrawal_after_the_hosts_tool_outputs_were_hashed_says_so(tmp_path):
+    root = StudyBuilder(tmp_path / "study", hosts=("H1", "H2")).build()
+    append_row(root, "2026-11-25T09:00:00Z", "H2", "protocol", root / formats.CONFIG_FILE,
+               note="withdrawn: VM lost after the run")
+    assert run_agreement(root) == 0                          # before the seal opened: a WARNING, worded so
+    assert details(root, "hosts", "WARNING") == [
+        ("H2", "withdrawn after its tool outputs were hashed (2026-11-24T19:10:00Z), in the ledger at "
+               "2026-11-25T09:00:00Z: VM lost after the run; left out of the analysis")]
+    assert details(root, "hosts") == []
+
+
+# ------------------------------------------------------------------ inputs by role (V1-N4, V1-N5)
+def test_swapped_input_files_are_critical(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2"))
+    builder.run_inputs["H1"] = {"attestation": "inventory_record", "inventory_record": "attestation"}
+    root = builder.build()
+    assert run_agreement(root) == 3
+    attestation = formats.sha256_file(root / "inputs" / "H1-attestation.json")
+    inventory = formats.sha256_file(root / "inputs" / "H1-inventory-record.json")
+    setup = "2026-11-22T10:00:00Z"
+    assert details(root, "inputs") == [
+        ("H1", f"H1-cmmi.json: the attestation the tool used (sha256 {inventory[:12]}...) is "
+               f"inputs/H1-inventory-record.json, H1's inventory record as recorded at {setup}: the two input files "
+               "were swapped or mixed up"),
+        ("H1", f"H1-cmmi.json: the inventory record the tool used (sha256 {attestation[:12]}...) is "
+               f"inputs/H1-attestation.json, H1's attestation as recorded at {setup}: the two input files were "
+               "swapped or mixed up")]
+
+
+def test_the_same_input_file_given_twice_is_critical(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.run_inputs["H1"] = {"inventory_record": "attestation"}
+    root = builder.build()
+    assert run_agreement(root) == 3
+    attestation = formats.sha256_file(root / "inputs" / "H1-attestation.json")
+    assert details(root, "inputs") == [
+        ("H1", f"H1-cmmi.json: the run was given the same file (sha256 {attestation[:12]}...) as --attestation and as "
+               "--inventory-record: inputs/H1-attestation.json as recorded at 2026-11-22T10:00:00Z")]
+
+
+def test_an_input_recorded_again_after_the_worksheet_hash_and_used_by_the_tool_is_critical(tmp_path):
+    """V1-N5: the assessor and the tool used different versions of the attestation."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    attestation = root / "inputs" / "H1-attestation.json"
+    attestation.write_text(json.dumps(dict(ATTESTATION, identity_aware_access={"enabled": False})), encoding="utf-8")
+    insert_rows(root, row_for(root, "2026-11-23T18:30:00Z", "H1", "input", attestation, note="corrected"))
+    point_outputs_at(root, "H1", "attestation", attestation)
+    assert run_agreement(root) == 3
+    assert details(root, "inputs") == [
+        ("H1", "H1-cmmi.json: the tool used inputs/H1-attestation.json as recorded at 2026-11-23T18:30:00Z, after "
+               "H1's worksheet was hashed at 2026-11-23T18:00:00Z; the assessor had the version recorded at "
+               "2026-11-22T10:00:00Z")]
+
+
+def test_an_input_recorded_again_during_the_blind_pass_is_a_warning(tmp_path):
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    inventory = root / "inputs" / "H1-inventory-record.json"
+    inventory.write_text(json.dumps({"device_id": "synthetic-H1", "tracked": True, "owner": "lab"}), encoding="utf-8")
+    insert_rows(root, row_for(root, "2026-11-23T12:00:00Z", "H1", "input", inventory, note="owner added"))
+    point_outputs_at(root, "H1", "inventory_record", inventory)
+    assert run_agreement(root) == 0
+    assert details(root, "inputs") == []                        # the assessor's version, as the tool used
+    assert details(root, "inputs", "WARNING") == [
+        ("H1", "inputs/H1-inventory-record.json was recorded again at 2026-11-23T12:00:00Z, during H1's blind pass "
+               "(sheet generated 2026-11-23T09:00:00Z, hashed 2026-11-23T18:00:00Z): check that the whole pass used "
+               "this version")]
+    assert [r["state"] for r in summary(root)["ledger"]["not_ok"]] == ["SUPERSEDED"]     # corrected in time
+
+
+def test_an_input_whose_name_gives_no_role_is_a_warning(tmp_path):
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    named = root / "inputs" / "H1-inventory.json"
+    named.write_bytes((root / "inputs" / "H1-inventory-record.json").read_bytes())
+    rows = ledger_rows(root)
+    for row in rows:
+        if row["path"] == "inputs/H1-inventory-record.json":
+            row["path"] = "inputs/H1-inventory.json"
+    write_ledger(root, rows)
+    assert run_agreement(root) == 0
+    assert details(root, "inputs") == []
+    assert details(root, "inputs", "WARNING") == [
+        ("H1", "H1-cmmi.json: cannot tell whether inputs/H1-inventory.json is an attestation or an inventory record: "
+               "name it H1-attestation.json or H1-inventory-record.json")]
+
+
+# ------------------------------------------------------------------ forced worksheets and typed levels (V1-N7, V2-N1)
+def test_a_worksheet_recorded_with_force_is_reported_with_its_findings(tmp_path, capsys, ledger_clock):
+    builder = approved_builder(tmp_path / "study", hosts=("H1", "H2"))
+    builder.levels["H2"][("cmmi", "monitored")] = "4"            # the verdicts give 3/4 -> 3
+    root = builder.build()
+    sheet = root / formats.WORKSHEETS_DIR / formats.worksheet_name("H2")
+    # Step 3 for H2 by the command line: the ledger without H2's worksheet and facts rows, then the record
+    # (refused, then forced), then the facts row.
+    rows = ledger_rows(root)
+    facts = next(r for r in rows if r["host_code"] == "H2" and r["kind"] == "facts")
+    write_ledger(root, [r for r in rows if r is not facts and not (r["host_code"] == "H2" and r["kind"] == "worksheet")])
+    ledger_clock["now"] = "2026-11-24T18:00:00Z"
+    assert record(root, "H2", "worksheet", sheet) == 2
+    assert "nothing was recorded" in capsys.readouterr().err
+    assert main(["ledger", "record", "--ledger", str(root / formats.LEDGER_FILE), "--host", "H2", "--kind",
+                 "worksheet", "--force", str(sheet)]) == 0
+    insert_rows(root, facts)
+    line = next(i for i, r in enumerate(ledger_rows(root)) if r["host_code"] == "H2" and r["kind"] == "worksheet") + 2
+    ledger_clock["now"] = LEDGER_NOW
+    assert run_agreement(root) == 0
+    finding = ("cmmi monitored: level 4 entered, but this worksheet's verdicts give level 3 under the declared manual "
+               "rule (approved, overall pooled-checks)")
+    assert details(root, "worksheet", "WARNING") == [
+        ("H2", f"worksheets/H2-worksheet.csv was recorded with --force despite lint findings (ledger line {line}, "
+               f"2026-11-24T18:00:00Z): WARNING {finding}")]
+    assert details(root, "levels", "WARNING") == [("H2", finding)]
+
+
+def test_a_forced_worksheet_with_a_critical_finding_is_critical(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.verdicts["H1"]["MON-03"] = ("", "")
+    listed = f"CRITICAL MON-03: missing verdict; WARNING {agreement.NO_MANUAL_RULE}"
+    builder.sheet_notes["H1"] = f"manual pass done; {ledger.LINT_NOTE_PREFIX}{listed}"     # with --note too
+    root = builder.build()
+    line = next(i for i, r in enumerate(ledger_rows(root)) if r["kind"] == "worksheet") + 2
+    assert run_agreement(root) == 3
+    assert details(root, "worksheet") == [
+        ("H1", f"worksheets/H1-worksheet.csv was recorded with --force despite lint findings (ledger line {line}, "
+               f"2026-11-23T18:00:00Z): {listed}")]
+
+
+def test_a_typed_level_that_does_not_follow_the_declared_manual_rule_is_flagged(tmp_path, monkeypatch):
+    """V2-N1: H2's cmmi overall typed 4 and controlled typed 1, where its verdicts give 3 and 4 under the declared
+    manual rule. A WARNING each; rule_only is left blank, noted; every other column and statistic is unchanged."""
+    builder = approved_builder(tmp_path / "study", hosts=("H1", "H2"))
+    builder.levels["H2"][("cmmi", "overall")] = "4"
+    builder.levels["H2"][("cmmi", "controlled")] = "1"
+    root = builder.build()
+    assert run_agreement(root) == 0
+    named = "the declared manual rule (approved, overall pooled-checks)"
+    assert details(root, "levels", "WARNING") == [
+        ("H2", f"cmmi controlled: level 1 entered, but this worksheet's verdicts give level 4 under {named}"),
+        ("H2", f"cmmi overall: level 4 entered, but this worksheet's verdicts give level 3 under {named}")]
+    controlled = level_row(root, "H2", "cmmi", "controlled")
+    assert (controlled["tool_level_used"], controlled["manual_level"], controlled["diff"], controlled["exact"],
+            controlled["within_one"], controlled["rule_only"], controlled["note"]) == (
+        "5", "1", "4", "no", "no", "", agreement.OFF_RULE_NOTE)
+    overall = level_row(root, "H2", "cmmi", "overall")               # the tool's 4 too: no mismatch, still noted
+    assert (overall["exact"], overall["rule_only"], overall["note"]) == ("yes", "", agreement.OFF_RULE_NOTE)
+    assert level_row(root, "H1", "cmmi", "controlled")["rule_only"] == "yes"     # 4 by the rule; the tool says 5
+    monkeypatch.setattr(agreement, "_declared_manual_rule", lambda study: None)  # the check left out
+    assert run_agreement(root, "--out", str(root / "unchecked")) == 0
+    checked, unchecked = csv_rows(out_file(root, "host_levels.csv")), csv_rows(root / "unchecked" / "host_levels.csv")
+    strip = lambda rows: [{k: v for k, v in r.items() if k not in ("l5_rule_only", "rule_only", "note")}  # noqa: E731
+                          for r in rows]
+    assert strip(checked) == strip(unchecked)
+    assert [r["rule_only"] for r in unchecked if r["host"] == "H2" and r["scope"] == "controlled"] == ["yes"]
+    for name in ("agreement_h1.csv", "pooled.csv", "check_agreement.csv", "confusion_levels_cmmi.csv"):
+        assert out_file(root, name).read_bytes() == (root / "unchecked" / name).read_bytes(), name
+
+
+def test_an_off_rule_level_at_the_cap_is_not_a_level_5_case():
+    """V2 (round 2): tool at its top level 5, manual typed 4 (the cap) where the verdicts give 3 under the declared
+    rule. That mismatch is not caused by the Level 5 rule alone, so l5_rule_only is left blank as rule_only is."""
+    args = ("H1", "cmmi", "overall", {"overall": 5}, {"overall": 5}, 4, "4", 5, 4, ())
+    on_rule = agreement._level_comparison(*args, from_verdicts=4)
+    assert (on_rule.l5_rule_only, on_rule.note) == (True, "Level 5 rule only: tool at top level 5, manual at cap 4")
+    off_rule = agreement._level_comparison(*args, from_verdicts=3, off_rule=True)
+    assert (off_rule.l5_rule_only, off_rule.rule_only, off_rule.note) == (None, None, agreement.OFF_RULE_NOTE)
+    assert (off_rule.counted, off_rule.exact, off_rule.within_one) == (True, False, True)
 
 
 # ------------------------------------------------------------------ the disagreement log is never lost (BI-09)
@@ -1931,6 +2549,30 @@ def test_analysis_tree_clean_asks_git_status_without_taking_locks(monkeypatch, r
     assert kwargs["cwd"] == str(package.parent) and kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0"
 
 
+def test_every_module_of_the_analysis_package_is_hashed(tmp_path):
+    """V1-N9: the seal, the ledger and the readers are analysis code too."""
+    root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
+    assert run_agreement(root) == 0
+    files = summary(root)["run"]["analysis_code"]["files_sha256"]
+    package = Path(agreement.__file__).resolve().parent
+    names = sorted(p.name for p in package.glob("*.py"))
+    assert list(files) == [f"miccmac_study/{name}" for name in names]
+    assert {"agreement.py", "formats.py", "ledger.py", "stats.py", "worksheet.py"} <= set(names)
+    lf = {name: hashlib.sha256((package / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for name in names}
+    assert all(files[f"miccmac_study/{name}"] == lf[name] for name in names)
+    assert summary(root)["run"]["analysis_code"]["files_sha256_method"] == agreement.CODE_HASH_METHOD
+    text = out_file(root, "summary.md").read_text(encoding="utf-8")
+    assert f"miccmac_study/ledger.py {files['miccmac_study/ledger.py'][:16]}" in text
+
+
+def test_the_analysis_code_hash_does_not_depend_on_line_endings(tmp_path):
+    """V2 (round 2): a Windows checkout (CRLF) and a Linux one (LF) of the same commit give the same values."""
+    lf, crlf = tmp_path / "lf.py", tmp_path / "crlf.py"
+    lf.write_bytes(b"a = 1\nb = 2\n")
+    crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
+    assert agreement.code_sha256(lf) == agreement.code_sha256(crlf) == hashlib.sha256(b"a = 1\nb = 2\n").hexdigest()
+
+
 @pytest.mark.parametrize("clean, shown", [
     (True, "yes"), (False, "no: uncommitted changes or untracked files in miccmac_study"),
     (None, "unknown (git not available)")])
@@ -1939,9 +2581,14 @@ def test_analysis_tree_clean_is_reported_and_warned_about(tmp_path, monkeypatch,
     root = StudyBuilder(tmp_path / "study", hosts=("H1",)).build()
     assert run_agreement(root) == 0
     assert summary(root)["run"]["analysis_code"]["analysis_tree_clean"] is clean
-    expected = [("", "miccmac_study has uncommitted changes or untracked files (git status --porcelain -- "
-                     "miccmac_study), so the analysis code commit does not hold the code that ran")]
-    assert details(root, "analysis_code", "WARNING") == (expected if clean is False else [])
+    # Deliberately changed: git not being available is a WARNING too (it gave none).
+    expected = {
+        True: [],
+        False: [("", "miccmac_study has uncommitted changes or untracked files (git status --porcelain -- "
+                     "miccmac_study), so the analysis code commit does not hold the code that ran")],
+        None: [("", "git is not available here, so it could not be checked that the analysis code is committed")],
+    }[clean]
+    assert details(root, "analysis_code", "WARNING") == expected
     text = out_file(root, "summary.md").read_text(encoding="utf-8")
     assert f"| Analysis code committed (analysis_tree_clean) | {shown} |" in text
 
@@ -1967,7 +2614,10 @@ def approved_builder(root: Path, hosts=("H1",), rule=None) -> StudyBuilder:
 
 
 def test_lint_finds_nothing_on_a_complete_worksheet(tmp_path):
-    root = StudyBuilder(tmp_path / "study", methodologies=("cmmi", "cisa-ztmm")).build()
+    # Changed with the decision-4 lint finding: a complete sheet lints clean once level_rule.manual is declared.
+    # Here the tool-cutoffs manual rule, which the default levels (the tool's own) follow.
+    root = StudyBuilder(tmp_path / "study", methodologies=("cmmi", "cisa-ztmm"),
+                        level_rule={"manual": "tool-cutoffs"}).build()
     assert all(lint(root, host) == [] for host in HOSTS)
     root = approved_builder(tmp_path / "approved", hosts=("H1", "H2")).build()
     assert lint(root, "H1") == lint(root, "H2") == []
@@ -1983,6 +2633,7 @@ def test_lint_reports_what_agreement_would_report_while_the_sheet_can_be_correct
     builder.meta["H1"]["synthetic"] = "yes"
     builder.meta["H1"]["enabled_checks_fingerprint"] = "0123456789abcdef"
     root = builder.build()
+    # Changed with the decision-4 lint finding: this study.yaml declares no level_rule.manual.
     assert sorted(lint(root, "H1")) == sorted([
         ("CRITICAL", "MON-01: unrecognized verdict 'PASSS'"),
         ("WARNING", "MON-02: UNASSESSED without an unassessed_reason"),
@@ -1991,6 +2642,7 @@ def test_lint_reports_what_agreement_would_report_while_the_sheet_can_be_correct
         ("CRITICAL", "missing level(s) for cmmi: current"),
         ("CRITICAL", "synthetic is yes, but the study configuration says synthetic: false"),
         ("WARNING", "enabled_checks_fingerprint does not match the check rows (rows edited, removed or reordered?)"),
+        ("WARNING", agreement.NO_MANUAL_RULE),
     ])
     assert ("CRITICAL", "host_code is 'H1', expected 'H2'") in lint(root, "H1", as_host="H2")
     other = root / "inputs" / "H1-attestation.json"
@@ -2021,7 +2673,10 @@ def test_lint_checks_the_overall_level_only_when_the_rule_defines_one(tmp_path):
     builder.levels["H1"][("cmmi", "overall_excl_input_driven")] = "1"     # not checked either
     builder.levels["H1"][("cmmi", "current")] = "4"                       # 5/6 -> 3
     root = builder.build()
+    # Changed with the decision-4 lint finding: without level_rule.overall the lint now says so (V2-N2).
     assert lint(root, "H1") == [
+        ("WARNING", "overall levels not checked: level_rule.overall is not declared, and the approved rule defines no "
+                    "overall level (decision 4)"),
         ("WARNING", "cmmi current: level 4 entered, but this worksheet's verdicts give level 3 under the declared "
                     "manual rule (approved)")]
     # tool-cutoffs defines its own overall level, so it is checked; the default levels are the tool's own.
@@ -2050,6 +2705,59 @@ def test_lint_accepts_unassessed_where_nothing_can_be_scored_and_skips_missing_v
                     "UNASSESSED), so the declared manual rule (approved, overall pooled-checks) gives no level; "
                     "enter UNASSESSED")]
     assert lint(root, "H3") == [("CRITICAL", "MON-03: missing verdict")]
+
+
+def test_lint_says_when_the_level_rule_is_not_declared(tmp_path):
+    """V2-N2, V3-N1: with level_rule.manual null (the template's default) no level is checked, and the lint says
+    so; with the approved rule but no level_rule.overall, the overall levels are not checked."""
+    root = StudyBuilder(tmp_path / "none", hosts=("H1",)).build()
+    assert lint(root, "H1") == [
+        ("WARNING", "levels not checked: the study configuration declares no level_rule.manual (decision 4); declare it before "
+                    "hashing a worksheet")]
+    root = approved_builder(tmp_path / "no-overall", rule={"manual": "approved", "tool_side": "tool-cutoffs",
+                                                            "overall": None}).build()
+    assert lint(root, "H1") == [
+        ("WARNING", "overall levels not checked: level_rule.overall is not declared, and the approved rule defines no "
+                    "overall level (decision 4)")]
+
+
+def test_lint_reports_blank_procedure_cells_and_a_blank_assessor_or_level_rule(tmp_path):
+    """V3-N9: on a check that is not UNASSESSED, a blank pass_criterion, evidence_procedure or procedure_source
+    (one finding per column, listing the checks); a blank assessor or level_rule meta value."""
+    builder = approved_builder(tmp_path / "study")
+    for check, column in (("MON-02", "procedure_source"), ("CTL-01", "procedure_source"), ("MON-01", "pass_criterion"),
+                          ("INV-01", "evidence_procedure")):
+        builder.cell_edits["H1"].setdefault(check, {})[column] = ""
+    builder.verdicts["H1"]["MON-03"] = ("UNASSESSED", "no access to the log host")      # blank cells allowed here
+    builder.cell_edits["H1"]["MON-03"] = {"pass_criterion": "", "evidence_procedure": "", "procedure_source": ""}
+    builder.meta["H1"]["assessor"] = ""
+    builder.meta["H1"]["level_rule"] = " "
+    root = builder.build()
+    assert lint(root, "H1") == [
+        ("WARNING", "meta assessor is blank: write who filled in this sheet"),
+        ("WARNING", "meta level_rule is blank: write the manual level rule you applied (protocol section 6)"),
+        ("WARNING", "pass_criterion is blank for MON-01: write what had to be true for a pass"),
+        ("WARNING", "evidence_procedure is blank for INV-01: write the steps you followed"),
+        ("WARNING", "procedure_source is blank for MON-02, CTL-01: write NONE when no external procedure exists")]
+    builder = approved_builder(tmp_path / "none-written")
+    builder.cell_edits["H1"]["MON-02"] = {"procedure_source": "NONE"}                 # protocol section 6
+    assert lint(builder.build(), "H1") == []
+
+
+def test_ledger_record_refuses_a_sheet_with_the_new_lint_findings_unless_forced(tmp_path, capsys):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.cell_edits["H1"]["MON-02"] = {"procedure_source": ""}
+    builder.ledger = False
+    root = builder.build()
+    sheet = root / formats.WORKSHEETS_DIR / formats.worksheet_name("H1")
+    blank = "procedure_source is blank for MON-02: write NONE when no external procedure exists"
+    assert record(root, "H1", "worksheet", sheet) == 2
+    err = capsys.readouterr().err.splitlines()
+    assert f"lint WARNING {sheet}: {blank}" in err and f"lint WARNING {sheet}: {agreement.NO_MANUAL_RULE}" in err
+    assert not (root / formats.LEDGER_FILE).exists()
+    assert main(["ledger", "record", "--ledger", str(root / formats.LEDGER_FILE), "--host", "H1", "--kind",
+                 "worksheet", "--force", str(sheet)]) == 0
+    assert ledger_rows(root)[0]["note"] == f"{ledger.LINT_NOTE_PREFIX}WARNING {blank}; WARNING {agreement.NO_MANUAL_RULE}"
 
 
 def test_lint_reads_only_the_worksheet_and_the_configuration(tmp_path):

@@ -12,7 +12,8 @@ H1 by hand, show that a hashed worksheet that was edited keeps the seal
 closed until it is restored from ledger-archive/, show that a --facts replay
 reproduces a tool output, and confirm that the blank worksheets carry no
 tool-derived text. The kit's printed next command is run in PowerShell
-where one is installed.
+where one is installed (Windows PowerShell, or PowerShell 7 on any
+platform, such as the CI's Ubuntu runner).
 
 A second study, not synthetic (study.yaml synthetic: false, worksheets
 marked synthetic no), is built from the kit's facts, inputs and dummy
@@ -24,11 +25,17 @@ tool run, the output hashes and health --ledger. Only the live collection
 of step 5 is replaced: the kit's facts are saved as the host's facts file
 (what --save-facts writes) and scored with --facts. With it the real seal
 is shown at work: mid-study (two hosts not hashed) register-sheet and
-agreement refuse, also with a configuration listing fewer hosts; the lint
-refuses a level that does not follow the declared rule; withdrawing a host
-lets the rest proceed and is reported; and the complete study opens the
-seal and exits 0, or 3 when a facts file still carries the synthetic kit's
-marker.
+agreement refuse, also with a configuration listing fewer hosts, or with
+study.yaml edited (recorded again after the first tool run, the earlier
+version's hosts stay in the seal); the lint refuses a level that does not
+follow the declared rule; an edited, hashed worksheet is never recorded
+again, and its archive copy restores it; withdrawing a host lets the rest
+proceed and is reported; and the complete study opens the seal and exits
+0, or 3 when a facts file still carries the synthetic kit's marker. After
+the seal has opened, a host added and hashed, a withdrawal (which needs
+--after-unseal), and a configuration other than the pre-registered one are
+CRITICAL; swapped, duplicated or later-recorded input files are a health
+PROBLEM and CRITICAL; and a study run with no -o prints nothing.
 
 Everything is synthetic and nothing connects anywhere. The tool's build
 state (tool_commit, tool_tree_clean) is pinned to what a clean checkout
@@ -61,6 +68,7 @@ from typing import Iterator, List, Optional, Sequence
 import pytest
 
 import miccmac
+import miccmac_study
 from miccmac import clock, facts_file, provenance
 from miccmac.cli import build_parser as miccmac_parser
 from miccmac.cli import main as miccmac_main
@@ -267,7 +275,15 @@ def _powershell() -> Optional[str]:
 def test_the_printed_next_command_runs_as_printed_in_powershell(tmp_path):
     """The second printed line, pasted into PowerShell in another folder with
     no PYTHONPATH set, runs agreement on the new folder (a path with a space
-    and a $ in it, which PowerShell would otherwise expand)."""
+    and a $ in it, which PowerShell would otherwise expand), exit 0 with no
+    CRITICAL.
+
+    This also runs under PowerShell 7 (pwsh) on Linux, as on the CI's Ubuntu
+    runner: the line uses only what pwsh does the same on every platform
+    ($env: assignment, inherited by the child; double-quoted strings with
+    backtick escapes; the & call operator, which passes each quoted string
+    as one argument), and the paths it quotes are this platform's own
+    (sys.executable, the repository folder, tmp_path)."""
     study = tmp_path / "kit $x 1"
     code, out, err = _run(main, ["synthetic", "--out", str(study), "--hosts", "1"])
     assert code == 0, err
@@ -282,7 +298,7 @@ def test_the_printed_next_command_runs_as_printed_in_powershell(tmp_path):
                             cwd=str(elsewhere), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "agreement: wrote " in result.stdout
+    assert "agreement: wrote " in result.stdout and "CRITICAL" not in result.stdout
     assert _analysis(study.resolve(), "summary.md").is_file()
 
 
@@ -299,6 +315,9 @@ def test_folder_follows_the_study_layout_and_is_labelled_synthetic(pipeline):
     readme = (root / synthetic.README_NAME).read_text(encoding="utf-8")
     assert readme.startswith(SYNTHETIC_BANNER) and "not study results" in readme
     assert "ledger-archive/" in readme and "level_rule" in readme
+    flowing = " ".join(readme.split())
+    assert ('register-sheet and agreement record each seal opening there too: a "seal opened by ..." row'
+            in flowing)
     assert json.loads((root / "inputs" / "list-checks.json").read_text(encoding="utf-8")) == enabled_check_ids()
 
     platforms = set()
@@ -430,7 +449,29 @@ def test_ledger_verifies_and_every_worksheet_was_hashed_before_its_tool_outputs(
             prov = _output(pipeline.root, host, methodology).provenance
             assert parse_utc_timestamp(prov["run_at_utc"]) > hashed
             assert parse_utc_timestamp(prov["facts_collected_at_utc"]) > hashed
-    assert {r.kind for r in rows if r.host_code == "STUDY"} == {"other", "list-checks"}
+    # Changed on purpose (round 2): register-sheet, while building the kit, and the
+    # fixture's agreement run each appended their seal-opening row (STUDY, protocol).
+    assert {r.kind for r in rows if r.host_code == "STUDY"} == {"other", "list-checks", "protocol"}
+    openings = [(index, r) for index, r in enumerate(rows) if study_ledger.is_seal_opening(r)]
+    everyone = ", ".join(HOSTS)
+    assert [r.note for _, r in openings] == [f"seal opened by register-sheet: hosts {everyone}; withdrawn: none",
+                                             f"seal opened by agreement: hosts {everyone}; withdrawn: none"]
+    assert all((r.kind, r.path) == ("protocol", "study.yaml") for _, r in openings)
+    last_sheet = max(index for index, r in enumerate(rows) if r.kind == "worksheet")
+    last_output = max(index for index, r in enumerate(rows) if r.kind in ("facts", "tool-output"))
+    first_register = min(index for index, r in enumerate(rows) if r.kind in ("register-review", "missed-gaps"))
+    assert last_sheet < last_output < openings[0][0] < first_register < openings[1][0]
+
+
+def test_kit_inputs_are_named_by_role(pipeline):
+    """The identical-inputs check tells an attestation from an inventory
+    record by the recorded file name: every input row of the kit has the
+    role its name says, and each host has one file of each role."""
+    rows = read_ledger(pipeline.root / "ledger.csv")
+    for host in HOSTS:
+        named = {study_ledger.input_role(r.path): r.path for r in rows if r.kind == "input" and r.host_code == host}
+        assert named == {study_ledger.ATTESTATION_ROLE: f"inputs/{synthetic.attestation_name(host)}",
+                         study_ledger.INVENTORY_ROLE: f"inputs/{synthetic.inventory_name(host)}"}, host
 
 
 def test_agreement_runs_clean_and_labels_every_output_synthetic(pipeline):
@@ -489,7 +530,9 @@ def test_a_changed_worksheet_keeps_the_seal_closed_until_restored_from_the_archi
     row = next(r for r in read_ledger(ledger) if r.kind == "worksheet" and r.host_code == "H1")
     archived = study / "ledger-archive" / f"{row.sha256}.csv"
     assert archived.read_bytes() == original
-    hint = f"(archived copy: ledger-archive/{row.sha256}.csv)"
+    # Changed on purpose (round 2): the refusal now names the archive copy first.
+    hint = f"restore the original bytes from ledger-archive/{row.sha256}.csv (or your commit or e-mailed copy)"
+    rows_before = len(read_ledger(ledger))
 
     code, out, err = _run(main, ["agreement", "--study-dir", str(study)])
     assert (code, out) == (2, "")
@@ -499,6 +542,7 @@ def test_a_changed_worksheet_keeps_the_seal_closed_until_restored_from_the_archi
     code, out, err = _run(main, ["register-sheet", "--study-dir", str(study), "--overwrite"])
     assert (code, out) == (2, "")
     assert "stay sealed" in err and hint in err and "cannot be re-hashed" in err
+    assert len(read_ledger(ledger)) == rows_before    # a refused run records no seal opening
 
     shutil.copyfile(str(archived), str(sheet))  # the guide's "If a hashed file changed"
     code, out, _ = _run(main, ["ledger", "verify", "--ledger", str(ledger)])
@@ -844,8 +888,19 @@ class GuideStudy:
         return self.ok(self.study(["ledger", "record", "--ledger", "ledger.csv", "--host", host, "--kind", kind,
                                    *paths]))
 
+    def rows(self):
+        return read_ledger(self.root / "ledger.csv")
+
+    def snapshot(self):
+        """The ledger's bytes and the archive's file names, to show that a
+        refused command recorded and archived nothing."""
+        return ((self.root / "ledger.csv").read_bytes(),
+                sorted(p.name for p in (self.root / study_ledger.ARCHIVE_DIR).iterdir()))
+
     # -- Setup (once)
-    def setup(self, hosts: Sequence[str]) -> None:
+    def setup(self, hosts: Sequence[str], inputs_for: Optional[Sequence[str]] = None) -> None:
+        """Setup, with the input files of the hosts in `inputs_for` (default:
+        every host) written, checked and recorded."""
         for folder in ("inputs", "outputs", "worksheets", "register"):
             (self.root / folder).mkdir(parents=True)
         listed = self.ok(self.tool(["list-checks", "--format", "json"]))
@@ -855,29 +910,39 @@ class GuideStudy:
             assert old in text, old
             text = text.replace(old, new)
         (self.root / "study.yaml").write_text(text, encoding="utf-8")
-        inputs = []
-        for host in hosts:
-            for name in (synthetic.attestation_name(host), synthetic.inventory_name(host)):
-                data = _json(self.kit / "inputs" / name)
-                data.pop("synthetic")
-                write_json(self.root / "inputs" / name, data)
-                inputs.append(f"inputs/{name}")
+        with_inputs = list(hosts if inputs_for is None else inputs_for)
+        inputs = [path for host in with_inputs for path in self.write_inputs(host)]
         self.ok(self.study(["health", "--inputs", "--as-of", SESSION, *inputs]))
         self.record("STUDY", "list-checks", "inputs/list-checks.json")
         self.ok(self.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",
                             "--note", "study configuration", "study.yaml"]))
-        for host in hosts:
+        for host in with_inputs:
             self.record(host, "input", f"inputs/{synthetic.attestation_name(host)}",
                         f"inputs/{synthetic.inventory_name(host)}")
 
+    def write_inputs(self, host: str, source: Optional[str] = None) -> List[str]:
+        """The host's input files, named by role, with the content of the
+        kit's files for host `source` (default: the same host) minus the
+        kit's synthetic marker; returns their paths as typed."""
+        written = []
+        for name, kit_name in ((synthetic.attestation_name(host), synthetic.attestation_name(source or host)),
+                               (synthetic.inventory_name(host), synthetic.inventory_name(source or host))):
+            data = _json(self.kit / "inputs" / kit_name)
+            data.pop("synthetic")
+            write_json(self.root / "inputs" / name, data)
+            written.append(f"inputs/{name}")
+        return written
+
     # -- per host
-    def worksheet(self, host: str) -> Path:
-        """Step 1, then step 2 with the kit's dummy entries (verdicts, levels
-        and procedure cells; the sheet's own meta rows say synthetic no)."""
+    def worksheet(self, host: str, source: Optional[str] = None) -> Path:
+        """Step 1, then step 2 with the kit's dummy entries for host `source`
+        (default: the same host): verdicts, levels and procedure cells; the
+        sheet's own meta rows say synthetic no."""
         self.ok(self.study(["worksheet", "--list-checks", "inputs/list-checks.json", "--hosts", host,
                             "--out", "worksheets", "--session-date", SESSION, "--study-config", "study.yaml"]))
         path = self.root / "worksheets" / worksheet_name(host)
-        entries = {(r["row_type"], r["item"], r["property"]): r for r in _worksheet_rows(_sheet(self.kit, host))}
+        entries = {(r["row_type"], r["item"], r["property"]): r
+                   for r in _worksheet_rows(_sheet(self.kit, source or host))}
         rows = _worksheet_rows(path)
         for row in rows:
             if row["row_type"] == "meta":
@@ -897,12 +962,17 @@ class GuideStudy:
         out = self.record(host, "worksheet", f"worksheets/{worksheet_name(host)}")
         assert out.splitlines()[1].startswith("archive copy: ledger-archive/")
 
-    def tool_run(self, host: str, index: int, connector: Optional[str] = None) -> None:
-        """Steps 5-8 after the revert. The facts file is the kit's facts
-        under a live connector's name (or `connector`), dated now, after the
-        worksheet hash, as a live collection would be."""
+    def tool_run(self, host: str, index: int, connector: Optional[str] = None, source: Optional[str] = None,
+                 attestation: Optional[str] = None, inventory_record: Optional[str] = None,
+                 healthy: bool = True):
+        """Steps 5-8 after the revert. The facts file is the kit's facts for
+        host `source` (default: the same host) under a live connector's name
+        (or `connector`), dated now, after the worksheet hash, as a live
+        collection would be. `attestation` and `inventory_record` replace
+        the input paths the tool is given. Returns step 8's (exit code,
+        output); with `healthy` every line must be ok."""
         synthetic._wait_past(synthetic._latest_ledger_time(self.root / "ledger.csv"))
-        facts = _json(self.kit / "outputs" / facts_name(host))["facts"]
+        facts = _json(self.kit / "outputs" / facts_name(source or host))["facts"]
         live = "ssh-osquery-windows" if facts["os"]["platform"] == "windows" else "ssh-osquery"
         envelope = facts_file.build_envelope(
             facts, tool_version=miccmac.__version__, tool_commit=provenance.tool_commit(),
@@ -910,20 +980,24 @@ class GuideStudy:
             collected_at_utc=clock.format_utc(clock.now_utc()), as_of=dt.date.fromisoformat(SESSION))
         facts_file.save_envelope(str(self.root / "outputs" / facts_name(host)), envelope)
         for methodology in METHODOLOGIES:
-            self.ok(self.tool(self.replay(host, methodology)))
+            self.ok(self.tool(self.replay(host, methodology, attestation, inventory_record)))
         self.record(host, "facts", f"outputs/{facts_name(host)}")
         self.record(host, "tool-output", *(f"outputs/{tool_output_name(host, m)}" for m in METHODOLOGIES))
-        out = self.ok(self.study(["health", "--expect-as-of", SESSION, "--list-checks", "inputs/list-checks.json",
-                                  "--pair", "--ledger", "ledger.csv", "--host", host, f"outputs/{facts_name(host)}",
-                                  *(f"outputs/{tool_output_name(host, m)}" for m in METHODOLOGIES)]))
-        assert all(line.startswith("ok ") for line in out.splitlines())
+        code, out, err = self.study(["health", "--expect-as-of", SESSION, "--list-checks", "inputs/list-checks.json",
+                                     "--pair", "--ledger", "ledger.csv", "--host", host,
+                                     f"outputs/{facts_name(host)}",
+                                     *(f"outputs/{tool_output_name(host, m)}" for m in METHODOLOGIES)])
+        if healthy:
+            assert code == 0 and all(line.startswith("ok ") for line in out.splitlines()), out + err
+        return code, out
 
     @staticmethod
-    def replay(host: str, methodology: str) -> List[str]:
+    def replay(host: str, methodology: str, attestation: Optional[str] = None,
+               inventory_record: Optional[str] = None) -> List[str]:
         """Step 6's command (step 5's for cmmi), scoring the saved facts."""
         return ["assess", "--facts", f"outputs/{facts_name(host)}",
-                "--attestation", f"inputs/{synthetic.attestation_name(host)}",
-                "--inventory-record", f"inputs/{synthetic.inventory_name(host)}",
+                "--attestation", attestation or f"inputs/{synthetic.attestation_name(host)}",
+                "--inventory-record", inventory_record or f"inputs/{synthetic.inventory_name(host)}",
                 "--methodology", methodology, "--risk-register", "--format", "json",
                 "-o", f"outputs/{tool_output_name(host, methodology)}", "--as-of", SESSION]
 
@@ -947,6 +1021,29 @@ class GuideStudy:
             self.record(host, "register-review", f"register/{host}-register-review.csv")
             self.record(host, "missed-gaps", f"register/{host}-missed-gaps.csv")
 
+    def after_the_last_host(self, hosts: Sequence[str], expect: int = 0) -> dict:
+        """register-sheet, every entry judged and recorded, then agreement
+        into analysis/ with exit `expect`; returns summary.json."""
+        self.ok(self.study(["register-sheet", "--study-dir", "."]))
+        self.judge_register(hosts)
+        code, out, err = self.study(["agreement", "--study-dir", "."])
+        assert code == expect, out + err
+        return _json(self.root / "analysis" / "summary.json")
+
+    def agreement(self, out_dir: str, *extra: str, expect: int = 3) -> dict:
+        """agreement into `out_dir` with exit `expect`; returns summary.json."""
+        code, out, err = self.study(["agreement", "--study-dir", ".", "--out", out_dir, *extra])
+        assert code == expect, out + err
+        return _json(self.root / out_dir / "summary.json")
+
+
+def _problems(health_out: str) -> List[str]:
+    return [line for line in health_out.splitlines() if not line.startswith("ok ")]
+
+
+def _critical_details(summary: dict) -> List[tuple]:
+    return [(r["check"], r["host"], r["detail"]) for r in summary["integrity"]["checks"] if r["result"] == "CRITICAL"]
+
 
 @pytest.fixture(scope="module")
 def mid_study(pipeline, tmp_path_factory):
@@ -962,6 +1059,27 @@ def mid_study(pipeline, tmp_path_factory):
         for index, host in enumerate(HOSTS[:3]):
             guide.host(host, index)
         guide.worksheet("H4")
+    return root
+
+
+@pytest.fixture(scope="module")
+def complete_study(mid_study, pipeline, tmp_path_factory):
+    """mid_study finished in the protocol's order (H4 and H5 done), then
+    After the last host: register-sheet, every entry judged and recorded,
+    agreement exit 0. The seal has opened: the ledger holds the
+    seal-opening rows of register-sheet and agreement."""
+    root = tmp_path_factory.mktemp("complete") / "study"
+    shutil.copytree(str(mid_study), str(root))
+    with pytest.MonkeyPatch.context() as mp:
+        _pin_build(mp)
+        guide = GuideStudy(root, pipeline.root)
+        guide.hash_worksheet("H4")
+        guide.tool_run("H4", 3)
+        guide.host("H5", 4)
+        summary = guide.after_the_last_host(HOSTS)
+    assert _critical(summary) == []
+    assert [r.note.split(":")[0] for r in read_ledger(root / "ledger.csv") if study_ledger.is_seal_opening(r)] == [
+        "seal opened by register-sheet", "seal opened by agreement"]
     return root
 
 
@@ -1134,6 +1252,292 @@ def test_facts_still_marked_synthetic_in_a_study_are_critical(mid_study, pipelin
     assert sorted(p.name for p in (root / "analysis").iterdir()) == sorted("SYNTHETIC-" + n for n in ANALYSIS_FILES)
 
 
+# ------------------------------------------------------------------ round 2: what can no longer pass unnoticed
+def test_an_edited_hashed_worksheet_is_never_recorded_again_and_its_archive_copy_restores_it(mid_study, pipeline,
+                                                                                              tmp_path):
+    """Every host done; then H1's hashed worksheet is edited (one cell, as an
+    Excel save would). Step 3 again is refused, also with --force, before
+    any lint: nothing is recorded or archived, and the message names the
+    archive copy to restore. Copying that copy back (the guide's 'If a
+    hashed file changed') gives verify 0; step 3 again then only says
+    'already recorded', and the study runs to agreement exit 0."""
+    root = _copy_study(mid_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    guide.hash_worksheet("H4")
+    guide.tool_run("H4", 3)
+    guide.host("H5", 4)
+    sheet = root / "worksheets" / worksheet_name("H1")
+    original = sheet.read_bytes()
+    index, first = next((i, r) for i, r in enumerate(guide.rows()) if r.kind == "worksheet" and r.host_code == "H1")
+    copy = f"ledger-archive/{first.sha256}.csv"
+    _set_cell(sheet, "check", "MON-01", "evidence_notes", "edited after the hash")
+    before = guide.snapshot()
+
+    for extra in ([], ["--force"]):
+        code, out, err = guide.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "H1", "--kind",
+                                      "worksheet", *extra, "worksheets/H1-worksheet.csv"])
+        assert (code, out) == (2, ""), extra
+        assert (f"error: worksheets/H1-worksheet.csv was hashed at {first.recorded_at_utc} (ledger line {index + 2}, "
+                "kind worksheet)") in err
+        assert f"restore the recorded bytes from {copy} (or your commit or e-mailed copy)" in err
+        assert "nothing was recorded" in err and "lint " not in err
+        assert guide.snapshot() == before
+    code, out, _ = guide.study(["ledger", "verify", "--ledger", "ledger.csv"])
+    assert code == 1 and "CHANGED worksheets/H1-worksheet.csv  (worksheet)" in out.splitlines()
+    code, out, err = guide.study(["register-sheet", "--study-dir", "."])
+    assert (code, out) == (2, "") and f"restore the original bytes from {copy}" in err
+
+    shutil.copyfile(str(root / copy), str(sheet))  # Copy-Item ledger-archive\<sha256>.csv worksheets\H1-worksheet.csv
+    assert sheet.read_bytes() == original
+    code, out, _ = guide.study(["ledger", "verify", "--ledger", "ledger.csv"])
+    assert code == 0 and all(line.startswith("OK ") for line in out.splitlines()), out
+    out = guide.record("H1", "worksheet", "worksheets/H1-worksheet.csv")
+    assert out.splitlines() == [f"already recorded at {first.recorded_at_utc} (ledger line {index + 2}):",
+                                f"{first.sha256}  worksheets/H1-worksheet.csv", f"archive copy: {copy}"]
+    assert guide.snapshot() == before
+    summary = guide.after_the_last_host(HOSTS)
+    assert _critical(summary) == []
+
+
+def test_a_study_yaml_host_edit_never_opens_the_seal(pipeline, tmp_path):
+    """Mid-study, with H4 and H5 not started and holding no ledger row yet
+    (as under decision 3 'exclude', where no host has input rows), study.yaml
+    is edited to list only H1-H3. Not recorded, the edit keeps register-sheet
+    and agreement sealed (and withdraw refuses), with nothing written and no
+    tool result shown. Recorded again after the first tool run, the edit
+    still opens nothing: the hosts of the version in force at the first
+    tool run stay in the seal."""
+    root = tmp_path / "study"
+    root.mkdir()
+    guide = GuideStudy(root, pipeline.root)
+    guide.setup(HOSTS, inputs_for=HOSTS[:3])
+    for index, host in enumerate(HOSTS[:3]):
+        guide.host(host, index)
+    assert {r.host_code for r in guide.rows()} == {"STUDY", "H1", "H2", "H3"}
+    config = root / "study.yaml"
+    config.write_bytes(config.read_bytes().replace(b"hosts: [H1, H2, H3, H4, H5]", b"hosts: [H1, H2, H3]"))
+    before = guide.snapshot()
+    results = _tool_texts(root, HOSTS[:3])
+    commands = (["register-sheet", "--study-dir", "."], ["agreement", "--study-dir", ".", "--out", "analysis-early"])
+
+    for argv in commands:
+        code, out, err = guide.study(argv)
+        assert (code, out) == (2, ""), argv
+        assert "STUDY (study.yaml changed since it was last recorded (ledger line 3, " in err
+        assert "editing study.yaml never opens the seal" in err
+        assert not [s for s in results if s in err], argv
+    code, out, err = guide.study(["ledger", "withdraw", "--ledger", "ledger.csv", "--host", "H4",
+                                  "--reason", WITHDRAW_REASON])
+    assert (code, out) == (2, "") and "record or restore study.yaml first; nothing was recorded" in err
+    assert guide.snapshot() == before
+
+    guide.ok(guide.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",
+                          "--note", "hosts H1-H3", "study.yaml"]))
+    assert study_ledger.first_tool_row(guide.rows())[0] < len(guide.rows()) - 1
+    for argv in commands:
+        code, out, err = guide.study(argv)
+        assert (code, out) == (2, ""), argv
+        assert "H4 (no worksheet yet" in err and "H5 (no worksheet yet" in err and "STUDY (" not in err
+        assert not [s for s in results if s in err], argv
+    assert list((root / "register").iterdir()) == []
+    assert not (root / "analysis-early").exists() and not (root / "analysis").exists()
+    assert not [r for r in guide.rows() if study_ledger.is_seal_opening(r)]
+    code, out, _ = guide.study(["ledger", "verify", "--ledger", "ledger.csv"])
+    assert code == 1 and "CHANGED study.yaml  (other)" in out.splitlines()
+
+
+def test_a_host_added_and_hashed_after_the_seal_opened_is_critical(complete_study, pipeline, tmp_path):
+    """After unsealing, H6 is added to study.yaml (recorded again) and goes
+    through every step in order. Its blind pass came after tool results
+    were available: agreement reports it as CRITICAL, and the changed host
+    list as a CRITICAL sensitivity run."""
+    root = _copy_study(complete_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    config = root / "study.yaml"
+    config.write_text(config.read_text(encoding="utf-8").replace("hosts: [H1, H2, H3, H4, H5]",
+                                                                 "hosts: [H1, H2, H3, H4, H5, H6]"), encoding="utf-8")
+    guide.ok(guide.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",
+                          "--note", "H6 added", "study.yaml"]))
+    guide.record("H6", "input", *guide.write_inputs("H6", source="H1"))
+    guide.worksheet("H6", source="H1")
+    guide.hash_worksheet("H6")
+    guide.tool_run("H6", 5, source="H1")
+
+    summary = guide.agreement("analysis-h6")
+    critical = _critical_details(summary)
+    opened = study_ledger.first_seal_opening(guide.rows())
+    sheet_row = next(r for r in guide.rows() if r.kind == "worksheet" and r.host_code == "H6")
+    assert ("ledger_order", "H6",
+            f"H6's worksheet was hashed at {sheet_row.recorded_at_utc}, after the seal was first opened at "
+            f"{opened[1].recorded_at_utc} (ledger line {opened[0] + 2}): its blind pass may have seen tool "
+            "results") in critical
+    config_findings = [detail for check, _, detail in critical if check == "config"]
+    assert len(config_findings) == 1 and "hosts: H6 added; this run is a sensitivity run" in config_findings[0]
+    assert summary["config"]["sensitivity_run"] is True
+
+
+def test_a_withdrawal_after_the_seal_opened_needs_after_unseal_and_is_critical(complete_study, pipeline, tmp_path):
+    """Once register-sheet or agreement has opened the seal, withdrawing a
+    host is a post-hoc exclusion: refused without --after-unseal (nothing
+    recorded), recorded with it (the note says so), and CRITICAL in agreement."""
+    root = _copy_study(complete_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    before = guide.snapshot()
+    opened = study_ledger.first_seal_opening(guide.rows())
+    argv = ["ledger", "withdraw", "--ledger", "ledger.csv", "--host", "H3", "--reason", "results looked odd"]
+    code, out, err = guide.study(argv)
+    assert (code, out) == (2, "")
+    assert err == (f"error: the seal was opened at {opened[1].recorded_at_utc} (ledger line {opened[0] + 2}): "
+                   "withdrawing H3 now is a post-hoc exclusion, which agreement reports as CRITICAL; add "
+                   "--after-unseal to record it anyway\n")
+    assert guide.snapshot() == before
+
+    code, out, err = guide.study(argv + ["--after-unseal"])
+    assert code == 0, err
+    row = guide.rows()[-1]
+    assert out.splitlines()[-1] == (f"H3 withdrawn at {row.recorded_at_utc}: (after the seal was opened) results "
+                                    "looked odd")
+    hashed = study_ledger.first_tool_row(guide.rows(), "H3")[1].recorded_at_utc
+    assert err == (f"note: H3's tool outputs were hashed at {hashed}; agreement reports this withdrawal with "
+                   "that time\n")
+
+    summary = guide.agreement("analysis-late")
+    assert _critical_details(summary) == [
+        ("hosts", "H3", f"H3 was withdrawn at {row.recorded_at_utc}, after the seal was first opened at "
+                        f"{opened[1].recorded_at_utc} (ledger line {opened[0] + 2}): a post-hoc exclusion; the "
+                        "pre-registered analysis includes H3")]
+    assert summary["config"]["hosts"] == ["H1", "H2", "H4", "H5"]
+
+
+def test_another_configuration_after_unsealing_is_a_critical_labelled_sensitivity_run(complete_study, pipeline,
+                                                                                      tmp_path):
+    """After unsealing, only a command-line override is a sensitivity run
+    without a finding. A --config with another threshold, and study.yaml
+    changed and recorded again, are each CRITICAL and labelled a
+    sensitivity run in summary.md and summary.json."""
+    root = _copy_study(complete_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    text = (root / "study.yaml").read_text(encoding="utf-8")
+    assert "threshold: 0.80" in text
+    line = next(i for i, r in enumerate(guide.rows()) if r.path == "study.yaml" and r.kind == "other") + 2
+
+    summary = guide.agreement("analysis-flag", "--threshold", "0.6", expect=0)
+    assert summary["config"]["sensitivity_run"] is True and summary["config"]["config_differences"] == []
+    assert _critical(summary) == []
+
+    (root / "study-t060.yaml").write_text(text.replace("threshold: 0.80", "threshold: 0.60"), encoding="utf-8")
+    (root / "study.yaml").write_text(text.replace("threshold: 0.80", "threshold: 0.60"), encoding="utf-8")
+    guide.ok(guide.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",
+                          "--note", "threshold changed after unsealing", "study.yaml"]))
+    for out_dir, extra, name in (("analysis-t060", ["--config", "study-t060.yaml"], "study-t060.yaml"),
+                                 ("analysis-yaml", [], "study.yaml")):
+        summary = guide.agreement(out_dir, *extra)
+        assert _critical_details(summary) == [
+            ("config", "", f"the configuration used ({name}) differs from study.yaml as it was when the seal first "
+                           f"opened (ledger line {line}): threshold 0.80 -> 0.60; this run is a sensitivity run, not "
+                           "the pre-registered analysis")], out_dir
+        assert summary["config"]["sensitivity_run"] is True
+        assert summary["config"]["config_differences"] == ["threshold 0.80 -> 0.60"]
+        text_md = (root / out_dir / "summary.md").read_text(encoding="utf-8")
+        assert (f"| Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions) | yes: {name} differs from "
+                f"study.yaml as recorded at ledger line {line}, when the seal first opened: threshold 0.80 -> 0.60 |"
+                in text_md.splitlines()), out_dir
+
+
+def test_swapped_or_duplicated_inputs_are_a_health_problem_and_critical(mid_study, pipeline, tmp_path):
+    """H4's run gets its two input files swapped, H5's run the attestation
+    twice. Step 8 (health --ledger) prints a PROBLEM line naming the
+    mix-up, and agreement reports each as CRITICAL (inputs)."""
+    root = _copy_study(mid_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    guide.hash_worksheet("H4")
+    code, out = guide.tool_run("H4", 3, attestation="inputs/H4-inventory-record.json",
+                               inventory_record="inputs/H4-attestation.json", healthy=False)
+    assert code == 1 and len(_problems(out)) == len(METHODOLOGIES), out
+    for line in _problems(out):
+        assert line.startswith("PROBLEM outputs/H4-"), line
+        assert ": inputs match the ledger for H4: no (the attestation the tool used (sha256 " in line
+        assert "is inputs/H4-inventory-record.json, H4's inventory record as recorded at " in line
+        assert "is inputs/H4-attestation.json, H4's attestation as recorded at " in line
+        assert line.endswith(": the two input files were swapped or mixed up)")
+    guide.worksheet("H5")
+    guide.hash_worksheet("H5")
+    code, out = guide.tool_run("H5", 4, attestation="inputs/H5-attestation.json",
+                               inventory_record="inputs/H5-attestation.json", healthy=False)
+    assert code == 1 and len(_problems(out)) == len(METHODOLOGIES), out
+    recorded = next(r for r in guide.rows() if r.path == "inputs/H5-attestation.json").recorded_at_utc
+    for line in _problems(out):
+        assert ": inputs match the ledger for H5: no (the run was given the same file (sha256 " in line
+        assert line.endswith(") as --attestation and as --inventory-record: inputs/H5-attestation.json as recorded "
+                             f"at {recorded})"), line
+
+    summary = guide.after_the_last_host(HOSTS, expect=3)
+    critical = _critical_details(summary)
+    assert {(check, host) for check, host, _ in critical} == {("inputs", "H4"), ("inputs", "H5")}
+    assert all("swapped or mixed up" in detail for _, host, detail in critical if host == "H4")
+    assert all("as --attestation and as --inventory-record" in detail for _, host, detail in critical if host == "H5")
+
+
+def test_an_input_recorded_again_after_the_worksheet_hash_and_used_by_the_tool_is_critical(mid_study, pipeline,
+                                                                                          tmp_path):
+    """H4's attestation is changed and recorded again after H4's worksheet
+    was hashed, and the tool is given the new version: the assessor and the
+    tool used different files. Step 8 prints a PROBLEM line saying so, and
+    agreement reports it as CRITICAL."""
+    root = _copy_study(mid_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    guide.hash_worksheet("H4")
+    path = root / "inputs" / "H4-attestation.json"
+    data = _json(path)
+    data["identity_aware_access"] = {"enabled": not data["identity_aware_access"]["enabled"]}
+    write_json(path, data, overwrite=True)
+    guide.record("H4", "input", "inputs/H4-attestation.json")
+    rows = guide.rows()
+    first = next(r for r in rows if r.path == "inputs/H4-attestation.json")
+    sheet = next(r for r in rows if r.kind == "worksheet" and r.host_code == "H4")
+    again = rows[-1]
+    code, out = guide.tool_run("H4", 3, healthy=False)
+    reason = (f"the tool used inputs/H4-attestation.json as recorded at {again.recorded_at_utc}, after H4's worksheet "
+              f"was hashed at {sheet.recorded_at_utc}; the assessor had the version recorded at "
+              f"{first.recorded_at_utc}")
+    assert code == 1
+    assert _problems(out) == [f"PROBLEM outputs/{tool_output_name('H4', m)}: inputs match the ledger for H4: no "
+                              f"({reason})" for m in METHODOLOGIES]
+    guide.host("H5", 4)
+
+    summary = guide.after_the_last_host(HOSTS, expect=3)
+    assert _critical_details(summary) == [("inputs", "H4", f"{tool_output_name('H4', m)}: {reason}")
+                                          for m in METHODOLOGIES]
+    code, out, _ = guide.study(["ledger", "verify", "--ledger", "ledger.csv"])
+    assert code == 1 and "CHANGED inputs/H4-attestation.json  (input)" in out.splitlines()
+
+
+def test_a_study_run_without_o_is_refused_and_prints_nothing(mid_study, pipeline, tmp_path):
+    """A study run (here step 6's --facts replay) that lost its -o stops
+    before it reads anything: exit 2, nothing on stdout, no file written.
+    With --stdout, as in the guide's --as-of demonstration, it prints the
+    report, the same as the hashed output apart from run_at_utc."""
+    root = _copy_study(mid_study, tmp_path)
+    guide = GuideStudy(root, pipeline.root)
+    argv = guide.replay("H1", "cmmi")
+    argv = argv[:argv.index("-o")] + argv[argv.index("-o") + 2:]
+    files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+
+    code, out, err = guide.tool(argv)
+    assert (code, out) == (2, "")
+    assert err == ("error: this run's report holds results, so it goes to a file: give -o FILE, or --stdout to "
+                   "print it here\n")
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == files
+
+    code, out, err = guide.tool(argv + ["--stdout"])
+    assert (code, err) == (0, "")
+    printed, hashed = json.loads(out), _json(root / "outputs" / tool_output_name("H1", "cmmi"))
+    for data in (printed, hashed):
+        parse_utc_timestamp(data["assessment"]["provenance"].pop("run_at_utc"))
+    assert printed == hashed
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == files
+
+
 # ------------------------------------------------------------------ the guide and the package
 ATTRIBUTION = "Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review."
 GUIDE = Path(synthetic.__file__).resolve().parent / "README.md"
@@ -1198,9 +1602,92 @@ def test_every_command_in_the_guide_parses_as_written():
                     "register-sheet", "agreement", "synthetic", "miccmac assess", "miccmac list-checks"}
 
 
+def _guide_tool_line(flag: str) -> List[str]:
+    """The guide's one `miccmac assess` command (after -m) that names `flag`
+    and writes outputs/: step 5 for --connector, step 6 for --facts."""
+    found = [tokens for tokens in _guide_commands() if tokens[:2] == ["miccmac", "assess"] and flag in tokens
+             and any(t.startswith('"outputs\\') for t in tokens[tokens.index(flag):])]
+    assert found, flag
+    assert all(tokens[:6] == found[0][:6] for tokens in found), found
+    return found[0][1:]
+
+
+@pytest.mark.parametrize("flag", ["--connector", "--facts"])
+def test_every_cut_of_the_guide_tool_lines_is_refused_before_it_connects_or_writes(pipeline, tmp_path, monkeypatch,
+                                                                                  flag):
+    """V1, V3 (round 2): a step-5 or step-6 line cut or wrapped when pasted must never collect, print a host's
+    results or write a report with another reference date. The guide puts --save-facts / --facts and --as-of first
+    and -o last, so every prefix is refused (exit 2) without calling the connector or writing a file; only the
+    bare `assess $ip` prints the tool's stub report, which holds no result. The whole line connects at most once
+    and prints only where the report went."""
+    tokens = _guide_tool_line(flag)
+    if flag == "--connector":
+        assert tokens[:6] == ["assess", "$ip", "--save-facts", '"outputs\\$h-facts.json"', "--as-of", "$day"]
+    else:
+        assert tokens[:6] == ["assess", "$ip", "--facts", '"outputs\\$h-facts.json"', "--as-of", "$day"]
+    assert tokens[-2] == "-o"
+    study = tmp_path / "study"
+    (study / "inputs").mkdir(parents=True)
+    (study / "outputs").mkdir()
+    for name in ("H1-attestation.json", "H1-inventory-record.json"):
+        shutil.copyfile(str(pipeline.root / "inputs" / name), str(study / "inputs" / name))
+    if flag == "--facts":
+        shutil.copyfile(str(pipeline.root / "outputs" / "H1-facts.json"), str(study / "outputs" / "H1-facts.json"))
+    key = tmp_path / "id_ed25519"
+    key.write_text("synthetic\n", encoding="utf-8")
+    facts = facts_file.load_envelope(str(pipeline.root / "outputs" / "H1-facts.json")).facts
+    calls = []
+
+    class FakeConnector:
+        def __init__(self, ssh_user, ssh_key_path, port=22):
+            pass
+
+        def collect_facts(self, target, extended=False):
+            calls.append(target)
+            return copy.deepcopy(facts)
+
+    monkeypatch.setattr("miccmac.connectors.ssh_osquery.SSHOsqueryConnector", FakeConnector)
+    values = {"$ip": "192.0.2.10", "$day": SESSION, "$key": str(key), "$h": "H1"}
+
+    def word(token: str) -> str:
+        text = token[1:-1] if len(token) > 1 and token[0] == token[-1] == '"' else token
+        for name, value in values.items():
+            text = text.replace(name, value)
+        return text.replace("\\", "/")
+
+    def run(argv):
+        try:
+            return _run(miccmac_main, argv)
+        except SystemExit as exc:                   # argparse: an option that lost its value
+            return exc.code, "", ""
+
+    argv = [word(t) for t in tokens]
+    before = sorted(p.name for p in (study / "outputs").iterdir())
+    with _cwd(study):
+        for cut in range(1, len(argv)):
+            code, out, err = run(argv[:cut])
+            assert calls == [], argv[:cut]
+            assert sorted(p.name for p in (study / "outputs").iterdir()) == before, argv[:cut]
+            if cut <= 2:                            # `assess` or `assess $ip`: the stub run, no facts at all
+                assert code == 0 and "Overall score   : n/a" in out and "Check not yet implemented." in out, out
+                # Every check line is a [TODO] (the legend at the end names the other markers).
+                assert re.search(r"\[(?!TODO\])[A-Z/]+\]\s+[A-Z]{3}-\d{2}\b", out) is None, out
+            else:
+                assert code == 2 and out == "", (argv[:cut], out, err)
+        code, out, err = run(argv)
+    assert code == 0, err
+    assert out == f"Report written to {argv[-1]}\n"
+    assert calls == (["192.0.2.10"] if flag == "--connector" else [])
+
+
 def test_the_guide_keeps_its_ai_attribution():
     text = GUIDE.read_text(encoding="utf-8")
     assert "drafted with AI assistance (Claude Code, Anthropic)" in " ".join(text.split())
+    # The package docstring says where the assistance is declared (no vague "AI-use log").
+    package = " ".join((miccmac_study.__doc__ or "").split())
+    assert "AI-use log" not in package
+    assert ("That assistance is declared in miccmac_study/README.md and in the first docstring line of every module "
+            "and test file of the instruments.") in package
 
 
 def test_every_study_module_and_test_file_declares_ai_assistance_first():
@@ -1217,5 +1704,12 @@ def test_usage_lists_every_command():
     assert (code, err) == (0, "")
     listed = [line.split()[0] for line in out.splitlines() if line.startswith("  ")]
     assert listed == list(COMMANDS)
+    # The ledger's help names its real sub-commands (there is no 'ledger list').
+    ledger_help = next(line for line in out.splitlines() if line.split()[:1] == ["ledger"])
+    assert "Record (lint, hash and archive), verify, status or withdraw" in ledger_help
+    parser = argparse.ArgumentParser()
+    study_ledger.configure(parser)
+    actions = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    assert sorted(actions.choices) == ["record", "status", "verify", "withdraw"]
     code, out, err = _run(main, ["no-such-command"])
     assert (code, out) == (2, "") and "unknown command 'no-such-command'" in err

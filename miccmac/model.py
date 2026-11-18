@@ -1,4 +1,12 @@
-"""Core data model for the MICCMAC readiness toolkit."""
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Core data model for the MICCMAC readiness toolkit.
+
+In this module, AI assistance covers Assessment.provenance: the field, and
+its place in to_dict(), for the run provenance block (tool build, inputs,
+facts and the --as-of reference date) that the CLI sets for --connector,
+--facts, --as-of and --save-facts runs.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

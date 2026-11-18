@@ -124,17 +124,35 @@ output (tool version and commit, input-file hashes, reference date, facts
 source, enabled check ids), and makes the run a study run for `-o`: it never
 replaces an existing `-o` file unless `--overwrite` is given (a plain run
 replaces it, as before). In every run, `-o` must name a file in a folder
-that exists and can never be one of the run's input files; the report is
-written whole or not at all, a blank `-o` value is an error, and stdout
-shows only `Report written to <path>`. Collect once and score against CMMI,
-then score CISA ZTMM from the same saved facts with no second collection:
+that exists and can never be one of the run's input files, nor a saved facts
+file (an existing file whose first 64 KiB hold `"facts_format"` and
+`miccmac-facts/1`), not even with `--overwrite`; the report is written whole
+or not at all, and stdout shows only `Report written to <path>`.
+
+A run with `--facts` or `--save-facts`, or with `--connector` and `--as-of`,
+holds study results, so it never prints its report by accident: it needs
+`-o FILE`, and stops otherwise (`error: this run's report holds results, so
+it goes to a file: give -o FILE, or --stdout to print it here`). `--stdout`
+prints such a report on purpose, for example in a rehearsal on synthetic
+data, and cannot be combined with `-o`. Every other run (a plain run,
+`--connector` without `--as-of`, `--as-of` alone) prints as before, so the
+study guide puts `--save-facts` and `--as-of` before `--connector`: a copy
+of its command cut short anywhere is then refused before it connects. A
+blank value for `-o`, `--facts`, `--save-facts`, `--attestation`,
+`--inventory-record`, `--config` or `--ssh-key` (as bash passes for an unset
+`"$VAR"`) is an error (`error: <option> needs a file name`), so an input
+file never silently drops out of a run. Windows PowerShell drops an empty
+variable from the command line instead, so the run stops with argparse's
+`error: argument <option>: expected one argument`.
+
+Collect once and score against CMMI, then score CISA ZTMM from the same
+saved facts with no second collection:
 
 ```bash
-python -m miccmac assess 192.0.2.10 --connector ssh-osquery \
-    --ssh-user assessor --ssh-key ~/.ssh/miccmac_study_ed25519 \
+python -m miccmac assess 192.0.2.10 --save-facts H1-facts.json --as-of 2026-11-23 \
+    --connector ssh-osquery --ssh-user assessor --ssh-key ~/.ssh/miccmac_study_ed25519 \
     --attestation attestation.json --inventory-record inventory-record.json \
-    --methodology cmmi --risk-register --format json -o H1-cmmi.json \
-    --as-of 2026-11-23 --save-facts H1-facts.json
+    --methodology cmmi --risk-register --format json -o H1-cmmi.json
 
 python -m miccmac assess 192.0.2.10 --facts H1-facts.json \
     --attestation attestation.json --inventory-record inventory-record.json \
@@ -151,9 +169,9 @@ tool refuses to replace them anyway. Details, including what `--as-of` does
 not change, are in
 [`docs/methodology.md`](docs/methodology.md#11-reproducibility-reference-date-saved-facts-and-provenance).
 The reproducible-run features (`--as-of`, `--save-facts`, `--facts`, the
-provenance block and the `-o` safeguards) and the study instruments in
-[`miccmac_study/`](miccmac_study/README.md) were drafted with AI assistance
-(Claude Code, Anthropic) for the researcher's review.
+provenance block and the `-o` and `--stdout` safeguards) and the study
+instruments in [`miccmac_study/`](miccmac_study/README.md) were drafted
+with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 ## Example output
 

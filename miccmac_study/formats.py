@@ -26,6 +26,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -232,11 +233,25 @@ class LedgerRow:
     note: str
 
 
+def plain_path(path: Path) -> Path:
+    """`path` without a Windows extended-length prefix (\\\\?\\C:\\x -> C:\\x,
+    \\\\?\\UNC\\server\\share -> \\\\server\\share), which Path.resolve() keeps,
+    so that both spellings of one file compare equal. Unchanged elsewhere."""
+    if os.name != "nt":
+        return path
+    text = str(path)
+    if text[:8].upper() == "\\\\?\\UNC\\":
+        return Path("\\\\" + text[8:])
+    if text.startswith("\\\\?\\"):
+        return Path(text[4:])
+    return path
+
+
 def ledger_relpath(ledger_file: Union[str, Path], file_path: Union[str, Path]) -> str:
     """How a file is recorded in the ledger: relative to the ledger's folder
     with forward slashes when it is inside that folder, else absolute."""
-    base = Path(ledger_file).resolve().parent
-    target = Path(file_path).resolve()
+    base = plain_path(Path(ledger_file).resolve().parent)
+    target = plain_path(Path(file_path).resolve())
     try:
         return target.relative_to(base).as_posix()
     except ValueError:
@@ -244,11 +259,11 @@ def ledger_relpath(ledger_file: Union[str, Path], file_path: Union[str, Path]) -
 
 
 def resolve_ledger_path(ledger_file: Union[str, Path], recorded: str) -> Path:
-    """The file a ledger row refers to, as an absolute path."""
+    """The file a ledger row refers to, as an absolute path (plain_path)."""
     path = Path(recorded)
     if not path.is_absolute():
         path = Path(ledger_file).resolve().parent / path
-    return path.resolve()
+    return plain_path(path.resolve())
 
 
 def read_ledger(ledger_file: Union[str, Path]) -> List[LedgerRow]:

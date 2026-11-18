@@ -17,8 +17,11 @@ assessment JSON), and prints one line per test:
 It exits 0 only when every test is ok.
 
 With --ledger FILE --host H, each tool output is also compared with H's rows
-in the ledger, reporting yes/no only: its input files and facts file are the
-ones hashed for H, and H's worksheet was hashed before the run.
+in the ledger, reporting yes/no only: its input files are the versions the
+assessor had, each in its own role (ledger.assessor_inputs and
+check_run_inputs, the rule agreement uses), its facts file is the one hashed
+for H, and H's worksheet was hashed before the run. A "no" names files,
+times and hash prefixes only.
 
 With --inputs, the files are the researcher's attestation and inventory-record
 files, checked before the study: miccmac's own checks run in-process on each
@@ -29,11 +32,12 @@ detail). No other status, score or detail is ever printed.
 
 It never prints a status value, score, level, level label, readiness tier,
 check name, detail string, register entry, or a count of statuses or
-entries. Every printed value is fixed text, a yes/no, a file path, or
+entries. Every printed value is fixed text, a yes/no, a file path, a
+ledger time or the first characters of an input file's SHA-256, or
 something the operator chose before the run (dates, commit, methodology
 name, check ids, extended-fact item names, host codes, the input files'
-own date fields), and values read from a file are printed only after they
-match a strict pattern.
+own date fields), and values read from a tool output or facts file are
+printed only after they match a strict pattern.
 """
 from __future__ import annotations
 
@@ -66,8 +70,11 @@ from miccmac_study.formats import (
 from miccmac_study.ledger import (
     FACTS_KIND,
     INPUT_KIND,
+    INPUT_MISSING,
+    INPUT_ROLE_UNKNOWN,
+    assessor_inputs,
+    check_run_inputs,
     is_study_code,
-    path_key,
     row_kind,
     worksheet_rows,
 )
@@ -78,6 +85,7 @@ PathLike = Union[str, Path]
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _COMMIT_PREFIX_RE = re.compile(r"[0-9a-f]{4,40}")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 # Ids and item names are echoed only when they look like identifiers.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
 _INPUT_KEYS = ("attestation", "inventory_record", "config")
@@ -269,7 +277,7 @@ def _commit_result(label: str, commit: object, expect_commit: Optional[str]) -> 
 
 def _tree_clean_result(label: str, provenance: dict) -> HealthResult:
     clean = provenance.get("tool_tree_clean")
-    reason = "the tool's working tree had uncommitted changes" if clean is False else "not recorded"
+    reason = "the tool's working tree had uncommitted changes or untracked files" if clean is False else "not recorded"
     return _result(label, "tool_tree_clean is true", clean is True, reason)
 
 
@@ -485,45 +493,63 @@ def _optional_time(raw: object) -> Optional[dt.datetime]:
         return None
 
 
+def _inputs_results(label: str, host: str, ledger: PathLike, rows: Sequence[LedgerRow],
+                    given: Dict[str, str]) -> List[HealthResult]:
+    """The 'inputs match the ledger' and 'inputs given' lines (see
+    check_against_ledger)."""
+    test = f"inputs match the ledger for {host}"
+    hashed_at, inputs = assessor_inputs(ledger, host)
+    if not inputs:
+        return [_result(label, test, False, f"no input rows for {host} in the ledger")]
+    files = {key: digest for key, digest in given.items() if key != "config"}
+    pairs = check_run_inputs(files, inputs, True, host, worksheet_at_utc=hashed_at)
+    problems = [message for code, message in pairs if code not in (INPUT_ROLE_UNKNOWN, INPUT_MISSING)]
+    config = given.get("config")
+    if config is not None:
+        allowed = {row.sha256 for row in rows if row.host_code == host and row_kind(row) == INPUT_KIND}
+        allowed |= {row.sha256 for row in rows if is_study_code(row.host_code)}
+        if config not in allowed:
+            shown = f"sha256 {config[:12]}..." if _SHA256_RE.fullmatch(config) else "no valid sha256"
+            problems.append(f"the miccmac config the tool used ({shown}) is not one of the files "
+                            f"recorded for {host} or as a STUDY row")
+    notes = [message for code, message in pairs if code == INPUT_ROLE_UNKNOWN]
+    if problems:
+        match = HealthResult(f"{label}: {test}", False, f"no ({'; '.join(problems)})")
+    else:
+        match = HealthResult(f"{label}: {test}: yes" + (f" ({'; '.join(notes)})" if notes else ""), True)
+    missing = [message for code, message in pairs if code == INPUT_MISSING]
+    return [match, _yes_no(label, "inputs given", not missing, f"no ({'; '.join(missing)})")]
+
+
 def check_against_ledger(label: str, output: ToolOutput, host: str, ledger: PathLike,
                          rows: Sequence[LedgerRow]) -> List[HealthResult]:
     """Yes/no tests linking one tool output to host H's ledger rows:
 
-    - inputs match the ledger for H: every input the run was given has the
-      sha256 of one of H's rows of kind input (the miccmac config may
-      instead match a STUDY row); a problem when H has no input rows;
+    - inputs match the ledger for H: the attestation and inventory record
+      the run was given are the versions the assessor had, each a file of
+      its own role (ledger.assessor_inputs and ledger.check_run_inputs: no
+      duplicate, no swap, no version recorded after H's worksheet was
+      hashed, nothing unrecorded); the miccmac config must have the sha256
+      of one of H's input rows or of a STUDY row. A problem when H has no
+      input rows. An input file whose name gives no role is accepted, with a
+      note on the yes line;
     - inputs given (only when H has input rows): the run was given an
-      attestation and an inventory record for as many of them as the
-      ledger holds input files for H (at most two);
+      attestation when the ledger holds one for H, and an inventory record
+      when it holds one (files named otherwise: as many as the ledger holds
+      input files for H, at most two);
     - facts file matches the ledger: provenance facts_file.sha256 is the
       sha256 of one of H's facts rows;
     - worksheet hashed before this run: the first worksheet row for
       <ledger folder>/worksheets/H-worksheet.csv is strictly earlier than
-      the run's run_at_utc and facts_collected_at_utc.
+      the run's run_at_utc and facts_collected_at_utc (a tie in the same
+      second is a "no" that says so).
 
-    Only file hashes and times are compared; no result is read."""
+    Only file hashes and times are compared, and the reasons name files,
+    times and hash prefixes only; no result is read."""
     provenance = output.provenance if isinstance(output.provenance, dict) else None
     if provenance is None:
         return [_result(label, f"matches the ledger for {host}", False, "no provenance block")]
-    results: List[HealthResult] = []
-
-    input_rows = [row for row in rows if row.host_code == host and row_kind(row) == INPUT_KIND]
-    given = _given_inputs(provenance)
-    test = f"inputs match the ledger for {host}"
-    if not input_rows:
-        results.append(_result(label, test, False, f"no input rows for {host} in the ledger"))
-    else:
-        host_hashes = {row.sha256 for row in input_rows}
-        study_hashes = {row.sha256 for row in rows if is_study_code(row.host_code)}
-        unmatched = [key for key, digest in given.items()
-                     if digest not in host_hashes and not (key == "config" and digest in study_hashes)]
-        results.append(_yes_no(label, test, not unmatched, f"no ({', '.join(unmatched)})"))
-        files = len({path_key(ledger, row.path) for row in input_rows})
-        required = min(files, 2)
-        count = sum(1 for key in ("attestation", "inventory_record") if key in given)
-        results.append(_yes_no(label, "inputs given", count >= required,
-                               f"no (the ledger holds {files} input file(s) for {host}, but the run had "
-                               f"{count} of --attestation and --inventory-record)"))
+    results = _inputs_results(label, host, ledger, rows, _given_inputs(provenance))
 
     test = "facts file matches the ledger"
     facts_rows = [row for row in rows if row.host_code == host and row_kind(row) == FACTS_KIND]
@@ -549,7 +575,9 @@ def check_against_ledger(label: str, output: ToolOutput, host: str, ledger: Path
         results.append(_result(label, test, False, "run_at_utc or facts_collected_at_utc not recorded"))
     else:
         hashed = min(moment for moment in times if moment is not None)
-        results.append(_yes_no(label, test, hashed < run_at and hashed < collected))
+        before = hashed < run_at and hashed < collected
+        tie = not before and hashed <= run_at and hashed <= collected
+        results.append(_yes_no(label, test, before, "no (same second as the worksheet hash)" if tie else "no"))
     return results
 
 

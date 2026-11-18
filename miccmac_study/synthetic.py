@@ -18,22 +18,27 @@ every stage is exercised, including every safeguard a real study meets:
    the dummy levels below are made), README-SYNTHETIC.txt and inputs/:
    list-checks.json from `miccmac list-checks --format json`, and a made-up
    attestation and inventory record per host, each marked "synthetic":
-   true. All of them are hashed (`ledger record`, which also keeps a copy
-   of every hashed file in ledger-archive/).
+   true and named by its role (<H>-attestation.json,
+   <H>-inventory-record.json), as the identical-inputs check needs. All of
+   them are hashed (`ledger record`, which also keeps a copy of every
+   hashed file in ledger-archive/).
 2. The tool's verdicts are computed in memory from the made-up facts with
    miccmac.engine, exactly as the CLI computes them later.
 3. worksheets/: blank sheets from the worksheet command with --study-config
    (also kept, unchanged, in blank-worksheets/), filled with dummy entries:
    the in-memory verdicts with about 15% changed at random, one check
-   UNASSESSED with a reason, and levels from the approved 4-bucket rule
-   (overall levels pooled over every scorable check). Every worksheet is
-   hashed with `ledger record --kind worksheet`, whose pre-hash lint must
-   find nothing, before any tool output exists.
+   UNASSESSED with a reason, levels from the approved 4-bucket rule
+   (overall levels pooled over every scorable check), and every cell the
+   lint asks for (assessor, level_rule, and a pass criterion, evidence
+   steps and procedure source on each check). Every worksheet is hashed
+   with `ledger record --kind worksheet`, whose pre-hash lint must find
+   nothing, before any tool output exists.
 4. outputs/: a made-up facts envelope per host (connector "synthetic"),
    scored by the real CLI in replay mode (--facts, --as-of) for CMMI and
    CISA ZTMM into new files (study runs never overwrite one), then hashed.
 5. register/: the register-sheet command (the seal, ledger.seal_status,
-   must open: there is no synthetic exemption), filled with dummy
+   must open: there is no synthetic exemption; opening it appends the
+   ledger's "seal opened by register-sheet" row), filled with dummy
    Y/N/UNSURE judgments for every entry and 0-2 dummy missed gaps per host,
    then hashed.
 
@@ -793,7 +798,10 @@ def readme_text(plans: Sequence[HostPlan], seed: int, session: dt.date) -> str:
         "- blank-worksheets/: the same sheets before the dummy entries (a real study has no such folder).",
         "- register/: sheets from the register-sheet command, with dummy Y/N/UNSURE judgments",
         "  for every entry and 0-2 dummy missed gaps per host.",
-        "- ledger.csv: real SHA-256 hashes of the files above, in the protocol's order.",
+        "- ledger.csv: real SHA-256 hashes of the files above, in the protocol's order. register-sheet",
+        "  and agreement record each seal opening there too: a \"seal opened by ...\" row (host STUDY,",
+        "  kind protocol) each time they open the seal, so there is one from register-sheet already,",
+        "  and agreement adds one per run.",
         "- ledger-archive/: a copy of every hashed file, named by its SHA-256 (made by ledger record).",
         "",
         "Because the manual side is derived from the tool's output, any agreement figure computed",

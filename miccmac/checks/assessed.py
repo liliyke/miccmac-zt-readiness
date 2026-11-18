@@ -1,4 +1,6 @@
-"""MICCMAC property: Assessed (A).
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+MICCMAC property: Assessed (A).
 
 Intent: The device is regularly and authoritatively assessed for vulnerabilities and configuration weakness.
 
@@ -18,6 +20,10 @@ miccmac/checks/claimed.py's module docstring for the full rationale.
 ASM-01 and ASM-02 count the age of the last scan/assessment against
 miccmac.clock's reference date: the --as-of date when one was given
 (context["as_of"]), otherwise today.
+
+In this module, AI assistance covers the --as-of reference date of ASM-01
+and ASM-02 (the today and as_of_label parameters and the " (as of ...)"
+detail suffix).
 """
 from __future__ import annotations
 

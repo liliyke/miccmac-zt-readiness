@@ -7,7 +7,10 @@ Agreement analysis (protocol section 8): ``python -m miccmac_study agreement``.
         [--out DIR] [--overwrite]
 
 --threshold, --tool-side-rule and --overall-rule override study.yaml for a
-sensitivity run; every output records the override.
+sensitivity run; every output records the override. A configuration that
+differs from the pre-registered one (DIR/study.yaml as recorded in the
+ledger when the seal first opened) is a sensitivity run too: CRITICAL, and
+labelled in every summary with each difference.
 
 Level rules (study.yaml level_rule, protocol decision 4). The tool's levels
 used in the comparison come from its check statuses, with the checks the
@@ -41,10 +44,20 @@ the configuration, in DIR/study.yaml, in a ledger row, or named by a
 worksheet or tool-output file) needs its worksheets/<H>-worksheet.csv hashed
 and unchanged, unless 'ledger withdraw' took it out. There is no exemption
 for synthetic data (the synthetic kit hashes every worksheet first), and a
---config listing fewer hosts never opens the seal. Integrity checks then
-compare the tool's inputs, facts file and enabled checks with the files
-hashed in the ledger, report every ledger row that no longer verifies, and
-report register sheets forced before the seal opened.
+--config listing fewer hosts never opens the seal. Once every check that can
+still refuse has passed (the seal, the refusal to replace outputs), and
+before the first tool output is read, the run appends its seal-opening row
+to the ledger (ledger.record_seal_opened: "seal opened by agreement: ...");
+a run that cannot write it refuses. Until then only the worksheets and each
+facts file's connector name are read.
+
+Integrity checks then compare the tool's inputs (by role: the versions the
+assessor had), facts file and enabled checks with the files hashed in the
+ledger; compare the configuration used with the pre-registered one; report
+worksheets hashed, and hosts withdrawn, after the seal first opened,
+worksheets recorded with --force despite lint findings, typed levels that do
+not follow the declared manual level rule, every ledger row that no longer
+verifies, and register sheets forced before the seal opened.
 
 lint_worksheet() is the pre-hash check that `ledger record --kind worksheet`
 runs on a filled worksheet: it reads only that worksheet and the study
@@ -63,6 +76,7 @@ import argparse
 import csv
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -162,32 +176,58 @@ SYNTHETIC_CONNECTOR = "synthetic"
 # Ledger kind of the enabled-check list recorded at setup (formats.LEDGER_KINDS).
 LIST_CHECKS_KIND = "list-checks"
 # Note of a worksheet row recorded with `ledger record --kind worksheet --force`
-# although the pre-hash lint (lint_worksheet) found problems.
+# although the pre-hash lint (lint_worksheet) found problems; the findings follow it.
 LINT_NOTE_PREFIX = study_ledger.LINT_NOTE_PREFIX
+# The worksheet cells the assessor fills in for each check besides the verdict
+# (protocol section 6), checked by the lint unless the check is UNASSESSED,
+# with what each blank cell asks for.
+PROCEDURE_COLUMNS = (
+    ("pass_criterion", "write what had to be true for a pass"),
+    ("evidence_procedure", "write the steps you followed"),
+    ("procedure_source", "write NONE when no external procedure exists"),
+)
+# Meta values the assessor fills in, checked by the lint, with what a blank one asks for.
+ASSESSOR_META = (
+    ("assessor", "write who filled in this sheet"),
+    ("level_rule", "write the manual level rule you applied (protocol section 6)"),
+)
+# The lint findings for an undeclared manual level rule (decision 4).
+NO_MANUAL_RULE = ("levels not checked: the study configuration declares no level_rule.manual (decision 4); declare "
+                  "it before hashing a worksheet")
+NO_OVERALL_RULE = ("overall levels not checked: level_rule.overall is not declared, and the approved rule defines "
+                   "no overall level (decision 4)")
+# Note on a level comparison whose typed manual level differs from the level the
+# worksheet's own verdicts give under the declared manual rule (rule_only is left blank).
+OFF_RULE_NOTE = "typed level does not follow the declared manual rule"
 
 # Integrity checks in report order: key -> title.
 INTEGRITY_CHECKS = (
-    ("hosts", "Hosts analysed (study configuration, withdrawals, hosts outside the configuration)"),
+    ("hosts", "Hosts analysed (study configuration, withdrawals and when they were made, hosts outside the "
+              "configuration)"),
     ("files", "Worksheet and tool outputs present and readable"),
-    ("worksheet", "Worksheet format, host code and session date"),
+    ("worksheet", "Worksheet format, host code and session date; no worksheet recorded with --force despite lint "
+                  "findings"),
     ("verdicts", "Manual verdicts complete"),
-    ("levels", "Manual levels complete"),
+    ("levels", "Manual levels complete and following the declared manual level rule"),
     ("synthetic", "Synthetic markers agree (study configuration, worksheets, facts files)"),
     ("provenance", "Provenance present; methodology matches the file name"),
     ("check_set", "Same check-id set on worksheet and tool output, on every host"),
     ("list_checks", "Tool's enabled checks equal the list-checks file hashed at setup"),
     ("as_of", "Tool --as-of equals the worksheet session date"),
     ("consistency", "Methodology outputs of a host agree (statuses, facts file, inputs)"),
-    ("inputs", "Tool inputs and facts file are the ones hashed in the ledger for the host"),
+    ("inputs", "Tool inputs are the files the assessor had, each in its own role; facts file is the one hashed "
+               "for the host"),
     ("build", "One tool commit, clean working tree"),
     ("analysis_code", "Analysis code committed (no uncommitted or untracked file in miccmac_study)"),
     ("tool_status", "No ERROR or NOT_IMPLEMENTED tool statuses"),
     ("reproduce", "Reported tool levels reproduce from the check statuses"),
-    ("config", "Study configuration matches its latest ledger row"),
+    ("config", "Study configuration matches its latest ledger row and the pre-registered study.yaml (as in force "
+               "at the first tool run and when the seal first opened)"),
     ("seal", "Register sheets issued only after every worksheet was hashed (no forced run)"),
     ("ledger_row", "Each worksheet has a ledger row"),
     ("ledger_hash", "Hashed worksheets, tool outputs, facts files and register sheets unchanged"),
-    ("ledger_order", "Worksheet hashed before the tool run; ledger rows in time order"),
+    ("ledger_order", "Worksheet hashed before the tool run and before the seal first opened; ledger rows in time "
+                     "order"),
     ("ledger_rows", "Other hashed files unchanged (inputs, list-checks, protocol and other rows)"),
     ("register", "Register review sheets match the register"),
 )
@@ -258,6 +298,8 @@ class Worksheet:
     raw_levels: Dict[str, Dict[str, str]] = field(default_factory=dict)
     findings: List[Finding] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    # check id -> the procedure cells of its row (PROCEDURE_COLUMNS), stripped; "" when blank or absent.
+    procedure: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @property
     def unassessed(self) -> List[str]:
@@ -283,7 +325,8 @@ class LevelComparison:
     # On an exact mismatch: True when the worksheet's own verdicts, leveled
     # with the tool-side rule, give tool_used (the difference comes from how
     # the levels were derived); None when it cannot be decided (a verdict of
-    # the scope or the manual level is blank or unreadable) or on no mismatch.
+    # the scope or the manual level is blank or unreadable, or the typed
+    # manual level does not follow the declared manual rule) or on no mismatch.
     rule_only: Optional[bool] = None
     note: str = ""
 
@@ -350,6 +393,22 @@ class Study:
     tool_side_source: str = "the study configuration"
     overall_source: str = "the study configuration"
     overrides: List[str] = field(default_factory=list)
+    # The configuration file as loaded: before command-line overrides and before
+    # withdrawn hosts are left out (compared with the pre-registered study.yaml).
+    loaded_config: Optional[StudyConfig] = None
+    # How the configuration used differs from the pre-registered one (one item per
+    # difference; empty when it does not), and what that reference is
+    # (_check_preregistered).
+    config_differences: List[str] = field(default_factory=list)
+    config_reference: str = ""
+    # Hosts withdrawn after the seal first opened (post-hoc exclusions), one text each.
+    post_hoc_exclusions: List[str] = field(default_factory=list)
+
+    @property
+    def sensitivity_run(self) -> bool:
+        """A command-line override, a configuration that differs from the
+        pre-registered one, or a host withdrawn after the seal opened."""
+        return bool(self.overrides or self.config_differences or self.post_hoc_exclusions)
 
     def add(self, check: str, level: str, host: str, detail: str) -> None:
         self.findings.append(Finding(check, level, host, detail))
@@ -449,7 +508,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 def run(args: argparse.Namespace) -> int:
     study = _open_study(args)
-    _require_unsealed(study)      # the seal: nothing else of the study is read before it opens
+    status = _require_unsealed(study)      # the seal: nothing else of the study is read before it opens
     _read_ledger(study)
     _read_worksheets(study)
     _decide_synthetic(study)
@@ -457,6 +516,7 @@ def run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out) if args.out else study.study_dir / ANALYSIS_DIR
     planned = _planned_files(study)
     _refuse_existing(out_dir, planned, args.overwrite)
+    _record_seal_opening(study, status)    # in the ledger before the first tool output is read
 
     _read_outputs(study)
     _run_integrity_checks(study)
@@ -495,6 +555,7 @@ def _open_study(args: argparse.Namespace) -> Study:
     if not config_path.is_file():
         raise StudyError(f"study configuration not found: {config_path}")
     config = load_study_config(config_path)
+    loaded = config
     config_threshold = config.threshold
     in_config = f"the study configuration ({config_path.name})"
     source = in_config
@@ -506,7 +567,7 @@ def _open_study(args: argparse.Namespace) -> Study:
     study = Study(study_dir=study_dir, config_path=config_path.resolve(), config=config,
                   threshold_source=source, config_threshold=config_threshold,
                   config_tool_side_rule=config.tool_side_rule, config_overall_rule=config.overall_rule,
-                  tool_side_source=in_config, overall_source=in_config)
+                  tool_side_source=in_config, overall_source=in_config, loaded_config=loaded)
     _apply_rule_overrides(study, getattr(args, "tool_side_rule", None), getattr(args, "overall_rule", None))
     study.overrides = overrides + study.overrides
     return study
@@ -540,7 +601,22 @@ def _apply_rule_overrides(study: Study, tool_side: Optional[str], overall: Optio
     study.config = config
 
 
+def _declared_manual_rule(study: Study) -> Optional[StudyConfig]:
+    """The configuration with the manual level rule as the study configuration
+    declares it (level_rule.manual with its own level_rule.overall, never an
+    --overall-rule override, which changes only the tool side), or None when
+    level_rule.manual is not declared."""
+    if study.config.manual_level_rule is None:
+        return None
+    return dataclasses.replace(study.config, overall_rule=study.config_overall_rule)
+
+
 def _read_worksheets(study: Study) -> None:
+    """Parse every analysed host's worksheet. When level_rule.manual is
+    declared, each typed level that differs from the level the sheet's own
+    verdicts give under that rule is a 'levels' WARNING (the lint's level
+    findings, for a sheet hashed with --force or before the rule was set)."""
+    declared = _declared_manual_rule(study)
     for host in study.config.hosts:
         path = study.worksheet_path(host)
         if not path.exists():
@@ -553,6 +629,9 @@ def _read_worksheets(study: Study) -> None:
             continue
         study.worksheets[host] = worksheet
         study.findings.extend(worksheet.findings)
+        if declared is not None:
+            for _, message in _lint_levels(worksheet, declared):
+                study.add("levels", WARNING, host, message)
         for note in worksheet.notes:
             study.note(host, note)
 
@@ -610,14 +689,15 @@ def _read_ledger(study: Study) -> None:
         study.ledger_present = True
 
 
-def _require_unsealed(study: Study) -> None:
+def _require_unsealed(study: Study) -> study_ledger.SealStatus:
     """Blinding gate (protocol section 5: tool outputs stay sealed until
     every worksheet is hashed). ledger.seal_status decides, exactly as for
     register-sheet: every host of the study, from every source, must have its
     worksheet hashed and unchanged, unless a withdrawal row took it out. No
     exemption for synthetic data, and a configuration listing fewer hosts
     never opens it. Refuses before anything else is read. Once open, the
-    analysis covers the configuration's hosts minus the withdrawn ones."""
+    analysis covers the configuration's hosts minus the withdrawn ones.
+    Returns the open seal, for the seal-opening row (_record_seal_opening)."""
     status = study_ledger.seal_status(study.study_dir, study.config, ledger_path=study.ledger_path)
     if not status.ok:
         raise StudyError(_sealed_message(status, study.ledger_path))
@@ -629,6 +709,24 @@ def _require_unsealed(study: Study) -> None:
         raise StudyError(f"every host in {study.config_path.name} is withdrawn in the ledger; there is nothing "
                          "to analyse")
     study.config = dataclasses.replace(study.config, hosts=analysed)
+    return status
+
+
+def _record_seal_opening(study: Study, status: study_ledger.SealStatus) -> None:
+    """Append this run's seal-opening row (ledger.record_seal_opened: one
+    STUDY row of kind protocol for the configuration used, archived like any
+    row, noted "seal opened by agreement: hosts ...; withdrawn: ..."), so the
+    ledger shows every time tool results became available. Runs after every
+    check that can still refuse and before the first tool output is read;
+    when the row cannot be written, the run stops there (StudyError, exit 2)
+    with no tool output read and no analysis file written. The ledger is
+    then read again, so the integrity checks see the row."""
+    try:
+        study_ledger.record_seal_opened(study.ledger_path, "agreement", study.config_path, status)
+    except (StudyError, OSError) as exc:
+        raise StudyError(f"cannot record the seal opening in the ledger ({study.clean(str(exc))}); no tool output "
+                         "was read and no analysis file was written: fix the problem and run again") from None
+    _read_ledger(study)
 
 
 def _sealed_message(status: study_ledger.SealStatus, ledger: Path) -> str:
@@ -805,6 +903,7 @@ def _parse_check_row(sheet: Worksheet, row: Dict[str, str], add) -> None:
     sheet.check_properties[check_id] = row["property"].strip()
     sheet.raw_verdicts[check_id] = raw.strip()
     sheet.reasons[check_id] = reason
+    sheet.procedure[check_id] = {column: (row.get(column) or "").strip() for column, _ in PROCEDURE_COLUMNS}
     try:
         verdict = normalize_verdict(raw)
     except StudyError:
@@ -879,15 +978,25 @@ def lint_worksheet(path: Union[str, Path], config: StudyConfig,
     - a synthetic flag that differs from the study configuration's (CRITICAL
       in agreement, for good, once the sheet is hashed);
     - an enabled_checks_fingerprint that does not match the check rows;
+    - a blank assessor or level_rule meta value (WARNING each);
+    - on every check row whose verdict is not UNASSESSED, a blank
+      pass_criterion, evidence_procedure or procedure_source: one WARNING
+      per column, listing the check ids (protocol section 6: procedure_source
+      is NONE when no external procedure exists);
+    - when level_rule.manual is not declared, a WARNING that no level was
+      checked (decision 4); when it is approved and level_rule.overall is not
+      declared, a WARNING that the overall levels were not checked;
     - when level_rule.manual is declared: every level entered that differs
       from the level this worksheet's own verdicts give under that rule
       (UNASSESSED entered where nothing can be scored agrees). The overall
       levels are checked only when level_rule.overall is declared or the
       manual rule is tool-cutoffs, which defines its own overall level.
 
-    A file that cannot be read as a worksheet is one CRITICAL finding.
-    Reads only the worksheet and the configuration given: never a tool
-    output, so it is safe before the worksheet is hashed."""
+    Every finding stops `ledger record --kind worksheet` unless --force is
+    given. A file that cannot be read as a worksheet is one CRITICAL
+    finding. Reads only the worksheet and the configuration given: never a
+    tool output, so it is safe before the worksheet is hashed; every message
+    comes from the sheet's own cells and the configuration."""
     path = Path(path)
     try:
         sheet = parse_worksheet(path, config, expected_host=expected_host)
@@ -901,6 +1010,18 @@ def lint_worksheet(path: Union[str, Path], config: StudyConfig,
     if recorded and recorded != check_ids_fingerprint(sheet.check_ids):
         findings.append((WARNING, "enabled_checks_fingerprint does not match the check rows (rows edited, removed "
                                   "or reordered?)"))
+    for key, advice in ASSESSOR_META:
+        if not sheet.meta.get(key, ""):
+            findings.append((WARNING, f"meta {key} is blank: {advice}"))
+    for column, advice in PROCEDURE_COLUMNS:
+        blank = [check_id for check_id in sheet.check_ids if sheet.verdicts.get(check_id) != UNASSESSED
+                 and not sheet.procedure.get(check_id, {}).get(column)]
+        if blank:
+            findings.append((WARNING, f"{column} is blank for {', '.join(blank)}: {advice}"))
+    if config.manual_level_rule is None:
+        findings.append((WARNING, NO_MANUAL_RULE))
+    elif config.manual_level_rule == LEVEL_RULE_APPROVED and config.overall_rule is None:
+        findings.append((WARNING, NO_OVERALL_RULE))
     findings.extend(_lint_levels(sheet, config))
     return findings
 
@@ -910,6 +1031,17 @@ def _without_folder(message: str, path: Path) -> str:
     for spelled in {str(path), str(path.resolve())}:
         message = message.replace(spelled, path.name)
     return message
+
+
+def _off_rule(typed: LevelValue, expected: LevelValue) -> bool:
+    """Whether a typed manual level differs from the level the worksheet's
+    own verdicts give under the declared manual rule. Never for a scope with
+    a blank or unreadable verdict (expected "missing") or a blank or
+    unreadable typed level (None); UNASSESSED typed where nothing can be
+    scored (expected None) agrees."""
+    if expected == MANUAL_MISSING or typed is None or typed == expected:
+        return False
+    return not (typed == UNASSESSED and expected is None)
 
 
 def _lint_levels(sheet: Worksheet, config: StudyConfig) -> List[Tuple[str, str]]:
@@ -938,9 +1070,7 @@ def _lint_levels(sheet: Worksheet, config: StudyConfig) -> List[Tuple[str, str]]
             if scope not in derived:
                 continue
             expected, typed = derived[scope], entered.get(scope)
-            if expected == MANUAL_MISSING or typed is None or typed == expected:
-                continue
-            if typed == UNASSESSED and expected is None:
+            if not _off_rule(typed, expected):
                 continue
             where = f"{methodology} {scope}"
             if expected is None:
@@ -1242,18 +1372,56 @@ def _run_integrity_checks(study: Study) -> None:
     _check_analysis_code(study)
     _check_tool_statuses(study)
     _check_reproduction(study)
-    _check_config_hash(study)
+    _check_config(study)
     _check_forced_unseal(study)
     _check_ledger(study)
 
 
+def _first_seal_opening(study: Study) -> Optional[Tuple[int, LedgerRow]]:
+    """O: the first seal opening in the ledger (ledger.first_seal_opening),
+    with its 0-based index. After _record_seal_opening there always is one."""
+    return study_ledger.first_seal_opening(study.ledger)
+
+
+def _withdrawal_rows(study: Study) -> Dict[str, Tuple[int, LedgerRow]]:
+    """host -> (0-based index, row) of its first withdrawal row, the one
+    ledger.withdrawn_hosts takes the time and reason from."""
+    found: Dict[str, Tuple[int, LedgerRow]] = {}
+    for index, row in enumerate(study.ledger):
+        code = (row.host_code or "").strip()
+        if study_ledger.is_withdrawal(row) and code and not study_ledger.is_study_code(code) and code not in found:
+            found[code] = (index, row)
+    return found
+
+
 def _check_hosts(study: Study) -> None:
     """Hosts left out of the analysis: withdrawn in the ledger (time and
-    reason), or part of the study folder but not of the configuration."""
+    reason), or part of the study folder but not of the configuration.
+
+    A withdrawal recorded after the seal first opened (or with --after-unseal)
+    is a post-hoc exclusion: CRITICAL. One recorded before is a WARNING, which
+    says so when the host's tool outputs or facts were already hashed then."""
     order = {host: i for i, host in enumerate(study.config_hosts)}
+    opened = _first_seal_opening(study)
+    rows = _withdrawal_rows(study)
     for host in sorted(study.withdrawn, key=lambda h: (order.get(h, len(order)), h)):
         when, reason = study.withdrawn[host]
-        study.add("hosts", WARNING, host, f"withdrawn in the ledger at {when}: {reason}; left out of the analysis")
+        index = rows[host][0] if host in rows else None
+        if opened is not None and index is not None and (
+                index > opened[0] or reason.startswith(study_ledger.AFTER_UNSEAL_REASON_PREFIX)):
+            study.add("hosts", CRITICAL, host,
+                      f"{host} was withdrawn at {when}, after the seal was first opened at "
+                      f"{opened[1].recorded_at_utc} (ledger line {opened[0] + 2}): a post-hoc exclusion; the "
+                      f"pre-registered analysis includes {host}")
+            study.post_hoc_exclusions.append(f"{host} withdrawn after the seal first opened (a post-hoc exclusion)")
+            continue
+        tool = study_ledger.first_tool_row(study.ledger, host)
+        if tool is not None and index is not None and tool[0] < index:
+            study.add("hosts", WARNING, host,
+                      f"withdrawn after its tool outputs were hashed ({tool[1].recorded_at_utc}), in the ledger at "
+                      f"{when}: {reason}; left out of the analysis")
+        else:
+            study.add("hosts", WARNING, host, f"withdrawn in the ledger at {when}: {reason}; left out of the analysis")
     for host in study.extra_hosts:
         study.add("hosts", WARNING, host, f"has study files but is not in {study.config_path.name}; left out")
     study.checked["hosts"] = (f"{len(study.config.hosts)} hosts analysed ({', '.join(study.config.hosts)}): every "
@@ -1478,23 +1646,33 @@ def _given_inputs(prov: dict) -> Dict[str, str]:
 
 def _check_inputs(study: Study) -> None:
     """The identical-inputs control (protocol section 4), per host and tool
-    output. Inputs are matched by sha256 among the host's ledger rows, never
-    by path (provenance keeps paths as typed), with the same rules as
-    `health --ledger`:
+    output. Inputs are matched by sha256, never by path (provenance keeps
+    paths as typed):
 
-    - every input the run was given has the hash of one of the host's rows
-      of kind input whose file still matches (the miccmac config may instead
-      match a STUDY row); CRITICAL otherwise;
-    - when the host has input rows and an input-driven check is enabled, the
-      run had as many of --attestation and --inventory-record as the ledger
-      holds input files for the host (at most two); CRITICAL otherwise;
+    - the attestation and inventory record the run was given must be the
+      versions the assessor had, each in its own role: ledger.assessor_inputs
+      and ledger.check_run_inputs, the rule `health --ledger` uses (the
+      version of a host's input file is its latest input row recorded before
+      the host's first worksheet row; the role comes from the recorded name,
+      <H>-attestation.json or <H>-inventory-record.json). The same file given
+      twice, swapped files, a version recorded only after the worksheet was
+      hashed, a file not recorded for the host and, when an input-driven
+      check is enabled, an input the ledger holds that the run was not given
+      are CRITICAL; a file whose name gives no role is a WARNING (it cannot
+      be checked for a swap);
+    - the miccmac config the run was given has the hash of one of the
+      host's input rows or of a STUDY row whose file still matches; CRITICAL
+      otherwise;
     - with no input rows for the host, a WARNING (once) when the run had
       input files or input-driven checks: they cannot be checked;
+    - a WARNING for each input row of the host recorded after its
+      worksheet's generated_at_utc and before its first worksheet row: the
+      file was recorded again during the blind pass (_check_inputs_in_pass);
     - provenance facts_file.sha256 is the hash of one of the host's facts
       rows (CRITICAL otherwise, also when it is null); a WARNING (once) when
       the host has no facts row.
 
-    Only hashes are compared; no input or facts file is read."""
+    Only hashes and ledger times are compared; no input or facts file is read."""
     ledger = study.ledger_path
     current_study = {item.row.sha256 for item in study.row_states
                      if study_ledger.is_study_code(item.row.host_code) and item.state == study_ledger.OK}
@@ -1504,8 +1682,9 @@ def _check_inputs(study: Study) -> None:
         mine = [item for item in study.row_states if item.row.host_code == host]
         input_rows = [item for item in mine if study_ledger.row_kind(item.row) == study_ledger.INPUT_KIND]
         current = {item.row.sha256 for item in input_rows if item.state == study_ledger.OK}
-        files = len({study_ledger.path_key(ledger, item.row.path) for item in input_rows})
         facts = {item.row.sha256 for item in mine if study_ledger.row_kind(item.row) == study_ledger.FACTS_KIND}
+        hashed_at, assessor = study_ledger.assessor_inputs(ledger, host)
+        _check_inputs_in_pass(study, host)
         warned: Set[str] = set()
         for methodology in study.config.methodologies:
             output = study.outputs.get(host, {}).get(methodology)
@@ -1516,20 +1695,18 @@ def _check_inputs(study: Study) -> None:
             name = output.path.name
             given = _given_inputs(prov)
             enabled = {check.get("check_id") for check in _enabled_checks(output)} & input_driven
-            if input_rows:
-                for key, digest in given.items():
-                    allowed = current | (current_study if key == "config" else set())
-                    if digest not in allowed:
-                        recorded = f"recorded for {host}" + (" or as a STUDY row" if key == "config" else "")
-                        study.add("inputs", CRITICAL, host,
-                                  f"{name}: the {_INPUT_LABELS[key]} the tool used (sha256 {digest[:12]}...) is not "
-                                  f"one of the input files {recorded} in the ledger, or that file changed since")
-                count = sum(1 for key in _FILE_INPUTS if key in given)
-                if enabled and count < min(files, 2):
-                    missing = " and ".join("--" + key.replace("_", "-") for key in _FILE_INPUTS if key not in given)
+            if assessor:
+                files = {key: digest for key, digest in given.items() if key in _FILE_INPUTS}
+                for code, message in study_ledger.check_run_inputs(files, assessor, bool(enabled), host,
+                                                                    worksheet_at_utc=hashed_at):
+                    level = WARNING if code == study_ledger.INPUT_ROLE_UNKNOWN else CRITICAL
+                    study.add("inputs", level, host, f"{name}: {message}")
+                digest = given.get("config")
+                if digest is not None and digest not in current | current_study:
                     study.add("inputs", CRITICAL, host,
-                              f"{name}: run without {missing}, although the ledger holds {files} input file(s) for "
-                              f"{host} and {len(enabled)} input-driven check(s) are enabled")
+                              f"{name}: the {_INPUT_LABELS['config']} the tool used (sha256 {digest[:12]}...) is not "
+                              f"one of the input files recorded for {host} or as a STUDY row in the ledger, or that "
+                              "file changed since")
             elif "inputs" not in warned and (enabled or any(
                     not (key == "config" and digest in current_study) for key, digest in given.items())):
                 warned.add("inputs")
@@ -1549,8 +1726,48 @@ def _check_inputs(study: Study) -> None:
                 warned.add("facts")
                 study.add("inputs", WARNING, host,
                           f"no facts row for {host} in the ledger, so the facts file the tool used cannot be checked")
-    study.checked["inputs"] = (f"{checked} tool outputs: every input and facts file the tool used is one hashed in "
-                               "the ledger for its host")
+    study.checked["inputs"] = (f"{checked} tool outputs: every input file the tool used is the version the assessor "
+                               "had, in its own role, and every facts file the one hashed for its host")
+
+
+def _first_worksheet_row(study: Study, host: str) -> Optional[Tuple[int, LedgerRow]]:
+    """The host's first worksheet row (kind worksheet, path resolving to
+    DIR/worksheets/<H>-worksheet.csv, as ledger.worksheet_rows matches it),
+    with its 0-based index, or None."""
+    target = study_ledger.file_key(study.worksheet_path(host))
+    for index, row in enumerate(study.ledger):
+        if study_ledger.row_kind(row) == study_ledger.WORKSHEET_KIND and \
+                study_ledger.path_key(study.ledger_path, row.path) == target:
+            return index, row
+    return None
+
+
+def _check_inputs_in_pass(study: Study, host: str) -> None:
+    """A WARNING for each of the host's input rows (kind input, its host
+    code) recorded after the worksheet's generated_at_utc (the blank sheet of
+    step 1) and before the host's first worksheet row: the assessor may have
+    used another version during part of the pass. Ties in the same second
+    are not reported."""
+    sheet = study.worksheets.get(host)
+    first = _first_worksheet_row(study, host)
+    generated = _optional_timestamp(sheet.meta.get("generated_at_utc")) if sheet is not None else None
+    if first is None or generated is None:
+        return
+    seen: Set[str] = set()
+    for row in study.ledger[:first[0]]:
+        if study_ledger.row_kind(row) != study_ledger.INPUT_KIND or (row.host_code or "").strip() != host:
+            continue
+        key = study_ledger.path_key(study.ledger_path, row.path)
+        again = key in seen
+        seen.add(key)
+        when = _optional_timestamp(row.recorded_at_utc)
+        if when is None or when <= generated:
+            continue
+        where = study.rel(resolve_ledger_path(study.ledger_path, row.path)) if row.path.strip() else "(no path)"
+        study.add("inputs", WARNING, host,
+                  f"{where} was recorded {'again ' if again else ''}at {row.recorded_at_utc}, during {host}'s blind "
+                  f"pass (sheet generated {_iso(generated)}, hashed {first[1].recorded_at_utc}): check that the whole "
+                  "pass used this version")
 
 
 def _check_build(study: Study) -> None:
@@ -1598,12 +1815,16 @@ def _tool_commits(study: Study) -> List[Dict[str, object]]:
 def _check_analysis_code(study: Study) -> None:
     """Protocol section 2: the analysis code is frozen (committed) before
     the outputs are unsealed. A WARNING when miccmac_study has uncommitted
-    changes or untracked files; nothing when git cannot tell."""
+    changes or untracked files, and when git cannot tell (not installed,
+    not a repository, an error or a timeout)."""
     clean = study.analysis_code.get("analysis_tree_clean")
     if clean is False:
         study.add("analysis_code", WARNING, "",
                   "miccmac_study has uncommitted changes or untracked files (git status --porcelain -- "
                   "miccmac_study), so the analysis code commit does not hold the code that ran")
+    elif clean is None:
+        study.add("analysis_code", WARNING, "",
+                  "git is not available here, so it could not be checked that the analysis code is committed")
     study.checked["analysis_code"] = ("miccmac_study has no uncommitted or untracked file" if clean
                                       else "not determined: git is not available here")
 
@@ -1640,18 +1861,58 @@ def _check_reproduction(study: Study) -> None:
     study.checked["reproduce"] = "levels recomputed with miccmac's scoring equal the reported levels"
 
 
-def _check_config_hash(study: Study) -> None:
-    """The study configuration used must be the one last recorded in the
-    ledger: its sha256 equals the latest row whose path resolves to it
-    (whatever the row's kind: setup, a correction, a withdrawal)."""
+def _check_config(study: Study) -> None:
+    """The study configuration (protocol: the threshold and the other
+    settings are fixed before the first tool run; other values only as
+    sensitivity checks). Seal-opening rows never count as a recording of a
+    configuration.
+
+    - The configuration file used must match its latest ledger row: CRITICAL
+      otherwise (restore it from its archive copy; recording it again after
+      the first tool run does not make it pre-registered); a WARNING when it
+      was never recorded (_check_config_rows).
+    - The pre-registered configuration is DIR/study.yaml as the ledger holds
+      it: R, the latest version recorded before the first tool-output or
+      facts row (in force at the first tool run), and U, the latest one
+      recorded before the first seal opening (in force when tool results
+      first became available). The configuration this run loaded (before
+      command-line overrides and before withdrawn hosts are left out) must
+      equal U in every setting: each difference is listed in one CRITICAL,
+      and the run is labelled a sensitivity run. U must equal R: a
+      difference is a WARNING, a deviation for the protocol log
+      (_check_preregistered)."""
+    parts = [text for text in (_check_config_rows(study), _check_preregistered(study)) if text]
+    study.checked["config"] = "; ".join(parts) or "no problems found"
+
+
+def _config_rows(study: Study, path: Path) -> List[study_ledger.RowState]:
+    """The ledger rows that record the file at `path` (resolved), seal openings left out."""
+    target = study_ledger.file_key(path)
+    return [item for item in study.row_states
+            if study_ledger.path_key(study.ledger_path, item.row.path) == target
+            and not study_ledger.is_seal_opening(item.row)]
+
+
+def _check_config_rows(study: Study) -> Optional[str]:
+    """The configuration file used against its latest ledger row (whatever
+    the row's kind: setup, a correction, a withdrawal). Returns the OK text,
+    or None after a finding."""
     name = study.config_path.name
-    target = study_ledger.file_key(study.config_path)
-    rows = [item for item in study.row_states if study_ledger.path_key(study.ledger_path, item.row.path) == target]
+    rows = _config_rows(study, study.config_path)
     if not rows:
+        # A copy of a recorded version (for example its ledger-archive copy) is that version.
+        try:
+            current_sha: Optional[str] = sha256_file(study.config_path)
+        except OSError:
+            current_sha = None
+        versions = study_ledger.study_config_rows(study.ledger_path, study.ledger, study.study_dir)
+        same = [index for index, row in versions if current_sha is not None and row.sha256 == current_sha]
+        if same:
+            return f"{name} has the bytes of {CONFIG_FILE} as recorded at ledger line {same[-1] + 2}"
         study.add("config", WARNING, "",
                   f"{name} was never recorded in the ledger, so the settings used cannot be shown to be the ones "
                   "fixed in advance")
-        return
+        return None
     latest = rows[-1]
     try:
         current: Optional[str] = sha256_file(study.config_path)
@@ -1659,12 +1920,232 @@ def _check_config_hash(study: Study) -> None:
         current = None
     if current != latest.row.sha256:
         now = f"file now {current[:12]}..." if current else "file now unreadable"
+        copy = study_ledger.archive_path(study.ledger_path, latest.row)
+        source = study.rel(copy) if copy.is_file() else f"your commit (its archive copy {study.rel(copy)} is missing)"
         study.add("config", CRITICAL, "",
                   f"{name} changed after it was last recorded in the ledger (line {latest.index + 2}, "
                   f"{latest.row.recorded_at_utc}): ledger {latest.row.sha256[:12]}..., {now}; restore the recorded "
-                  "file, or record the one used and say why in the protocol log")
-        return
-    study.checked["config"] = f"{name} matches its latest ledger row (line {latest.index + 2}, {latest.row.recorded_at_utc})"
+                  f"file from {source}; recording it again after the first tool run does not make it pre-registered")
+        return None
+    return f"{name} matches its latest ledger row (line {latest.index + 2}, {latest.row.recorded_at_utc})"
+
+
+def _recorded_config(study: Study, row: LedgerRow) -> Tuple[Optional[StudyConfig], str]:
+    """study.yaml as a ledger row recorded it: read from its ledger-archive
+    copy once the copy has the row's hash, or from DIR/study.yaml when that
+    has the row's hash. (config, "") or (None, why it cannot be read)."""
+    copy = study_ledger.archive_path(study.ledger_path, row)
+    why = "archive copy missing"
+    if copy.is_file():
+        try:
+            matches = sha256_file(copy) == row.sha256
+        except OSError:
+            matches = False
+        if matches:
+            try:
+                return load_study_config(copy), ""
+            except (StudyError, UnicodeDecodeError) as exc:
+                return None, f"its archive copy does not load: {study.clean(str(exc))}"
+        why = "archive copy does not match its recorded hash"
+    current = study.study_dir / CONFIG_FILE
+    try:
+        if current.is_file() and sha256_file(current) == row.sha256:
+            return load_study_config(current), ""
+    except OSError:
+        pass
+    except (StudyError, UnicodeDecodeError) as exc:
+        return None, f"it does not load: {study.clean(str(exc))}"
+    return None, why
+
+
+def _load_version(study: Study, index: int, row: LedgerRow) -> Optional[StudyConfig]:
+    """A recorded version of study.yaml (_recorded_config), or None after a
+    CRITICAL saying it cannot be compared."""
+    config, why = _recorded_config(study, row)
+    if config is None:
+        study.add("config", CRITICAL, "",
+                  f"cannot load {CONFIG_FILE} as recorded at ledger line {index + 2} ({why}): the configuration used "
+                  "cannot be compared with the pre-registered one")
+    return config
+
+
+def _check_preregistered(study: Study) -> Optional[str]:
+    """R and U against the configuration used (see _check_config). Returns
+    the OK text, or None when there is nothing to say or after a finding."""
+    name = study.config_path.name
+    versions = study_ledger.study_config_rows(study.ledger_path, study.ledger, study.study_dir)
+    default = study.study_dir / CONFIG_FILE
+    if not versions:
+        if study_ledger.file_key(study.config_path) != study_ledger.file_key(default):
+            study.add("config", WARNING, "",
+                      f"{CONFIG_FILE} was never recorded in the ledger, so {name} cannot be compared with the "
+                      "pre-registered configuration")
+        return None
+    opened = _first_seal_opening(study)
+    tool = study_ledger.first_tool_row(study.ledger)
+    before_opening = [item for item in versions if opened is None or item[0] < opened[0]]
+    if not before_opening:
+        study.add("config", WARNING, "",
+                  f"{CONFIG_FILE} was first recorded at ledger line {versions[0][0] + 2}, after the seal was first "
+                  f"opened (ledger line {opened[0] + 2 if opened else '?'}), so the settings used cannot be shown to "
+                  "be the ones fixed in advance")
+        return None
+    u_index, u_row = before_opening[-1]
+    if tool is None:
+        at_tool: Optional[Tuple[int, LedgerRow]] = (u_index, u_row)
+    else:
+        before_tool = [item for item in versions if item[0] < tool[0]]
+        at_tool = before_tool[-1] if before_tool else None
+    quiet = True
+    u_config = _load_version(study, u_index, u_row)
+    r_config: Optional[StudyConfig] = None
+    if at_tool is not None and at_tool[1].sha256 != u_row.sha256:
+        r_config = _load_version(study, at_tool[0], at_tool[1])
+        if r_config is None:
+            quiet = False
+    used = study.loaded_config or study.config
+    labelled: List[str] = []
+    critical: List[str] = []
+    if u_config is None:
+        quiet = False
+    else:
+        try:
+            same_bytes = sha256_file(study.config_path) == u_row.sha256
+        except OSError:
+            same_bytes = False
+        # After the seal opened: any difference from U, except a setting put back to its value in R.
+        reference = _reverted(u_config, r_config, used) if r_config is not None else u_config
+        critical = [] if same_bytes else _config_differences(reference, used)
+        # The pre-registered analysis: R's settings (fixed before the first tool run, protocol section 6), with
+        # U's hosts (host changes before unsealing were blind: the seal keeps R's hosts in any case).
+        if r_config is not None:
+            labelled = _config_differences(dataclasses.replace(r_config, hosts=list(u_config.hosts)), used)
+            study.config_reference = (f"the pre-registered settings ({CONFIG_FILE} as recorded at ledger line "
+                                      f"{at_tool[0] + 2}, in force at the first tool run)")
+        else:
+            labelled = critical
+            study.config_reference = f"{CONFIG_FILE} as recorded at ledger line {u_index + 2}, when the seal first opened"
+        if labelled:
+            quiet = False
+            study.config_differences = labelled
+        if critical:
+            study.add("config", CRITICAL, "",
+                      f"the configuration used ({name}) differs from {CONFIG_FILE} as it was when the seal first "
+                      f"opened (ledger line {u_index + 2}): {'; '.join(critical)}; this run is a sensitivity run, "
+                      "not the pre-registered analysis")
+    if at_tool is None:
+        quiet = False
+        study.add("config", WARNING, "",
+                  f"{CONFIG_FILE} was first recorded at ledger line {versions[0][0] + 2}, after the first tool run "
+                  f"(ledger line {tool[0] + 2 if tool else '?'}), so the version in force at the first tool run is "
+                  "unknown; record this deviation in the protocol log")
+    elif r_config is not None and u_config is not None:
+        changed = _config_differences(r_config, u_config)
+        if changed:
+            quiet = False
+            text = (f"{CONFIG_FILE} changed after the first tool run (version at the first tool run: ledger line "
+                    f"{at_tool[0] + 2}; version when the seal opened: line {u_index + 2}): {'; '.join(changed)}; "
+                    "record this deviation in the protocol log")
+            settings_changed = any(not item.startswith("hosts:") for item in changed)
+            if labelled and not critical:
+                copy = study.rel(study_ledger.archive_path(study.ledger_path, at_tool[1]))
+                hosts = (f", with the hosts of ledger line {u_index + 2}"
+                         if set(r_config.hosts) != set(u_config.hosts) else "")
+                text += (f"; this run uses the settings changed since then, so it is labelled a sensitivity run; "
+                         f"the pre-registered analysis uses those of ledger line {at_tool[0] + 2} (--config {copy}"
+                         f"{hosts})")
+            elif settings_changed and not labelled:
+                text += "; this run uses the settings in force at the first tool run, as pre-registered"
+            study.add("config", WARNING, "", text)
+    if not quiet:
+        return None
+    if at_tool[0] == u_index:
+        return (f"the configuration used equals {CONFIG_FILE} as recorded at ledger line {u_index + 2}, in force at "
+                "the first tool run and when the seal first opened")
+    return (f"the configuration used equals {CONFIG_FILE} as in force when the seal first opened (ledger line "
+            f"{u_index + 2}) and at the first tool run (ledger line {at_tool[0] + 2})")
+
+
+def _reverted(current: StudyConfig, earlier: StudyConfig, used: StudyConfig) -> StudyConfig:
+    """`current` with every setting (hosts aside) that `used` has at its value
+    in `earlier` set to that value, compared as _config_differences compares
+    it: putting a setting back to its pre-registered value is no change."""
+    changes: Dict[str, object] = {}
+    for item in dataclasses.fields(StudyConfig):
+        if item.name == "hosts":
+            continue
+        value = getattr(used, item.name)
+        if not _config_differences(earlier, dataclasses.replace(earlier, **{item.name: value})):
+            changes[item.name] = getattr(earlier, item.name)
+    return dataclasses.replace(current, **changes)
+
+
+def _fraction_text(value: Fraction) -> str:
+    """A threshold as study.yaml would write it: 0.80, 0.75, 0.801, or 2/3."""
+    for places in range(2, 7):
+        if (value * 10 ** places).denominator == 1:
+            return f"{float(value):.{places}f}"
+    return f"{value.numerator}/{value.denominator}"
+
+
+def _yaml_text(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(str(v) for v in value) + "]"
+    return str(value)
+
+
+# StudyConfig fields _config_differences names one by one; any other field is compared generically.
+_COMPARED_FIELDS = frozenset({
+    "hosts", "threshold", "primary_methodology", "secondary_methodologies", "manual_max_level",
+    "input_driven_checks", "input_driven_properties", "bootstrap_iterations", "bootstrap_seed",
+    "bootstrap_exact_limit", "weighted_kappa", "synthetic", "manual_level_rule", "tool_side_rule", "overall_rule",
+})
+
+
+def _config_differences(reference: StudyConfig, used: StudyConfig) -> List[str]:
+    """Every setting in which `used` differs from `reference`, one item per
+    difference, for example "threshold 0.80 -> 0.60" or "hosts: H3 left
+    out". Hosts and the input-driven lists compare as sets; manual_max_level
+    compares the cap in force for each methodology (a cap left at its default
+    equals the same cap written out)."""
+    items: List[str] = []
+    for key, gone, new in (("hosts", "left out", "added"),
+                           ("input_driven_checks", "removed", "added"),
+                           ("input_driven_properties", "removed", "added")):
+        before, after = list(getattr(reference, key)), list(getattr(used, key))
+        missing = [value for value in before if value not in set(after)]
+        extra = [value for value in after if value not in set(before)]
+        if missing:
+            items.append(f"{key}: {', '.join(missing)} {gone}")
+        if extra:
+            items.append(f"{key}: {', '.join(extra)} {new}")
+    if reference.threshold != used.threshold:
+        items.append(f"threshold {_fraction_text(reference.threshold)} -> {_fraction_text(used.threshold)}")
+    for key in ("primary_methodology", "secondary_methodologies"):
+        before, after = getattr(reference, key), getattr(used, key)
+        if before != after:
+            items.append(f"{key} {_yaml_text(before)} -> {_yaml_text(after)}")
+    named = sorted(set(reference.methodologies) | set(used.methodologies) | set(reference.manual_max_level)
+                   | set(used.manual_max_level))
+    for methodology in named:
+        before, after = reference.manual_max(methodology), used.manual_max(methodology)
+        if before != after:
+            items.append(f"manual_max_level {methodology} {before} -> {after}")
+    for key, attr in (("bootstrap.iterations", "bootstrap_iterations"), ("bootstrap.seed", "bootstrap_seed"),
+                      ("bootstrap.exact_limit", "bootstrap_exact_limit"), ("weighted_kappa", "weighted_kappa"),
+                      ("synthetic", "synthetic"), ("level_rule.manual", "manual_level_rule"),
+                      ("level_rule.tool_side", "tool_side_rule"), ("level_rule.overall", "overall_rule")):
+        before, after = getattr(reference, attr), getattr(used, attr)
+        if before != after:
+            items.append(f"{key} {_yaml_text(before)} -> {_yaml_text(after)}")
+    for item in dataclasses.fields(StudyConfig):
+        if item.name not in _COMPARED_FIELDS and getattr(reference, item.name) != getattr(used, item.name):
+            items.append(f"{item.name} {getattr(reference, item.name)!r} -> {getattr(used, item.name)!r}")
+    return items
 
 
 def _check_forced_unseal(study: Study) -> None:
@@ -1683,14 +2164,18 @@ def _check_forced_unseal(study: Study) -> None:
 
 
 def _check_ledger(study: Study) -> None:
-    """Order of each analysed host's worksheet hash against its tool runs
-    and sealed files, then every ledger row's own state (_check_row_states).
-    Worksheet rows are matched with ledger.worksheet_rows (the path must be
-    DIR/worksheets/<H>-worksheet.csv), as the seal matches them."""
+    """Order of each analysed host's worksheet hash against its tool runs,
+    its sealed files and the first seal opening, worksheets recorded with
+    --force (_check_forced_worksheets), then every ledger row's own state
+    (_check_row_states). Worksheet rows are matched with
+    ledger.worksheet_rows (the path must be DIR/worksheets/<H>-worksheet.csv),
+    as the seal matches them."""
     if not study.ledger_present:
         for key in ("ledger_row", "ledger_hash", "ledger_order"):
             study.add(key, WARNING, "", "not run: no ledger.csv in the study folder")
         return
+    _check_hashed_before_opening(study)
+    _check_forced_worksheets(study)
     for host in study.config.hosts:
         sheet = study.worksheets.get(host)
         if sheet is None:
@@ -1717,18 +2202,67 @@ def _check_ledger(study: Study) -> None:
     study.checked["ledger_row"] = "every worksheet has a ledger row"
     study.checked["ledger_hash"] = ("every hashed worksheet, tool output, facts file and register sheet matches its "
                                     "recorded sha256")
-    study.checked["ledger_order"] = "every worksheet was hashed before its tool runs; every ledger row in time order"
+    study.checked["ledger_order"] = ("every worksheet was hashed before its tool runs and before the seal first "
+                                     "opened; every ledger row in time order")
     study.checked["ledger_rows"] = "every other ledger row matches its file (or was superseded in time)"
 
 
+def _check_hashed_before_opening(study: Study) -> None:
+    """CRITICAL for each analysed host whose first worksheet row comes after
+    the first seal opening (O) in the ledger: tool results were available
+    before its blind pass ended."""
+    opened = _first_seal_opening(study)
+    if opened is None:
+        return
+    for host in study.config.hosts:
+        first = _first_worksheet_row(study, host)
+        if first is not None and first[0] > opened[0]:
+            study.add("ledger_order", CRITICAL, host,
+                      f"{host}'s worksheet was hashed at {first[1].recorded_at_utc}, after the seal was first opened "
+                      f"at {opened[1].recorded_at_utc} (ledger line {opened[0] + 2}): its blind pass may have seen "
+                      "tool results")
+
+
+_CRITICAL_ITEM = re.compile(r"(?:^|; )(?:[^;]*?: )?CRITICAL ")
+
+
+def _check_forced_worksheets(study: Study) -> None:
+    """Every worksheet row of an analysed host (kind worksheet, by host code
+    or by its worksheet path) whose note holds LINT_NOTE_PREFIX, which
+    `ledger record --kind worksheet --force` writes (after the --note text,
+    when one was given): a 'worksheet' WARNING quoting the findings, or
+    CRITICAL when one of them is CRITICAL."""
+    ledger = study.ledger_path
+    for host in study.config.hosts:
+        target = study_ledger.file_key(study.worksheet_path(host))
+        for index, row in enumerate(study.ledger):
+            if study_ledger.row_kind(row) != study_ledger.WORKSHEET_KIND:
+                continue
+            if (row.host_code or "").strip() != host and study_ledger.path_key(ledger, row.path) != target:
+                continue
+            note = row.note or ""
+            at = note.find(LINT_NOTE_PREFIX)
+            if at < 0:
+                continue
+            listed = note[at + len(LINT_NOTE_PREFIX):].strip() or "(no finding listed)"
+            level = CRITICAL if _CRITICAL_ITEM.search(listed) else WARNING
+            where = study.rel(resolve_ledger_path(ledger, row.path)) if row.path.strip() else "(no path)"
+            study.add("worksheet", level, host,
+                      f"{where} was recorded with --force despite lint findings (ledger line {index + 2}, "
+                      f"{row.recorded_at_utc}): {listed}")
+
+
 def _sealed_keys(study: Study) -> Set[str]:
-    """file_key of every analysed host's worksheet, tool outputs and facts
-    file: a row for one of them is frozen whatever kind it was given."""
+    """file_key of every analysed host's worksheet, tool outputs, facts file
+    and register sheets: a row for one of them is frozen whatever kind it
+    was given."""
     paths: List[Path] = []
     for host in study.config.hosts:
         paths.append(study.worksheet_path(host))
         paths.append(study.facts_path(host))
         paths.extend(study.output_path(host, m) for m in study.config.methodologies)
+        paths.append(study.review_path(host))
+        paths.append(study.gaps_path(host))
     return {study_ledger.file_key(path) for path in paths}
 
 
@@ -1737,8 +2271,8 @@ def _check_row_states(study: Study) -> None:
 
     - a CHANGED or MISSING row of a frozen kind (worksheet, tool-output,
       facts, register-review, missed-gaps), or of an analysed host's
-      worksheet, tool output or facts file under any kind: CRITICAL
-      (ledger_hash);
+      worksheet, tool output, facts file or register sheet under any kind:
+      CRITICAL (ledger_hash);
     - a CHANGED or MISSING row of another kind (input, list-checks,
       protocol, other): WARNING (ledger_rows);
     - a row OUT OF ORDER (dated earlier than a row above it, or not a
@@ -1880,9 +2414,22 @@ def _analyse(study: Study) -> Analysis:
     )
 
 
+def _manual_rule_levels(sheet: Worksheet, methodology: str, declared: Optional[StudyConfig]) -> Dict[str, LevelValue]:
+    """The levels the worksheet's own verdicts give under the declared manual
+    rule (derive_worksheet_levels), or {} when no manual rule is declared or
+    they cannot be derived (the 'levels' findings say why)."""
+    if declared is None:
+        return {}
+    try:
+        return derive_worksheet_levels(sheet, methodology, declared.manual_level_rule, declared.overall_rule, declared)
+    except (ValueError, StudyError):
+        return {}
+
+
 def _compare_levels(study: Study) -> List[LevelComparison]:
     rows: List[LevelComparison] = []
     config = study.config
+    declared = _declared_manual_rule(study)
     for host in config.hosts:
         sheet = study.worksheets.get(host)
         if sheet is None:
@@ -1899,6 +2446,7 @@ def _compare_levels(study: Study) -> List[LevelComparison]:
             undropped = (reported if config.tool_side_rule == LEVEL_RULE_TOOL_CUTOFFS
                          else _tool_levels_used(output, methodology, (), config))
             from_verdicts = _worksheet_rule_levels(sheet, output, methodology, config)
+            by_rule = _manual_rule_levels(sheet, methodology, declared)
             manual = sheet.levels.get(methodology, {})
             raw = sheet.raw_levels.get(methodology, {})
             for scope in LEVEL_SCOPES:
@@ -1906,6 +2454,7 @@ def _compare_levels(study: Study) -> List[LevelComparison]:
                     host, methodology, scope, reported, used, manual.get(scope), raw.get(scope, ""),
                     top=config.tool_max_level(methodology), cap=config.manual_max(methodology), dropped=drop,
                     undropped=undropped, from_verdicts=from_verdicts.get(scope),
+                    off_rule=scope in by_rule and _off_rule(manual.get(scope), by_rule[scope]),
                 ))
         if drop:
             study.note(host, f"UNASSESSED check(s) left out on both sides: {', '.join(drop)}")
@@ -1915,10 +2464,14 @@ def _compare_levels(study: Study) -> List[LevelComparison]:
 def _level_comparison(host: str, methodology: str, scope: str, reported: Dict[str, Optional[int]],
                       used: Dict[str, Optional[int]], manual: LevelValue, raw: str, top: int, cap: int,
                       dropped: Sequence[str], undropped: Optional[Dict[str, Optional[int]]] = None,
-                      from_verdicts: LevelValue = None) -> LevelComparison:
+                      from_verdicts: LevelValue = None, off_rule: bool = False) -> LevelComparison:
     """One comparison. `undropped` holds the tool-side levels without the
     UNASSESSED drop (default: the reported levels) and `from_verdicts` the
-    level the worksheet's own verdicts give under the tool-side rule."""
+    level the worksheet's own verdicts give under the tool-side rule.
+    `off_rule` says that the typed manual level differs from the level the
+    verdicts give under the declared manual rule: rule_only and l5_rule_only
+    are then left blank (not classified), with a note; every other column is
+    unchanged."""
     known = scope in reported
     row = LevelComparison(host=host, methodology=methodology, scope=scope,
                           tool_reported=reported.get(scope), tool_reported_known=known,
@@ -1937,7 +2490,8 @@ def _level_comparison(host: str, methodology: str, scope: str, reported: Dict[st
         row.diff = row.tool_used - manual
         row.exact = row.diff == 0
         row.within_one = abs(row.diff) <= 1
-        row.l5_rule_only = row.tool_used == top and manual == cap and cap < top
+        # A typed level that does not follow the declared rule is not a Level 5 case either.
+        row.l5_rule_only = None if off_rule else (row.tool_used == top and manual == cap and cap < top)
         if row.l5_rule_only:
             notes.append(f"Level 5 rule only: tool at top level {top}, manual at cap {cap}")
     elif not tool_known and not manual_known:
@@ -1948,10 +2502,12 @@ def _level_comparison(host: str, methodology: str, scope: str, reported: Dict[st
         row.within_one = False
         side = "tool level unassessed" if not tool_known else _manual_state(manual, raw)
         notes.append(f"{side}; counted as a disagreement")
-    if row.counted and row.exact is False:
+    if row.counted and row.exact is False and not off_rule:
         row.rule_only = _rule_only(row.tool_used, manual, from_verdicts)
         if row.rule_only is None and manual is not None:
             notes.append("rule_only not decided: a verdict of this scope is missing or unreadable")
+    if off_rule:
+        notes.append(OFF_RULE_NOTE)
     row.note = "; ".join(notes)
     return row
 
@@ -2591,14 +3147,31 @@ def _analysis_tree_clean(package_dir: Path) -> Optional[bool]:
     return not result.stdout.strip()
 
 
+# How _analysis_code hashes each file (named in summary.json and summary.md).
+CODE_HASH_METHOD = "sha256 of each file with CRLF line endings read as LF (the bytes git commits)"
+
+
+def code_sha256(path: Path) -> str:
+    """sha256 of a source file with every CRLF read as LF: the same value on
+    a Windows checkout (core.autocrlf) as on Linux, and equal to the sha256
+    of the committed file (`git show <commit>:<path>`)."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def _analysis_code() -> Dict[str, object]:
+    """The analysis code that ran: its commit, whether miccmac_study is
+    committed, and the code_sha256 of every .py file of the miccmac_study
+    package (the seal, the ledger and the readers as well as the statistics),
+    sorted by name; None for a file that cannot be read."""
     here = Path(__file__).resolve().parent
-    files = {}
-    for name in ("agreement.py", "stats.py", "formats.py"):
-        path = here / name
-        files[f"miccmac_study/{name}"] = sha256_file(path) if path.exists() else None
+    files: Dict[str, Optional[str]] = {}
+    for path in sorted(here.glob("*.py"), key=lambda p: p.name):
+        try:
+            files[f"miccmac_study/{path.name}"] = code_sha256(path)
+        except OSError:
+            files[f"miccmac_study/{path.name}"] = None
     return {"git_commit": _git_commit(here), "analysis_tree_clean": _analysis_tree_clean(here),
-            "files_sha256": files}
+            "files_sha256": files, "files_sha256_method": CODE_HASH_METHOD}
 
 
 # ------------------------------------------------------------------ summaries
@@ -2636,8 +3209,14 @@ def _config_echo(study: Study) -> Dict[str, object]:
         "level_rule_source": {"tool_side": study.tool_side_source, "overall": study.overall_source},
         "config_level_rule": {"manual": config.manual_level_rule, "tool_side": study.config_tool_side_rule,
                               "overall": study.config_overall_rule},
-        "sensitivity_run": bool(study.overrides),
+        # A sensitivity run: command-line overrides, a configuration that differs from the
+        # pre-registered one (one item per difference, against config_reference), or a host
+        # withdrawn after the seal first opened.
+        "sensitivity_run": study.sensitivity_run,
         "overrides": list(study.overrides),
+        "config_differences": list(study.config_differences),
+        "config_reference": study.config_reference if study.config_differences else "",
+        "post_hoc_exclusions": list(study.post_hoc_exclusions),
     }
     return echo
 
@@ -2781,14 +3360,19 @@ def _md_run_information(study: Study, files: Sequence[str], generated_at: str) -
                     else "; the study configuration declares none")
     if config.tool_side_rule != LEVEL_RULE_APPROVED:
         overall += "; not used for the tool side, which takes miccmac's own overall level"
-    sensitivity = ("yes: " + ", ".join(study.overrides)) if study.overrides else "no"
+    reasons = [", ".join(study.overrides)] if study.overrides else []
+    if study.config_differences:
+        reasons.append(f"{study.config_path.name} differs from {study.config_reference}: "
+                       f"{'; '.join(study.config_differences)}")
+    reasons.extend(study.post_hoc_exclusions)
+    sensitivity = ("yes: " + "; ".join(reasons)) if reasons else "no"
     rows = [
         ("Study configuration", f"{echo['path']} (sha256 {echo['sha256']})"),
         ("Hosts", ", ".join(config.hosts)),
         ("Withdrawn hosts (ledger withdraw; left out)", withdrawn),
         ("Hosts outside the configuration (left out)", ", ".join(study.extra_hosts) or "none"),
         ("Threshold", threshold),
-        ("Sensitivity run (command-line overrides)", sensitivity),
+        ("Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions)", sensitivity),
         ("Primary methodology", config.primary_methodology),
         ("Secondary methodologies", ", ".join(config.secondary_methodologies) or "none"),
         ("Level scales", scales),
@@ -2806,7 +3390,8 @@ def _md_run_information(study: Study, files: Sequence[str], generated_at: str) -
         ("miccmac_study version", miccmac_study.__version__),
         ("Analysis code commit", commit_text),
         ("Analysis code committed (analysis_tree_clean)", clean_text),
-        ("Analysis code files (sha256, first 16 hex; full values in summary.json)",
+        ("Analysis code files (sha256 with LF line endings, as committed; first 16 hex, full values in "
+         "summary.json)",
          "; ".join(f"{name} {(sha or 'missing')[:16]}" for name, sha in code["files_sha256"].items())),
         ("generated_at_utc", generated_at),
         ("Files written", ", ".join(files)),
@@ -2820,7 +3405,9 @@ def _md_integrity(study: Study) -> List[str]:
            + _md_table(("#", "Check", "Result", "Host", "Detail"), rows))
     not_ok = _ledger_not_ok(study)
     out += [f"Ledger rows that are not OK (as `ledger verify` reports them; {len(study.row_states)} rows in all). "
-            "SUPERSEDED rows were corrected before they could matter and are listed for information only:", ""]
+            "SUPERSEDED rows were corrected before they could matter, and ARCHIVED rows (withdrawals and seal "
+            "openings) record a configuration that has changed since, kept in ledger-archive; both are listed for "
+            "information only:", ""]
     if not not_ok:
         return out + ["- None.", ""]
     for r in not_ok:
@@ -3003,8 +3590,8 @@ def _rule_only_sentence(study: Study) -> str:
     return ("Rule only counts exact mismatches where the level derived from the worksheet's own verdicts "
             f"(UNASSESSED left out) with the tool-side rule ({study.config.tool_side_rule}) equals the tool level "
             "used, so the difference comes from how the levels were derived rather than from the verdicts; a "
-            "mismatch whose scope has a blank or unreadable verdict, or a blank or unreadable manual level, is not "
-            "classified.")
+            "mismatch whose scope has a blank or unreadable verdict, a blank or unreadable manual level, or a typed "
+            "manual level that does not follow the declared manual rule (level_rule.manual), is not classified.")
 
 
 def _l5_cell(record: Dict[str, object]) -> object:

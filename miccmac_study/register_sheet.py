@@ -8,13 +8,19 @@ every manual worksheet is hashed.
 
 The register shows the tool's findings, so it stays sealed until the blind
 manual passes are over. The only gate is ledger.seal_status: it waits for
-every host of the study (in the configuration, in DIR/study.yaml, in a
-ledger row, or named by a worksheet or tool-output file) until that host's
+every host of the study (in the configuration, in DIR/study.yaml or a
+version of it in force at or after the first tool run, in a ledger row, or
+named by a worksheet or tool-output file) until that host's
 worksheets/<H>-worksheet.csv has a worksheet row in DIR/ledger.csv and still
-matches every hash recorded for it. A host leaves the study only through
-'ledger withdraw'; a --config listing fewer hosts never opens the seal. No
-tool output is opened before that check passes. --force-before-unseal (with
---reason) overrides the gate and first appends a ledger row saying so.
+matches the first one, and while DIR/study.yaml differs from its latest
+ledger row. A host leaves the study only through 'ledger withdraw'; a
+--config listing fewer hosts never opens the seal. No
+tool output is opened before that check passes. Each run that writes sheets
+first appends a seal-opening row to the ledger (ledger.record_seal_opened:
+"seal opened by register-sheet: hosts ...; withdrawn: ..."), after every
+check that can still refuse, so the ledger shows when the tool's findings
+became visible. --force-before-unseal (with --reason) overrides a closed
+gate and appends only its own row saying so.
 
 For each host of the configuration that is not withdrawn it reads
 DIR/outputs/<H>-<primary methodology>.json and writes
@@ -58,7 +64,8 @@ from miccmac_study.ledger import (  # FORCE_NOTE_PREFIX is re-exported for exist
     WORKSHEET_NOT_HASHED,
     SealStatus,
     load_config,
-    record_files,
+    record_forced_unseal,
+    record_seal_opened,
     seal_status,
     worksheet_problems,
 )
@@ -208,8 +215,11 @@ def generate_register_sheets(study_dir: PathLike, config_path: Optional[PathLike
                              overwrite: bool = False) -> List[Path]:
     """Write both sheets for every host of the study configuration that is
     not withdrawn, and return the paths written. Everything is checked
-    before anything is written. With `force_reason`, the seal is
-    overridden, but only after a ledger row records that and why."""
+    before anything is written. Just before the first sheet is written, a
+    ledger row records the opening: the seal-opening row
+    (ledger.record_seal_opened) when the seal is open, or, with
+    `force_reason` and the seal still closed, the row that records the
+    override and why (FORCE_NOTE_PREFIX) instead."""
     study_dir = Path(study_dir)
     config_path = Path(config_path) if config_path is not None else study_dir / CONFIG_FILE
     config = load_config(config_path)
@@ -240,7 +250,9 @@ def generate_register_sheets(study_dir: PathLike, config_path: Optional[PathLike
         _guard_existing(sheet.gaps_path, overwrite, missed_gaps_entry)
 
     if not status.ok:
-        record_files(ledger, STUDY_HOST_CODE, "other", [config_path], note=FORCE_NOTE_PREFIX + force_reason)
+        record_forced_unseal(ledger, config_path, force_reason)
+    else:
+        record_seal_opened(ledger, "register-sheet", config_path, status)
 
     written = []
     for sheet in sheets:
