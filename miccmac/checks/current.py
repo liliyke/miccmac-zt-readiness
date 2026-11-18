@@ -1,4 +1,6 @@
-"""MICCMAC property: Current (C).
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+MICCMAC property: Current (C).
 
 Intent: The device is kept in its most secure state: patched, updated, and free of expired cryptographic material.
 
@@ -28,11 +30,28 @@ When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
 unchanged from the Alpha scaffold.
+
+CUR-01 counts the age of the last successful update against miccmac.clock's
+reference time: the end of the --as-of day in UTC when one was given
+(context["as_of"]), otherwise the current time. CUR-04 is different: its
+expired-certificate list is computed on the device at collection time
+(osquery's strftime('%s', 'now')), so --as-of does not move it.
+
+Windows CUR-01 parses the install timestamp with _parse_iso_datetime, so
+the 7-digit fractions that PowerShell's ToString('o') prints also parse on
+Python 3.9 and 3.10, whose datetime.fromisoformat accepts only 3 or 6
+digits and no "Z"; on 3.11 and later the result is what fromisoformat alone
+gives. The saved facts keep the timestamp exactly as collected.
+
+In this module, AI assistance covers the --as-of reference time and the
+timestamp parse helper.
 """
 from __future__ import annotations
 
 import datetime
+import re
 
+from miccmac import clock
 from miccmac.model import CheckResult, PropertyResult, Status
 
 KEY = "current"
@@ -64,6 +83,45 @@ APT_UPDATE_FRESHNESS_DAYS = 7
 WIN_UPDATE_FRESHNESS_DAYS = 30
 # Publisher-string fragments recognized as Microsoft's own (not "third-party").
 _MICROSOFT_PUBLISHER_FRAGMENTS = ("Microsoft",)
+# An extended-format ISO 8601 timestamp: date, "T" or space, HH:MM:SS, an
+# optional fraction of any length, then an optional "Z" or +HH:MM / -HH:MM.
+# That covers what PowerShell's ToString('o') prints, with any DateTimeKind:
+# 2026-11-12T00:00:00.0000000, ...0000000-05:00 and ...0000000Z.
+_ISO_DATETIME_RE = re.compile(
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.([0-9]+))?"
+    r"(Z|[+-][0-9]{2}:[0-9]{2})?"
+)
+
+
+def _normalize_iso_datetime(text: str) -> str:
+    """The form of an extended ISO 8601 timestamp that Python 3.9's
+    datetime.fromisoformat reads: the fraction cut or padded to exactly 6
+    digits and a trailing "Z" written as +00:00. A string of any other form
+    is returned unchanged, for fromisoformat to accept or reject as before.
+
+    Python 3.11+ reads both forms to the same value: it also keeps only the
+    first 6 fraction digits (padding shorter ones) and maps "Z" to UTC, so
+    the normalization changes nothing there. A non-string is returned as it
+    is, so fromisoformat raises the same TypeError it always did."""
+    if not isinstance(text, str):
+        return text
+    match = _ISO_DATETIME_RE.fullmatch(text)
+    if match is None:
+        return text
+    base, fraction, offset = match.groups()
+    if fraction is not None:
+        base += "." + (fraction + "000000")[:6]
+    if offset == "Z":
+        offset = "+00:00"
+    return base + (offset or "")
+
+
+def _parse_iso_datetime(text: str) -> datetime.datetime:
+    """datetime.fromisoformat on the normalized timestamp (see
+    _normalize_iso_datetime). Raises ValueError, as fromisoformat does. Used
+    at parse time only: the facts keep the timestamp as collected."""
+    return datetime.datetime.fromisoformat(_normalize_iso_datetime(text))
 
 
 def _stub_result(check_id: str) -> CheckResult:
@@ -80,7 +138,12 @@ def _stub_checks() -> list[CheckResult]:
     return [_stub_result(cid) for cid in ("CUR-01", "CUR-02", "CUR-03", "CUR-04")]
 
 
-def _check_cur01(units: dict, apt_update_stamp_mtime: int | None) -> CheckResult:
+def _check_cur01(units: dict, apt_update_stamp_mtime: int | None, *,
+                 now: datetime.datetime | None = None,
+                 as_of_label: str | None = None) -> CheckResult:
+    """``now`` is the aware UTC moment to count the update's age against
+    (None: the real current time, through miccmac.clock). ``as_of_label``
+    (e.g. " (as of 2026-11-23)") is appended to a detail that reports an age."""
     timer_active = units.get("apt-daily-upgrade.timer", {}).get("active_state") == "active"
     if not timer_active:
         return CheckResult(
@@ -94,8 +157,10 @@ def _check_cur01(units: dict, apt_update_stamp_mtime: int | None) -> CheckResult
             detail="apt-daily-upgrade.timer is active, but no successful apt update has been recorded yet.",
             control_refs=_CONTROL_REFS["CUR-01"],
         )
+    if now is None:
+        now = clock.reference_now(None)
     last_update = datetime.datetime.fromtimestamp(apt_update_stamp_mtime, tz=datetime.timezone.utc)
-    age_days = (datetime.datetime.now(tz=datetime.timezone.utc) - last_update).days
+    age_days = (now - last_update).days
     if age_days <= APT_UPDATE_FRESHNESS_DAYS:
         status = Status.PASS
         detail = f"apt-daily-upgrade.timer active; last successful apt update {age_days} day(s) ago."
@@ -103,6 +168,7 @@ def _check_cur01(units: dict, apt_update_stamp_mtime: int | None) -> CheckResult
         status = Status.FAIL
         detail = (f"apt-daily-upgrade.timer active, but last successful apt update was {age_days} "
                  f"day(s) ago, exceeding the {APT_UPDATE_FRESHNESS_DAYS}-day policy.")
+    detail += as_of_label or ""
     return CheckResult(
         check_id="CUR-01", name=_NAMES["CUR-01"], status=status, detail=detail,
         control_refs=_CONTROL_REFS["CUR-01"],
@@ -132,7 +198,10 @@ def _check_cur02(units: dict, apt_sources: list) -> CheckResult:
     )
 
 
-def _check_cur01_windows(services: dict, last_update_installed_iso: str | None) -> CheckResult:
+def _check_cur01_windows(services: dict, last_update_installed_iso: str | None, *,
+                         now: datetime.datetime | None = None,
+                         as_of_label: str | None = None) -> CheckResult:
+    """``now`` and ``as_of_label`` work as in _check_cur01."""
     service_running = services.get("wuauserv", {}).get("status") == "RUNNING"
     if not service_running:
         return CheckResult(
@@ -147,7 +216,7 @@ def _check_cur01_windows(services: dict, last_update_installed_iso: str | None) 
             control_refs=_CONTROL_REFS["CUR-01"],
         )
     try:
-        last_update = datetime.datetime.fromisoformat(last_update_installed_iso)
+        last_update = _parse_iso_datetime(last_update_installed_iso)
     except ValueError:
         return CheckResult(
             check_id="CUR-01", name=_NAMES["CUR-01"], status=Status.ERROR,
@@ -156,7 +225,9 @@ def _check_cur01_windows(services: dict, last_update_installed_iso: str | None) 
         )
     if last_update.tzinfo is None:
         last_update = last_update.replace(tzinfo=datetime.timezone.utc)
-    age_days = (datetime.datetime.now(tz=datetime.timezone.utc) - last_update).days
+    if now is None:
+        now = clock.reference_now(None)
+    age_days = (now - last_update).days
     if age_days <= WIN_UPDATE_FRESHNESS_DAYS:
         status = Status.PASS
         detail = f"Windows Update service active; last successful update installed {age_days} day(s) ago."
@@ -164,6 +235,7 @@ def _check_cur01_windows(services: dict, last_update_installed_iso: str | None) 
         status = Status.FAIL
         detail = (f"Windows Update service active, but last successful update was {age_days} "
                  f"day(s) ago, exceeding the {WIN_UPDATE_FRESHNESS_DAYS}-day policy.")
+    detail += as_of_label or ""
     return CheckResult(
         check_id="CUR-01", name=_NAMES["CUR-01"], status=status, detail=detail,
         control_refs=_CONTROL_REFS["CUR-01"],
@@ -235,12 +307,15 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
 
     expired_certificates = facts.get("expired_certificates") or []
     attestation = context.get("attestation")
+    now = clock.reference_now(context)
+    label = clock.as_of_label(context)
 
     if (facts.get("os") or {}).get("platform") == "windows":
         services = facts.get("services") or {}
         programs = facts.get("programs") or []
         return [
-            _check_cur01_windows(services, facts.get("last_update_installed_iso")),
+            _check_cur01_windows(services, facts.get("last_update_installed_iso"),
+                                 now=now, as_of_label=label),
             _check_cur02_windows(programs),
             _check_cur03(attestation),
             _check_cur04(expired_certificates),
@@ -251,7 +326,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
     apt_sources = facts.get("apt_sources") or []
 
     return [
-        _check_cur01(units, apt_update_stamp_mtime),
+        _check_cur01(units, apt_update_stamp_mtime, now=now, as_of_label=label),
         _check_cur02(units, apt_sources),
         _check_cur03(attestation),
         _check_cur04(expired_certificates),

@@ -1,6 +1,18 @@
-"""Tests for miccmac.cli: new --methodology/--config/--risk-register flags
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Tests for miccmac.cli: new --methodology/--config/--risk-register flags
 and the list-checks subcommand. Run entirely in-process via cli.main();
-no target/network dependency (target is always the label 'test-device')."""
+no target/network dependency (target is always the label 'test-device').
+
+In this file, AI assistance covers the input-file encoding tests at the end
+and the two tests added with the reproducible-run options
+(test_assess_without_target_still_defaults_to_localhost and
+test_assess_connector_json_gains_provenance_text_unchanged). The --output
+safeguards are tested in tests/test_output_safety.py."""
+from __future__ import annotations
+
+import codecs
+import hashlib
 import json
 from unittest.mock import patch
 
@@ -202,6 +214,33 @@ def test_assess_with_bad_attestation_json_errors_cleanly(tmp_path, capsys):
     assert "not valid json" in capsys.readouterr().err.lower()
 
 
+def test_assess_without_target_still_defaults_to_localhost(capsys):
+    # The positional target now defaults to None so --facts can supply it;
+    # live and stub runs still map a missing target to "localhost".
+    assert main(["assess", "--format", "json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["target"] == "localhost"
+    assert "provenance" not in data
+
+
+def test_assess_connector_json_gains_provenance_text_unchanged(capsys):
+    fake_facts = {"os": {"platform": "ubuntu", "name": "Ubuntu", "version": "26.04"},
+                  "system_info": {}, "deb_packages": []}
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts",
+               return_value=fake_facts) as collect:
+        rc = main(["assess", "192.0.2.10", "--format", "json", "--connector", "ssh-osquery",
+                   "--ssh-user", "assessor", "--ssh-key", "keys/id_ed25519"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert main(["assess", "192.0.2.10", "--connector", "ssh-osquery",
+                     "--ssh-user", "assessor", "--ssh-key", "keys/id_ed25519"]) == 0
+        text = capsys.readouterr().out
+    collect.assert_called_with("192.0.2.10")  # no extended facts without --save-facts
+    assert data["provenance"]["facts_source"] == "connector"
+    assert data["provenance"]["connector"] == "ssh-osquery"
+    assert "provenance" not in text.lower()
+
+
 def test_custom_check_risk_metadata_flows_into_risk_register(tmp_path, capsys):
     """End-to-end: a custom check's declared RISK_METADATA rates it in the
     risk register instead of leaving it UNRATED."""
@@ -224,3 +263,68 @@ def run_checks(target, context):
     entry = next(e for e in data["risk_register"] if e["check_id"] == "ACME-01")
     assert entry["cis_ig"] == "IG1"
     assert entry["risk_rating"] == "CRITICAL"
+
+
+# ---------------------------------------------------------------- input-file encodings (RD-07)
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+# Windows PowerShell 5.1 saves text as UTF-8 with a byte-order mark
+# (Out-File -Encoding utf8) or as UTF-16 LE with one ('>' and Out-File's
+# default). Such input files load; the recorded SHA-256 is still that of the
+# bytes as read. facts_file.load_envelope stays strict (tests/test_facts_replay.py).
+
+ENCODED_ATTESTATION = {
+    "business_owner": {"assigned": True, "name": "Synthetic Owner"},
+    "system_administrator": {"assigned": True, "name": "assessor"},
+    "business_purpose": {"documented": True, "data_classification": "internal"},
+}
+ENCODINGS = {
+    "utf-8": lambda text: text.encode("utf-8"),
+    "utf-8 with BOM": lambda text: text.encode("utf-8-sig"),
+    "utf-16 LE with BOM": lambda text: codecs.BOM_UTF16_LE + text.encode("utf-16-le"),
+    "utf-16 BE with BOM": lambda text: codecs.BOM_UTF16_BE + text.encode("utf-16-be"),
+    "utf-16 LE without BOM": lambda text: text.encode("utf-16-le"),
+    "utf-32 with BOM": lambda text: text.encode("utf-32"),
+}
+
+
+def _claimed(data: dict) -> dict:
+    claimed = next(p for p in data["properties"] if p["key"] == "claimed")
+    return {c["check_id"]: (c["status"], c["detail"]) for c in claimed["checks"]}
+
+
+@pytest.mark.parametrize("encoding", sorted(ENCODINGS))
+def test_input_json_saved_by_windows_powershell_loads(encoding, tmp_path, capsys):
+    data = ENCODINGS[encoding](json.dumps(ENCODED_ATTESTATION, indent=2) + "\r\n")
+    path = tmp_path / "attestation.json"
+    path.write_bytes(data)
+    assert main(["assess", "test-device", "--format", "json", "--attestation", str(path),
+                 "--as-of", "2026-11-23"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["provenance"]["inputs"]["attestation"]["sha256"] == hashlib.sha256(data).hexdigest()
+    reference = tmp_path / "reference.json"
+    reference.write_text(json.dumps(ENCODED_ATTESTATION), encoding="utf-8")
+    assert main(["assess", "test-device", "--format", "json", "--attestation", str(reference)]) == 0
+    assert _claimed(result) == _claimed(json.loads(capsys.readouterr().out))
+    assert {status for status, _ in _claimed(result).values()} == {"PASS"}
+
+
+def test_an_inventory_record_with_a_bom_loads(tmp_path, capsys):
+    path = tmp_path / "inventory.json"
+    path.write_bytes(json.dumps({"device_id": "dev-1", "tracked": True}).encode("utf-8-sig"))
+    fake_facts = {"os": {}, "system_info": {}, "deb_packages": []}
+    with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
+        assert main(["assess", "10.0.0.5", "--format", "json", "--connector", "ssh-osquery",
+                     "--ssh-user", "miccmac", "--ssh-key", "/fake/key", "--inventory-record", str(path)]) == 0
+    inventoried = next(p for p in json.loads(capsys.readouterr().out)["properties"] if p["key"] == "inventoried")
+    assert next(c for c in inventoried["checks"] if c["check_id"] == "INV-01")["status"] == "PASS"
+
+
+@pytest.mark.parametrize("flag", ["--attestation", "--inventory-record"])
+def test_input_json_in_another_encoding_is_a_clean_error(flag, tmp_path, capsys):
+    path = tmp_path / "input.json"
+    path.write_bytes('{"business_owner": {"assigned": true, "name": "Café Owner"}}'.encode("cp1252"))
+    assert main(["assess", "test-device", "--format", "json", flag, str(path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"error: {flag} file is not valid UTF-8, UTF-16 or UTF-32 text "
+                                   f"(save it as UTF-8): ")
+    assert captured.out == ""
