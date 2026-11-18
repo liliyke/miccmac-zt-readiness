@@ -242,7 +242,8 @@ def plain_path(path: Path) -> Path:
     text = str(path)
     if text[:8].upper() == "\\\\?\\UNC\\":
         return Path("\\\\" + text[8:])
-    if text.startswith("\\\\?\\"):
+    # Only a drive-letter path: \\?\Volume{GUID}\... has no other spelling and stays as it is.
+    if text.startswith("\\\\?\\") and len(text) > 5 and text[4].isalpha() and text[5] == ":":
         return Path(text[4:])
     return path
 

@@ -143,7 +143,10 @@ blank value for `-o`, `--facts`, `--save-facts`, `--attestation`,
 `"$VAR"`) is an error (`error: <option> needs a file name`), so an input
 file never silently drops out of a run. Windows PowerShell drops an empty
 variable from the command line instead, so the run stops with argparse's
-`error: argument <option>: expected one argument`.
+`error: argument <option>: expected one argument`. A file name holding a
+line break (a command wrapped when pasted) is an error too, and a live run
+with `--save-facts` or `--as-of` needs an explicit target: it never falls
+back to `localhost`.
 
 Collect once and score against CMMI, then score CISA ZTMM from the same
 saved facts with no second collection:

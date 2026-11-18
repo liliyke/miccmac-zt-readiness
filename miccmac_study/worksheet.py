@@ -479,7 +479,7 @@ def generate_worksheets(list_checks: PathLike, hosts: Sequence[str], out_dir: Pa
 # ------------------------------------------------------------------ command line
 def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--list-checks", required=True, metavar="FILE",
-                        help="JSON list from 'python -m miccmac list-checks --config <study config> --format json'.")
+                        help="JSON list from 'python -m miccmac list-checks [--config <miccmac config>] --format json'.")
     parser.add_argument("--hosts", required=True, metavar="H1,H2,...",
                         help="Comma-separated opaque host codes.")
     parser.add_argument("--out", required=True, metavar="DIR",

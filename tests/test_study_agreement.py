@@ -2058,8 +2058,8 @@ def test_study_yaml_changed_after_the_first_tool_run_is_a_labelled_deviation(tmp
                f"when the seal opened: line {line}): threshold 0.80 -> 0.60; record this deviation in the protocol log")
     assert run_agreement(root) == 0
     assert details(root, "config", "WARNING") == [
-        ("", f"{changed}; this run uses the settings changed since then, so it is labelled a sensitivity run; the "
-             f"pre-registered analysis uses those of ledger line 2 (--config ledger-archive/{recorded}.yaml)")]
+        ("", f"{changed}; this run is labelled a sensitivity run: the pre-registered analysis uses the settings of "
+             f"ledger line 2 (--config ledger-archive/{recorded}.yaml)")]
     assert details(root, "config") == []
     data = summary(root)["config"]
     assert (data["sensitivity_run"], data["config_differences"], data["threshold"]) == (
@@ -2082,6 +2082,57 @@ def test_study_yaml_changed_after_the_first_tool_run_is_a_labelled_deviation(tmp
     # Without the archive copy the version at the first tool run cannot be read; the seal stays closed then too.
     archive.unlink()
     assert run_agreement(root, "--out", str(root / "again")) == 2
+
+
+def test_with_study_yaml_never_recorded_the_first_opening_is_the_reference(tmp_path, ledger_clock):
+    """V2 (round 3): with the Setup record skipped, a --config with other settings was neither CRITICAL nor
+    labelled, although the first seal-opening row holds study.yaml's bytes and its archive copy."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.ledger_setup = False
+    root = builder.build()
+    assert run_agreement(root) == 0                                  # the first opening records study.yaml
+    opened = next(i for i, r in enumerate(ledger_rows(root)) if r["note"].startswith("seal opened by")) + 2
+    other = root / "study-t060.yaml"
+    other.write_bytes((root / formats.CONFIG_FILE).read_bytes())
+    edit_threshold(other, "0.60")
+    ledger_clock["now"] = "2026-12-02T09:00:00Z"
+    assert run_agreement(root, "--config", str(other), "--out", str(root / "t060")) == 3
+    data = json.loads((root / "t060" / "summary.json").read_text(encoding="utf-8"))
+    assert [r["detail"] for r in data["integrity"]["checks"] if r["check"] == "config" and r["result"] == "CRITICAL"] == [
+        f"the configuration used (study-t060.yaml) differs from the one recorded when the seal first opened (ledger "
+        f"line {opened}): threshold 0.80 -> 0.60; this run is a sensitivity run, not the pre-registered analysis"]
+    assert (data["config"]["sensitivity_run"], data["config"]["config_differences"]) == (
+        True, ["threshold 0.80 -> 0.60"])
+    text = (root / "t060" / "summary.md").read_text(encoding="utf-8")
+    assert (f"yes: study-t060.yaml differs from the configuration recorded when the seal first opened (ledger line "
+            f"{opened}): threshold 0.80 -> 0.60 |") in text
+    # study.yaml itself, unchanged, is still clean (only the 'never recorded' WARNING).
+    assert run_agreement(root, "--out", str(root / "plain")) == 0
+
+
+def test_a_mid_study_change_of_settings_and_hosts_names_how_to_build_the_preregistered_file(tmp_path):
+    """V1, V2 (round 3): when study.yaml changed a setting and its hosts after the first tool run, the archive copy
+    alone is not the pre-registered analysis (its hosts differ from those in force when the seal opened)."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2"))
+    root = builder.build()
+    config = root / formats.CONFIG_FILE
+    recorded = formats.sha256_file(config)
+    (root / "ledger-archive").mkdir()
+    (root / "ledger-archive" / f"{recorded}.yaml").write_bytes(config.read_bytes())
+    changed = yaml.safe_dump(dict(builder.config, hosts=["H1"], threshold="0.60"), sort_keys=False)
+    config.write_text(changed, encoding="utf-8")
+    append_row(root, "2026-11-25T09:00:00Z", "STUDY", "other", config, note="threshold and hosts changed")
+    line = len(ledger_rows(root)) + 1
+    assert run_agreement(root) == 0
+    [warning] = details(root, "config", "WARNING")
+    assert warning[1].endswith(
+        f"; this run is labelled a sensitivity run: the pre-registered analysis uses the settings of ledger line 2 "
+        f"(--config ledger-archive/{recorded}.yaml, with the hosts of ledger line {line}: copy that file, set its "
+        f"hosts to those of line {line}, and record the copy with ledger record --kind other)")
+    data = summary(root)["config"]
+    assert data["config_reference"] == ("the pre-registered settings (study.yaml as recorded at ledger line 2, in "
+                                        f"force at the first tool run, with the hosts of ledger line {line})")
+    assert data["config_differences"] == ["threshold 0.80 -> 0.60"]
 
 
 def test_a_setting_changed_mid_study_and_again_after_unsealing_is_critical_against_the_opening(tmp_path,
