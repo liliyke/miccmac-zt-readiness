@@ -1,10 +1,15 @@
-"""SSH + osquery connector: runs osqueryi over SSH against a remote Linux
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+SSH + osquery connector: runs osqueryi over SSH against a remote Linux
 target and returns its facts. This is the realistic pattern for assessing a
 fleet device -- the tool runs on the assessor's machine, not on every target.
 
 Requires paramiko (see requirements.txt) and osqueryi installed on the
 target (see D:\\VMs\\autoinstall\\user-data's late-commands for how the test
 VM gets it).
+
+In this module, AI assistance covers the extended facts (EXTRA_QUERIES,
+EXTRA_TEXT_COMMANDS and the methods that collect them).
 """
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from typing import List, Optional
 
 import paramiko
 
-from miccmac.connectors.base import ConnectorError
+from miccmac.connectors.base import ConnectorError, collect_extra_item, read_extra_command
 
 # The fixed set of osquery queries this connector collects. Kept minimal and
 # explicit rather than "select * from everything" so it's obvious exactly
@@ -90,6 +95,45 @@ RSYSLOG_FORWARDING_CHECK_COMMAND = (
     "grep -rhE '^[^#]*@' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null; true"
 )
 
+# Extended facts: collected only with collect_facts(extended=True), which
+# `assess --save-facts` uses, and stored under facts["extra"]. They run after
+# every query and command above. No check reads them in this version; they
+# are saved so later fixes to check logic can be re-tested from the same
+# saved facts. Each item is non-fatal (see connectors/base.py). Read-only
+# queries and commands only: no sudo, nothing that changes the target.
+EXTRA_QUERIES = {
+    # Which osquery build collected the facts (recorded in provenance).
+    "osquery_info": "SELECT version, build_platform, build_distro FROM osquery_info;",
+    # Every os_version column, including build (recorded in provenance).
+    "os_version_full": "SELECT * FROM os_version;",
+    # MIN-03: which process owns each network-reachable listener (same
+    # filters as the listening_ports query above).
+    "listening_ports_processes": (
+        "SELECT DISTINCT lp.port, lp.protocol, lp.address, p.name AS process "
+        "FROM listening_ports lp LEFT JOIN processes p USING (pid) "
+        "WHERE lp.protocol IN ('6', '17') AND lp.port != '0' "
+        "AND lp.address NOT LIKE '127.%' AND lp.address != '::1';"
+    ),
+    # CUR-04: every certificate with its expiry, so expiry can later be
+    # judged against an --as-of date instead of the collection time.
+    "certificates_all": "SELECT common_name, not_valid_after, sha1 FROM certificates "
+                        "WHERE not_valid_after != '';",
+    # CUR-01: state of the units that fetch and apply updates unattended.
+    "update_units": "SELECT id, active_state, sub_state, load_state FROM systemd_units "
+                    "WHERE id IN ('unattended-upgrades.service', 'apt-daily.timer', "
+                    "'apt-daily-upgrade.timer');",
+}
+# Plain-text extended facts (shell commands; whatever they print is kept).
+EXTRA_TEXT_COMMANDS = {
+    # CUR-01: apt's periodic update/upgrade settings.
+    "apt_periodic_config": (
+        "cat /etc/apt/apt.conf.d/20auto-upgrades /etc/apt/apt.conf.d/10periodic 2>&1; true"
+    ),
+    # MON-04: which events the audit rules cover. Often "Permission denied"
+    # for an unprivileged user; that answer is recorded as it is.
+    "audit_rules": "cat /etc/audit/audit.rules /etc/audit/rules.d/*.rules 2>&1; true",
+}
+
 
 class SSHOsqueryConnector:
     def __init__(
@@ -125,7 +169,43 @@ class SSHOsqueryConnector:
         stdout.channel.recv_exit_status()
         return stdout.read().decode("utf-8", errors="replace")
 
-    def collect_facts(self, target: str) -> dict:
+    def _run_osquery_extra(self, client: paramiko.SSHClient, query: str) -> List[dict]:
+        """_run_osquery for an extended item, bounded by the channel timeout:
+        the output is read before the exit status is awaited
+        (read_extra_command), so a stalled osqueryi becomes a recorded
+        timeout instead of a hang. The main queries keep _run_osquery."""
+        command = f"osqueryi --json {json.dumps(query)}"
+        stdin, stdout, stderr = client.exec_command(command, timeout=self.timeout)
+        exit_status, out, err = read_extra_command(stdout, stderr, self.timeout)
+        if exit_status != 0:
+            raise ConnectorError(f"osqueryi failed (exit {exit_status}): {err.strip()}")
+        try:
+            return json.loads(out) if out.strip() else []
+        except json.JSONDecodeError as exc:
+            raise ConnectorError(f"osqueryi returned non-JSON output: {exc}") from exc
+
+    def _run_text(self, client: paramiko.SSHClient, command: str) -> str:
+        """Run a read-only shell command for an extended fact and return its
+        output unchanged, bounded by the channel timeout like
+        _run_osquery_extra. Unlike _run_raw, a non-zero exit is an error."""
+        stdin, stdout, stderr = client.exec_command(command, timeout=self.timeout)
+        exit_status, out, err = read_extra_command(stdout, stderr, self.timeout)
+        if exit_status != 0:
+            raise ConnectorError(f"command failed (exit {exit_status}): {(err or out).strip()}")
+        return out
+
+    def _collect_extra(self, client: paramiko.SSHClient) -> dict:
+        """Every extended-fact item, in a fixed order. Never raises."""
+        extra = {}
+        for key, query in EXTRA_QUERIES.items():
+            extra[key] = collect_extra_item(self._run_osquery_extra, client, query)
+        for key, command in EXTRA_TEXT_COMMANDS.items():
+            extra[key] = collect_extra_item(self._run_text, client, command)
+        return extra
+
+    def collect_facts(self, target: str, extended: bool = False) -> dict:
+        """Collect the facts the checks read. extended=True also collects
+        the extended facts into facts["extra"] (see connectors/base.py)."""
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
@@ -144,6 +224,7 @@ class SSHOsqueryConnector:
             for key, query in QUERIES.items():
                 results[key] = self._run_osquery(client, query)
             rsyslog_forwarding_raw = self._run_raw(client, RSYSLOG_FORWARDING_CHECK_COMMAND)
+            extra = self._collect_extra(client) if extended else None
         finally:
             client.close()
 
@@ -164,7 +245,7 @@ class SSHOsqueryConnector:
         apt_update_stamp_mtime = int(apt_stamp_rows[0]["mtime"]) if apt_stamp_rows else None
         platform_info = results["platform_info"][0] if results["platform_info"] else {}
 
-        return {
+        facts = {
             "os": os_facts,
             "system_info": system_info,
             "deb_packages": results["deb_packages"],
@@ -179,3 +260,6 @@ class SSHOsqueryConnector:
             "platform_info": platform_info,
             "expired_certificates": results["certificates"],
         }
+        if extra is not None:
+            facts["extra"] = extra
+        return facts

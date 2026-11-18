@@ -251,7 +251,8 @@ against a live target rather than only synthetic fixtures.
 **Connector architecture** (`miccmac/connectors/`): a connector's only job is
 to collect facts about a target and return them as `context["facts"]` --
 check modules never talk to a target directly. `miccmac/connectors/base.py`
-defines the `Connector` protocol (`collect_facts(target) -> dict`).
+defines the `Connector` protocol (`collect_facts(target, extended=False) ->
+dict`; `extended=True` also collects the extended facts of section 11).
 `miccmac/connectors/ssh_osquery.py` implements it: the tool runs on the
 assessor's machine and SSHes out to run `osqueryi --json` against the
 target, which is the realistic pattern for assessing a fleet device (vs.
@@ -325,8 +326,9 @@ separate, purpose-named inputs rather than one generic bag, so each check's
 data dependency stays self-documenting from the flag name alone.
 
 **Backward compatibility.** Every check with real logic starts with a guard:
-if `context` has no `"facts"` key at all (the default, no-`--connector`
-invocation), it falls back to the identical `NOT_IMPLEMENTED` stub behavior.
+if `context` has no `"facts"` key at all (the default invocation, with
+neither `--connector` nor `--facts`; `--facts` supplies saved facts without
+a connector), it falls back to the identical `NOT_IMPLEMENTED` stub behavior.
 This is why `miccmac assess <target>` with no flags has stayed byte-for-byte
 identical to the original Alpha scaffold's output through every pass of
 this architecture work -- verified by diffing against the original commit,
@@ -435,6 +437,233 @@ this property that's irreducibly external even *with* root access: a device
 can report its current firmware version, never whether that's the *latest
 available* one, since there's no local oracle for that, only a vendor feed
 -- so it reads `context["attestation"]`, same as CTL-03.
+
+## 11. Reproducibility: reference date, saved facts and provenance
+
+*This section, and the features it describes, were drafted with AI
+assistance (Claude Code, Anthropic) for the researcher's review.*
+
+Three `assess` options make a run repeatable and traceable: `--as-of`,
+`--save-facts` and `--facts`. A run that uses none of them (and no
+`--connector`) gives exactly the output it gave before they existed. The
+`--output` safeguards (below) apply to every run.
+
+### Reference date (`--as-of`)
+
+Four checks compare a recorded date with "today", so without a fixed
+reference the same facts can give a different verdict on a different day:
+
+| Check | Recorded date | Policy limit |
+|---|---|---|
+| INV-04 | inventory record's `last_reviewed` | 90 days |
+| ASM-01 | attestation's `vulnerability_scanning.last_scan` | the attestation's `interval_days` |
+| ASM-02 | attestation's `compliance_assessment.last_assessment` | the attestation's `interval_days` |
+| CUR-01 | last successful OS update (Linux: apt's update-success stamp; Windows: the newest hotfix install date) | 7 days (Linux), 30 days (Windows) |
+
+`--as-of YYYY-MM-DD` (exactly that form; anything else is an error) makes
+all four count days to that date instead of today. Thresholds and verdict
+rules do not change. INV-04, ASM-01 and ASM-02 subtract calendar dates.
+CUR-01 compares timestamps and keeps its existing arithmetic, the whole
+number of days in (reference time minus last update), rounded down. For it,
+the `--as-of` date stands for the last moment of that day in UTC
+(23:59:59.999999). With that choice the age equals the number of UTC
+calendar days between the update and the reference date, whatever the time
+of day of the update: an update at 00:00 or at 23:59 UTC on 2026-11-16 is 7
+days old as of 2026-11-23, and one at 23:59 UTC on 2026-11-15 is 8 days old.
+Taking the start of the day instead would count an update made later in a
+day as one day younger, so the verdict would depend on the time of day,
+which an assessor counting calendar days before the session date would not
+do. A timestamp with a UTC offset is compared as an absolute time, so its
+calendar day is its UTC date.
+
+When `--as-of` is used, the detail of each of these four results that
+reports an age ends with ` (as of YYYY-MM-DD)`, so a result file shows which
+reference date produced it. Without `--as-of` the four checks read the real
+clock as before, and their details are unchanged. A reference date earlier
+than a recorded date gives a negative age, which the existing rules count
+as within policy; a replay (below) warns when `--as-of` is earlier than the
+date the facts were collected, unless it is the date the facts file itself
+records. With no facts and no input file there is nothing for the
+reference date to feed, so `assess <target> --as-of <date>` alone gives
+exactly the results of the same run without it (every check keeps its
+`NOT_IMPLEMENTED` placeholder); it only adds the provenance block, which
+records the date.
+
+The `--as-of` date is the session's local date, whatever the hour. After
+19:00 US Eastern (00:00 UTC) the UTC date has already moved on, so a live
+run then records a `collected_at_utc` one day after its `as_of`, and an
+update made that evening counts on its UTC date (it can show as `-1 day(s)
+ago`, which is within policy). Ages are always counted in UTC calendar days,
+so for an age within a day of a limit, compare the record's UTC date.
+
+**CUR-04 is not affected.** Its list of expired certificates is computed on
+the device when the facts are collected (osquery's `strftime('%s', 'now')`),
+so `--as-of` does not move it, and a replay reports the certificates that had
+expired at collection time. The extended facts below keep every
+certificate's expiry date, so that a later version could judge expiry
+against the reference date instead.
+
+### Saved facts (`--save-facts`) and replay (`--facts`)
+
+`--save-facts FILE` requires `--connector`. Before connecting, the tool
+refuses a FILE that already exists (raw study data is never replaced; not
+even `--overwrite` changes that) or whose folder does not exist, and checks
+`--output` as described below, so a foreseeable `--output` problem (a blank
+name, a missing folder, an existing file, an input file) stops the run
+before it connects or saves facts. After collection it writes FILE in one step (a
+temporary file in the same folder, then a rename) before any check runs, so
+the raw facts survive a later failure; the checks then read the facts back
+as written, exactly as a replay will. The file is JSON (UTF-8, indented by
+2, ending in a newline), format `miccmac-facts/1`, with these keys in order:
+
+| Key | Content |
+|---|---|
+| `facts_format` | `"miccmac-facts/1"` |
+| `tool_version`, `tool_commit` | miccmac version, and its git commit (null when unknown) |
+| `connector`, `target` | the connector used, and the target as given |
+| `collected_at_utc` | when collection finished, `YYYY-MM-DDTHH:MM:SSZ` |
+| `as_of` | the run's `--as-of` date, or null |
+| `facts` | the facts the checks read, including `extra` (below) |
+
+`--facts FILE` scores a saved file without connecting to anything. It
+cannot be combined with `--connector` or `--save-facts`, and the file must
+be a `miccmac-facts/1` file whose `facts` contain `os`; anything else is an
+error. `--attestation`, `--inventory-record` and `--config` still come from
+the command line, and provenance records their hashes. With no target on
+the command line the file's target is used; a different target is allowed
+(it only labels the report) and prints a warning. With no `--as-of`, the
+replay uses the file's `as_of`, or, when that is null, the UTC date on which
+the facts were collected, and prints a note naming the date. In the second
+case the note also says that the live run used the real clock (it had no
+`--as-of`), so its date-dependent verdicts may differ from the replay's. An
+explicit `--as-of` that differs from the file's `as_of` prints a warning, and
+so does one earlier than the UTC collection date, unless it equals the
+file's `as_of`: replaying an evening session with its own session date (one
+day before the UTC collection date) is the normal case and prints nothing.
+Notes and warnings go to stderr, so JSON on stdout stays parseable.
+
+A replay repeats the checks' inputs, not the device. If the check logic, the
+control mappings, the configuration or the input files change, the result
+can change; that is what re-testing fixed logic relies on, and the
+provenance block records the versions and hashes involved so that any
+difference can be traced to its cause.
+
+**Extended facts.** With `--save-facts` the connector also collects extended
+facts, after all of its usual queries, and stores them under
+`facts["extra"]`, each item either `{"ok": true, "data": ...}` or
+`{"ok": false, "error": "..."}`. A failing item (non-zero exit, unparseable
+output, timeout) is recorded as such and collection carries on. Every
+extended command is bounded by the connector's channel timeout (15 seconds
+on Linux, 20 on Windows): its output is read before its exit status is
+awaited, so a command that prints nothing for that long, or reports no exit
+status that long after its output ended, is recorded as a timeout instead
+of stopping the run. The usual queries are unchanged: a failure in one of
+them still stops the run, and unlike the extended items they are not cut off
+by a timeout. Every extended item is a query or a read-only command and
+requests no elevation (no `sudo` or run-as); some report a permission error
+without it, which is recorded as it is. One Windows item may change state on
+the target: asking the Windows Update COM object for its results
+(`windows_update_results`) may start the Windows Update service (wuauserv)
+on demand, as any Windows Update client can. It runs after the usual queries
+and after `update_services`, so no service state in the same run's facts can
+reflect it, but a second live collection from the same snapshot could;
+collect live once per revert. **No check reads
+`facts["extra"]` in this version.** The items are kept so that later fixes
+to check logic can be re-tested from the same saved facts:
+
+| Item | Platform | Kept for |
+|---|---|---|
+| `osquery_info`, `os_version_full` | both | osquery version and OS build (recorded in provenance) |
+| `listening_ports_processes` | both | MIN-03: which process owns each network-reachable listener |
+| `certificates_all` | both | CUR-04: every certificate's expiry date |
+| `update_units`, `apt_periodic_config` | Linux | CUR-01: unattended-upgrade units and apt's periodic settings |
+| `audit_rules` | Linux | MON-04: audit rule coverage (often unreadable without root) |
+| `update_services`, `update_policy_registry`, `update_orchestrator_tasks`, `windows_update_results`, `hotfixes` | Windows | CUR-01: update services and their start types, update policy, scheduled update tasks, last successful search and install, the hotfix list |
+| `audit_registry`, `audit_policy` | Windows | MON-04: command-line capture for process creation, subcategory policy override, the `auditpol` report (which usually needs elevation) |
+
+Without `--save-facts` no extended facts are collected, and the commands
+sent to the target are the same as before.
+
+### Report file (`--output`)
+
+`-o FILE` writes the report to FILE instead of stdout, and stdout then shows
+only `Report written to FILE`. These checks are made before anything is read
+for scoring, before any connection and before `--save-facts` writes
+anything:
+
+- A blank file name for `--output`, `--facts` or `--save-facts` is an error
+  (`error: --output needs a file name`): an unset shell variable passes an
+  empty value, which would otherwise send the whole report to stdout, turn a
+  replay into a stub run, or drop the facts save.
+- FILE's folder must exist, and FILE must not be a folder.
+- FILE can never be one of the run's input files (`--attestation`,
+  `--inventory-record`, `--config`, `--facts`), whatever the spelling and
+  also through a hard or symbolic link, nor the `--save-facts` file.
+- A study run (one with `--connector`, `--facts`, `--save-facts` or
+  `--as-of`) refuses an existing FILE unless `--overwrite` is given:
+  `error: refusing to replace FILE: study runs never overwrite a file; choose
+  a new file name or pass --overwrite`. A plain run replaces an existing
+  FILE, as it always did. `--overwrite` never lets FILE replace one of the
+  run's input files, and `--save-facts` never overwrites a file, with or
+  without it.
+
+The report is written whole or not at all: to a temporary file in the same
+folder, flushed to disk, then renamed over FILE. On any failure the
+temporary file is removed and an existing FILE is left as it was; the error
+is `error: cannot write --output FILE: <reason>` with exit status 2, and
+after a live run with `--save-facts` it adds that the facts were saved, so
+the report can be rebuilt from them with `--facts` and no new collection.
+The file's bytes are the same as before these safeguards existed (UTF-8
+text with the platform's line endings). A re-test of fixed logic therefore
+goes to a new folder, never over the baseline outputs.
+
+### Provenance
+
+When `--connector`, `--facts`, `--as-of` or `--save-facts` is used, the
+assessment in the JSON output gains a `provenance` block, format
+`miccmac-provenance/1`. Text and markdown reports do not show it, and a run
+without these options has no block. Its fields, in order:
+
+- `provenance_format`, `tool_version`, `tool_commit` (`git rev-parse HEAD` in
+  the repository that holds the miccmac package, or null), `tool_tree_clean`
+  (true when `git status --porcelain --untracked-files=normal -- miccmac data`
+  shows nothing: no change to a tracked file and no untracked file under
+  `miccmac/` or `data/`, files that `.gitignore` ignores aside; false when it
+  shows anything, null when it cannot tell). An untracked module counts
+  because the recorded commit would not contain it and so could not
+  reproduce the run: `git add` new files before the commit that freezes the
+  tool;
+- `python_version` and `platform` of the machine running the tool;
+- `run_at_utc` (the real clock when the run started, never the reference
+  date), `as_of`, and `as_of_source` (`cli`, `facts-file`,
+  `facts-collected-date`, or null when no reference date was set);
+- `methodology`, `risk_register`, `target`;
+- `facts_source` (`connector`, `facts-file` or `none`), `connector` (used by
+  this run), `facts_collected_at_utc`, and `facts_file` (`path`, `sha256`,
+  and `role`: `saved` or `replayed`);
+- `inputs`: `attestation`, `inventory_record` and `config`, each
+  `{path, sha256}` or null;
+- `enabled_check_ids`, as `miccmac list-checks` prints them for the same
+  configuration, and `enabled_check_ids_fingerprint`, the first 16 hex
+  characters of the SHA-256 of those ids joined by commas;
+- `os` (`platform`, `name` and `version` from the facts, `build` from the
+  extended facts), `osquery_version` (from the extended facts), and
+  `extended_facts` (whether the facts include them).
+
+File paths are recorded exactly as given on the command line, never made
+absolute, so local folder names do not end up in a shared result file.
+Hashes are of the files' bytes as read.
+
+`--attestation` and `--inventory-record` are read as JSON in UTF-8, with or
+without a byte-order mark, or in UTF-16 or UTF-32, the forms Windows
+PowerShell 5.1 saves (`Out-File -Encoding utf8` adds a byte-order mark; `>`
+writes UTF-16); anything else, such as ANSI text with accented letters, is
+an error. The recorded hash is of the bytes as read, so saving the same
+content in another encoding changes it. A saved facts file must be UTF-8
+without a byte-order mark, as `--save-facts` writes it.
+
+Implementation: `miccmac/clock.py`, `miccmac/facts_file.py`,
+`miccmac/provenance.py`, `miccmac/cli.py`.
 
 ## 12. Extending the toolkit
 

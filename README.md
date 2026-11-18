@@ -59,7 +59,9 @@ NIST SP 800-53 Rev 5, and CIS Controls v8 in
 
 ## Installation
 
-Requires Python 3.9 or newer. The core toolkit uses the standard library only.
+Requires Python 3.9 or newer. Besides the standard library, the toolkit needs
+PyYAML (control mappings and config files) and paramiko (the SSH
+connectors); `pip install -e .` installs both.
 
 ```bash
 git clone https://github.com/liliyke/miccmac-zt-readiness.git
@@ -103,6 +105,56 @@ Pluggable scoring methodologies, check exclusion/custom checks, and the risk
 register are documented in full, including the scoring tables and rationale,
 in [`docs/methodology.md`](docs/methodology.md).
 
+### Reproducible study runs
+
+- `--as-of YYYY-MM-DD` sets the reference date that the date-dependent checks
+  (INV-04, ASM-01, ASM-02, CUR-01) count days against, instead of today, so
+  the same facts give the same verdicts whenever the run happens. Ages are
+  whole UTC calendar days up to the end of that date: a recorded timestamp
+  counts on its UTC date, so an update made at 20:00 US Eastern on
+  2026-11-15 (01:00 UTC on 2026-11-16) is 7 days old as of 2026-11-23, not 8.
+- `--save-facts FILE` (with `--connector`) saves the facts the connector
+  collected, plus extended facts kept for later re-tests, before the checks
+  run. It never overwrites an existing file.
+- `--facts FILE` scores saved facts again without connecting to the target,
+  for example under a second methodology, or after a fix to check logic.
+
+Any of these flags, or `--connector`, adds a `provenance` block to the JSON
+output (tool version and commit, input-file hashes, reference date, facts
+source, enabled check ids), and makes the run a study run for `-o`: it never
+replaces an existing `-o` file unless `--overwrite` is given (a plain run
+replaces it, as before). In every run, `-o` must name a file in a folder
+that exists and can never be one of the run's input files; the report is
+written whole or not at all, a blank `-o` value is an error, and stdout
+shows only `Report written to <path>`. Collect once and score against CMMI,
+then score CISA ZTMM from the same saved facts with no second collection:
+
+```bash
+python -m miccmac assess 192.0.2.10 --connector ssh-osquery \
+    --ssh-user assessor --ssh-key ~/.ssh/miccmac_study_ed25519 \
+    --attestation attestation.json --inventory-record inventory-record.json \
+    --methodology cmmi --risk-register --format json -o H1-cmmi.json \
+    --as-of 2026-11-23 --save-facts H1-facts.json
+
+python -m miccmac assess 192.0.2.10 --facts H1-facts.json \
+    --attestation attestation.json --inventory-record inventory-record.json \
+    --methodology cisa-ztmm --risk-register --format json -o H1-cisa-ztmm.json \
+    --as-of 2026-11-23
+```
+
+Keep the SSH private key outside the study folder, so it can never be
+committed or shared with the study data. To re-test fixed check logic later
+against the same raw facts, run the second command again with the same
+`--as-of` date, writing to a new folder (for example
+`-o retest-v0.2/H1-cisa-ztmm.json`), never over the baseline outputs; the
+tool refuses to replace them anyway. Details, including what `--as-of` does
+not change, are in
+[`docs/methodology.md`](docs/methodology.md#11-reproducibility-reference-date-saved-facts-and-provenance).
+The reproducible-run features (`--as-of`, `--save-facts`, `--facts`, the
+provenance block and the `-o` safeguards) and the study instruments in
+[`miccmac_study/`](miccmac_study/README.md) were drafted with AI assistance
+(Claude Code, Anthropic) for the researcher's review.
+
 ## Example output
 
 ```
@@ -132,9 +184,12 @@ side to show both maturity-methodology lenses on the same data.
 
 ## How scoring works
 
-Each check returns `PASS`, `PARTIAL`, `FAIL`, `NOT_APPLICABLE`, or (in the
-current scaffold) `NOT_IMPLEMENTED`. A property score is the average of its
-scorable checks (`PASS` = 100, `PARTIAL` = 50, `FAIL` = 0). The overall score
+Each check returns `PASS`, `PARTIAL`, `FAIL`, `NOT_APPLICABLE`, `ERROR` (the
+check could not be evaluated, for example because a date in an input file is
+not a valid date), or `NOT_IMPLEMENTED` (no facts or inputs to evaluate it
+from, as in a run with no flags). A property score is the average of its
+scorable checks (`PASS` = 100, `PARTIAL` = 50, `FAIL` = 0, `ERROR` = 0);
+`NOT_APPLICABLE` and `NOT_IMPLEMENTED` are left out. The overall score
 is the mean of the property scores, which maps to a readiness tier:
 
 | Overall score | Readiness tier |
@@ -179,10 +234,13 @@ proven end-to-end against real, live VMs — the vertical slice is complete.
 - **No inventory/GRC/scanning system integrations** beyond the
   `--inventory-record` and `--attestation` file-based inputs.
 
-Running `python -m miccmac assess <target>` with no `--connector` flag still
-prints the *structure* of a real assessment without inspecting anything —
-byte-identical to the original scaffold's output, verified by diffing
-against it directly through every pass of this work. Add `--connector
+Running `python -m miccmac assess <target>` with no `--connector` or
+`--facts` flag still prints the *structure* of a real assessment without
+inspecting anything — byte-identical to the original scaffold's output,
+verified by diffing against it directly through every pass of this work.
+(Adding `--as-of` to such a run changes no result; it only adds the
+provenance block to JSON output. `--facts` scores facts saved by an earlier
+run.) Add `--connector
 ssh-osquery --ssh-user <u> --ssh-key <path>` for a Linux target, or
 `--connector ssh-osquery-windows --ssh-user <u> --ssh-key <path>` for a
 Windows target (plus `--inventory-record` and `--attestation` for the
@@ -304,6 +362,12 @@ miccmac-zt-readiness/
     report.py              text / markdown / JSON rendering
     model.py               data model (CheckResult, PropertyResult, ...)
     checks/                one module per MICCMAC property
+    connectors/            SSH + osquery fact collection (Linux, Windows)
+    clock.py               reference date for --as-of
+    facts_file.py          saved facts files (--save-facts, --facts)
+    provenance.py          the provenance block in JSON output
+  miccmac_study/           study instruments for the validation study, separate
+                           from the tool under test (see miccmac_study/README.md)
   data/control-mappings.yaml   property -> 800-207 / 800-53 / CIS v8
   docs/methodology.md      framework and scoring methodology
   examples/sample-report.md

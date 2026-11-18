@@ -14,11 +14,16 @@ Follows Claimed's stub-gate pattern: gates on the context being entirely
 empty (the true default invocation), not on facts-presence, since this
 property never uses context["facts"] at all. See
 miccmac/checks/claimed.py's module docstring for the full rationale.
+
+ASM-01 and ASM-02 count the age of the last scan/assessment against
+miccmac.clock's reference date: the --as-of date when one was given
+(context["as_of"]), otherwise today.
 """
 from __future__ import annotations
 
 import datetime
 
+from miccmac import clock
 from miccmac.model import CheckResult, PropertyResult, Status
 
 KEY = "assessed"
@@ -62,10 +67,16 @@ def _not_applicable(check_id: str, missing_key: str) -> CheckResult:
 
 
 def _check_scheduled_activity(check_id: str, missing_key: str, record: dict,
-                              date_field: str, activity_label: str) -> CheckResult:
+                              date_field: str, activity_label: str, *,
+                              today: datetime.date | None = None,
+                              as_of_label: str | None = None) -> CheckResult:
     """Shared logic for ASM-01/ASM-02: performed=bool + a last-run date
     checked against an interval_days policy, mirroring INV-04's recency
-    check for inventory review."""
+    check for inventory review.
+
+    ``today`` is the reference date to count the age against (None: the
+    real date, through miccmac.clock). ``as_of_label`` (e.g.
+    " (as of 2026-11-23)") is appended to a detail that reports an age."""
     if not record.get("performed"):
         return CheckResult(
             check_id=check_id, name=_NAMES[check_id], status=Status.FAIL,
@@ -89,7 +100,9 @@ def _check_scheduled_activity(check_id: str, missing_key: str, record: dict,
             detail=f"Attestation's {date_field}={last_date!r} is not a valid ISO date.",
             control_refs=_CONTROL_REFS[check_id],
         )
-    age_days = (datetime.date.today() - parsed_date).days
+    if today is None:
+        today = clock.reference_date(None)
+    age_days = (today - parsed_date).days
     if age_days <= interval_days:
         status = Status.PASS
         detail = f"{activity_label} last performed {age_days} day(s) ago (policy: {interval_days})."
@@ -97,27 +110,30 @@ def _check_scheduled_activity(check_id: str, missing_key: str, record: dict,
         status = Status.FAIL
         detail = (f"{activity_label} last performed {age_days} day(s) ago, exceeding the "
                  f"{interval_days}-day policy interval.")
+    detail += as_of_label or ""
     return CheckResult(
         check_id=check_id, name=_NAMES[check_id], status=status, detail=detail,
         control_refs=_CONTROL_REFS[check_id],
     )
 
 
-def _check_asm01(attestation: dict | None) -> CheckResult:
+def _check_asm01(attestation: dict | None, *, today: datetime.date | None = None,
+                 as_of_label: str | None = None) -> CheckResult:
     if attestation is None or "vulnerability_scanning" not in attestation:
         return _not_applicable("ASM-01", "vulnerability_scanning")
     return _check_scheduled_activity(
         "ASM-01", "vulnerability_scanning", attestation["vulnerability_scanning"] or {},
-        "last_scan", "Vulnerability scanning",
+        "last_scan", "Vulnerability scanning", today=today, as_of_label=as_of_label,
     )
 
 
-def _check_asm02(attestation: dict | None) -> CheckResult:
+def _check_asm02(attestation: dict | None, *, today: datetime.date | None = None,
+                 as_of_label: str | None = None) -> CheckResult:
     if attestation is None or "compliance_assessment" not in attestation:
         return _not_applicable("ASM-02", "compliance_assessment")
     return _check_scheduled_activity(
         "ASM-02", "compliance_assessment", attestation["compliance_assessment"] or {},
-        "last_assessment", "Compliance assessment",
+        "last_assessment", "Compliance assessment", today=today, as_of_label=as_of_label,
     )
 
 
@@ -144,9 +160,11 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return _stub_checks()
 
     attestation = context.get("attestation")
+    today = clock.reference_date(context)
+    label = clock.as_of_label(context)
     return [
-        _check_asm01(attestation),
-        _check_asm02(attestation),
+        _check_asm01(attestation, today=today, as_of_label=label),
+        _check_asm02(attestation, today=today, as_of_label=label),
         _check_asm03(attestation),
     ]
 

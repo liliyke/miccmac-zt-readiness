@@ -84,6 +84,10 @@ class Assessment:
     methodology: Optional[object] = None
     # check_ids dropped by user configuration (miccmac.config.Config.excluded_checks).
     excluded_check_ids: List[str] = field(default_factory=list)
+    # Where this result came from (tool build, inputs, facts, reference
+    # date), set by the CLI when --connector, --facts, --as-of or
+    # --save-facts is used. See miccmac/provenance.py.
+    provenance: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -96,4 +100,6 @@ class Assessment:
             d["methodology"] = self.methodology.to_dict()
         if self.excluded_check_ids:
             d["excluded_check_ids"] = list(self.excluded_check_ids)
+        if self.provenance is not None:
+            d["provenance"] = dict(self.provenance)
         return d

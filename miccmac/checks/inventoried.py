@@ -21,12 +21,17 @@ When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
 unchanged from the Alpha scaffold.
+
+INV-04 counts the age of the last review against miccmac.clock's reference
+date: the --as-of date when one was given (context["as_of"]), otherwise
+today.
 """
 from __future__ import annotations
 
 import datetime
 import json
 
+from miccmac import clock
 from miccmac.model import CheckResult, PropertyResult, Status
 
 KEY = "inventoried"
@@ -137,7 +142,11 @@ def _check_inv03_windows(programs: list) -> CheckResult:
     )
 
 
-def _check_inv04(record: dict | None) -> CheckResult:
+def _check_inv04(record: dict | None, *, today: datetime.date | None = None,
+                 as_of_label: str | None = None) -> CheckResult:
+    """``today`` is the reference date to count the review's age against
+    (None: the real date, through miccmac.clock). ``as_of_label`` (e.g.
+    " (as of 2026-11-23)") is appended to a detail that reports an age."""
     if record is None:
         return CheckResult(
             check_id="INV-04", name=_NAMES["INV-04"], status=Status.NOT_APPLICABLE,
@@ -160,13 +169,16 @@ def _check_inv04(record: dict | None) -> CheckResult:
             detail=f"Supplied inventory record's last_reviewed={last_reviewed!r} is not a valid ISO date.",
             control_refs=_CONTROL_REFS["INV-04"],
         )
-    age_days = (datetime.date.today() - reviewed_date).days
+    if today is None:
+        today = clock.reference_date(None)
+    age_days = (today - reviewed_date).days
     if age_days <= INVENTORY_REVIEW_INTERVAL_DAYS:
         status = Status.PASS
         detail = f"Inventory record last reviewed {age_days} day(s) ago (policy: {INVENTORY_REVIEW_INTERVAL_DAYS})."
     else:
         status = Status.FAIL
         detail = f"Inventory record last reviewed {age_days} day(s) ago, exceeding the {INVENTORY_REVIEW_INTERVAL_DAYS}-day policy interval."
+    detail += as_of_label or ""
     return CheckResult(
         check_id="INV-04", name=_NAMES["INV-04"], status=status, detail=detail,
         evidence=json.dumps(record), control_refs=_CONTROL_REFS["INV-04"],
@@ -190,7 +202,8 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         _check_inv01(inventory_record),
         _check_inv02(system_info),
         inv03,
-        _check_inv04(inventory_record),
+        _check_inv04(inventory_record, today=clock.reference_date(context),
+                     as_of_label=clock.as_of_label(context)),
     ]
 
 
