@@ -279,6 +279,12 @@ def _check_fact_options(args) -> None:
         # the address must not collect (and save) another machine's facts.
         raise ConfigError(f"a live run with --save-facts or --as-of needs the target's address "
                           f"(for example: assess 192.0.2.10 ...); it never defaults to {DEFAULT_TARGET}")
+    if args.connector and args.target is not None and (
+            not args.target.strip() or any(ord(char) < 32 or ord(char) == 127 for char in args.target)):
+        # A blank target (bash "$IP" unset, PowerShell 7.3+) resolves to this
+        # machine's own addresses; one with a line break comes from a wrapped paste.
+        raise ConfigError("the target is blank or holds a line break or another control character (an "
+                          "unset variable, or a line wrapped when pasted); nothing was collected")
     _check_report_destination(args)
     _check_output_option(args)
     if args.save_facts:

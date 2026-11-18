@@ -210,8 +210,10 @@ window, so start with the same line as Setup. Windows hosts use
   `--connector ssh-osquery requires --ssh-user and --ssh-key`, `... holds a
   line break or another control character` (wrapped inside a file name),
   or, for a line that lost its `-o`, `error: this run's report holds
-  results, so it goes to a file ...`. Only `assess $ip` alone runs: it
-  prints the tool's stub report (every check `[TODO]`, no result). A
+  results, so it goes to a file ...`. A cut right after `assess`, inside or
+  right after `$ip`, or just after the first two dashes of `--save-facts`
+  runs, but only prints the tool's stub report (every check `[TODO]`, no
+  result) and connects nowhere. A
   `--connector` line without `--save-facts` and `--as-of` is not a study run
   and would print the host's report. An empty `$key` stops with `error:
   argument --ssh-key: expected one argument`, and an empty `$ip` with `a
@@ -265,9 +267,12 @@ a commit made with the Setup `.gitattributes`, or the attachment of step 3b
 - `ledger verify` must show OK again.
 - A file in `worksheets\`, `outputs\` or `register\` is hashed once, and
   only under its folder's own kind (worksheet; tool-output or facts;
-  register-review or missed-gaps). `ledger record` refuses it with changed
-  bytes, even with `--force`, and names the copy to restore. A correction
-  goes in the disagreement log or the protocol log, never in the file.
+  register-review or missed-gaps). The first kind recorded is final and
+  must fit the file: a saved facts file is `facts`, a tool output
+  `tool-output`, and a register sheet's kind follows its name. `ledger
+  record` refuses it with changed bytes, even with `--force`, and names the
+  copy to restore. A correction goes in the disagreement log or the
+  protocol log, never in the file.
 - Never edit or delete a ledger row. Never open a hashed CSV in Excel, which
   may save it again: open a copy.
 - An input file is corrected before step 1 of its host and recorded again
@@ -598,7 +603,7 @@ step 2:
         & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H2 --reason "rehearsal: results looked odd"
         & $py -m miccmac_study ledger withdraw --ledger ledger.csv --host H2 --reason "rehearsal: results looked odd" --after-unseal
         & $py -m miccmac_study agreement --study-dir . --out analysis-late
-        Select-String "post-hoc" analysis-late\SYNTHETIC-summary.md
+        Select-String "a post-hoc exclusion; the pre-registered analysis includes" analysis-late\SYNTHETIC-summary.md
         Set-Location $env:TEMP\miccmac-check\fake-study
         (Get-Content study.yaml) -replace '^threshold: .*', 'threshold: 0.60' | Set-Content -Encoding UTF8 study-t060.yaml
         & $py -m miccmac_study agreement --study-dir . --config study-t060.yaml --out analysis-t060

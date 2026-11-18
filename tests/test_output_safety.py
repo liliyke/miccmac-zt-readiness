@@ -236,6 +236,20 @@ def test_a_live_study_run_needs_its_target(extra, study, capsys):
     assert _snapshot() == before
 
 
+@pytest.mark.parametrize("target", ["", " ", "192.0.\n2.10", "192.0.2.10\r"])
+def test_a_live_run_refuses_a_blank_or_wrapped_target(target, study, capsys):
+    """Round 4 (V): '' (bash "$IP" unset, PowerShell 7.3+) resolves to this machine's own addresses, and a line
+    break comes from a wrapped paste; neither may reach the connector."""
+    before = _snapshot()
+    args = ["assess", target] + _live()[2:]
+    assert main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ("error: the target is blank or holds a line break or another control character (an "
+                            "unset variable, or a line wrapped when pasted); nothing was collected\n")
+    assert (captured.out, study) == ("", [])
+    assert _snapshot() == before
+
+
 def test_a_facts_save_that_fails_after_the_collection_says_the_facts_were_collected(study, capsys, monkeypatch):
     """Round 3 (V3): a failed save must not read like a refusal, so the researcher reverts before repeating."""
     def full_disk(path, envelope):

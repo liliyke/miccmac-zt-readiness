@@ -612,7 +612,10 @@ anything:
   the file is written, after the collection.
 - A live run with `--save-facts` or `--as-of` needs an explicit target:
   with an empty `$ip` PowerShell drops the argument, and the run would
-  otherwise collect from `localhost`, the researcher's own machine.
+  otherwise collect from `localhost`, the researcher's own machine. Any
+  live run refuses a blank target (bash passes one for an unset `"$IP"`,
+  and it resolves to the machine's own addresses) and one holding a line
+  break (a wrapped paste), before it connects.
 - A run whose report holds study results, one with `--facts` or
   `--save-facts`, or with `--connector` and `--as-of` (the protocol's tool
   runs), needs `-o FILE` or `--stdout`. With neither it stops with `error:
@@ -620,9 +623,12 @@ anything:
   --stdout to print it here`. The study guide's step-5 command starts with
   `--save-facts` and `--as-of` and ends with `-o`, and its step-6 command
   starts with `--facts`, so either command cut or wrapped anywhere when
-  pasted is refused before it connects or prints, and cannot show a host's
-  results on the terminal before the later hosts' blind passes (a test
-  checks every cut of the step-5 line). `--stdout` prints the report on
+  pasted is refused before it connects, and cannot show a host's results
+  on the terminal before the later hosts' blind passes (a test checks every
+  cut of both lines and a line break inside every quoted file name). The
+  few cuts that run (right after `assess`, inside or right after the
+  target, or `assess <target> --`) print only the stub report, with no
+  result and no connection. `--stdout` prints the report on
   purpose, for example in a rehearsal on synthetic data, and `--stdout`
   with `-o` is an error. Every other run (a plain run, `--connector`
   without `--as-of`, `--as-of` alone) prints as before, with or without

@@ -1304,7 +1304,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
                                         "in worksheets/, outputs/ or register/, or one already recorded as a "
                                         "worksheet, tool output, facts file or register sheet, is hashed once: "
                                         "changed bytes are refused (whatever --force says), and the same bytes "
-                                        "recorded again add no row. With --kind worksheet, each worksheet is then "
+                                        "recorded again under the same kind add no row. Its first kind is final "
+                                        "and must fit the file (a saved facts file is kind facts; a register "
+                                        "sheet's kind follows its name). With --kind worksheet, each worksheet is then "
                                         "linted against the study configuration (blank or unreadable cells, the "
                                         "level range, levels that do not follow the declared manual level rule, "
                                         "the host code), because a hashed worksheet can never be corrected; any "
@@ -1439,6 +1441,32 @@ _FOLDER_KINDS = ((WORKSHEETS_DIR, (WORKSHEET_KIND,)),
                  (REGISTER_DIR, ("register-review", "missed-gaps")))
 
 
+_FACTS_MARKS = (b'"facts_format"', b"miccmac-facts/1")   # as miccmac's -o guard sniffs a saved facts file
+_REGISTER_SUFFIXES = {"register-review": "-register-review.csv", "missed-gaps": "-missed-gaps.csv"}
+
+
+def _kind_mismatch(path: Path, kind: str) -> str:
+    """Why `kind` does not fit the file at `path` (in outputs/ or register/),
+    or '' when it does: a saved facts file (its first 64 KiB name the
+    miccmac-facts/1 format) is kind facts and only that; a register sheet's
+    kind follows its name (<H>-register-review.csv, <H>-missed-gaps.csv)."""
+    if kind in (FACTS_KIND, TOOL_OUTPUT_KIND):
+        try:
+            with open(path, "rb") as fh:
+                head = fh.read(64 * 1024)
+        except OSError as exc:
+            return f"cannot be read ({exc})"
+        is_facts = all(mark in head for mark in _FACTS_MARKS)
+        if kind == FACTS_KIND and not is_facts:
+            return "is not a saved facts file (miccmac-facts/1), so it is not --kind facts"
+        if kind == TOOL_OUTPUT_KIND and is_facts:
+            return "is a saved facts file (miccmac-facts/1): record it with --kind facts"
+    suffix = _REGISTER_SUFFIXES.get(kind)
+    if suffix and not PureWindowsPath(str(path)).name.lower().endswith(suffix):
+        return f"is not named <H>{suffix}, so it is not --kind {kind}"
+    return ""
+
+
 def _check_kinds(ledger: Path, host: str, kind: str, files: Sequence[Path]) -> None:
     """`ledger record` refuses a file in worksheets/, outputs/ or register/
     next to the ledger under a kind other than that folder's own
@@ -1467,6 +1495,11 @@ def _check_kinds(ledger: Path, host: str, kind: str, files: Sequence[Path]) -> N
                 raise StudyError(f"{path} was already recorded as {row_kind(other[1])} at "
                                  f"{other[1].recorded_at_utc} (ledger line {other[0] + 2}); a file in {name}/ has "
                                  "one kind, so nothing was recorded")
+            # The first kind is final, so it must fit the file: a saved facts file is
+            # recorded as facts and nothing else; a register sheet by its name.
+            wrong = _kind_mismatch(path, kind)
+            if wrong:
+                raise StudyError(f"{path} {wrong}; nothing was recorded")
     if kind == INPUT_KIND:
         if is_study_code(host):
             raise StudyError(f"input files belong to one host: record them with --host <H>, named "
