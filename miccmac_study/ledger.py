@@ -700,10 +700,9 @@ def row_states(ledger_path: PathLike) -> List[RowState]:
       worksheets/, outputs/ or register/ of the ledger's folder, or one with
       a row of a kind in FROZEN_KINDS anywhere in the ledger);
     - a later row (further down) has a known kind not in FROZEN_KINDS (any
-      of them: a withdrawal or seal-opening row that recorded study.yaml is
-      superseded by a correction recorded with --kind other), a path that
-      resolves to the same file, the state OK, a readable time and no order
-      problem;
+      of them: a setup row of study.yaml is superseded by a correction
+      recorded with --kind other or --kind protocol), a path that resolves to
+      the same file, the state OK, a readable time and no order problem;
     - that later row was recorded strictly before the deadline: for a STUDY
       row, the first tool-output or facts row of any host; for a host row,
       that host's first worksheet row (or first tool-output or facts row, if
@@ -1311,7 +1310,14 @@ def configure(parser: argparse.ArgumentParser) -> None:
                                         "the host code), because a hashed worksheet can never be corrected; any "
                                         "finding stops the record unless --force is given. The lint reads only "
                                         "the worksheet and the study configuration, never a tool output. A file "
-                                        f"named {CONFIG_FILE} must be a valid study configuration.")
+                                        f"named {CONFIG_FILE} must be a valid study configuration. Refused too: a "
+                                        "file in worksheets/, outputs/ or register/ under a kind other than its "
+                                        "folder's (worksheet; tool-output or facts; register-review or "
+                                        "missed-gaps); an input file not named <H>-attestation.json or "
+                                        "<H>-inventory-record.json for its own --host; a note starting "
+                                        f"'{WITHDRAWN_NOTE_PREFIX.strip()}', '{SEAL_OPENED_NOTE_PREFIX.strip()}' "
+                                        "or the force-before-unseal text, which only withdraw, register-sheet and "
+                                        "agreement write.")
     record.add_argument("--ledger", required=True, metavar="FILE",
                         help="The ledger CSV (created with a header if missing).")
     record.add_argument("--host", required=True, metavar="H",
@@ -1322,9 +1328,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
                         help=f"--kind worksheet only: the study configuration the lint uses (default: {CONFIG_FILE} "
                              "next to the ledger).")
     record.add_argument("--force", action="store_true",
-                        help="--kind worksheet only: record even though the lint found problems; the ledger note "
-                             f"then starts '{LINT_NOTE_PREFIX.strip()}' and lists them. It never records a "
-                             "hashed file whose bytes changed.")
+                        help="--kind worksheet only: record even though the lint found problems; give the reason "
+                             f"with --note, and the ledger note then lists the findings after "
+                             f"'{LINT_NOTE_PREFIX.strip()}'. It never records a hashed file whose bytes changed.")
     record.add_argument("paths", nargs="+", metavar="PATH", help="Files to hash.")
 
     verify = sub.add_parser("verify", help="Re-hash every recorded file.",
@@ -1334,8 +1340,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
                                         "SUPERSEDED or ARCHIVED and in order. Worksheets, tool outputs, facts "
                                         "and register sheets, and every file in worksheets/, outputs/ or "
                                         "register/, are never SUPERSEDED. ARCHIVED: a withdrawal or seal-opening "
-                                        "row whose configuration file changed since, while its ledger-archive "
-                                        "copy still has the recorded hash.")
+                                        "row whose configuration file has changed or is gone since, while its "
+                                        "ledger-archive copy still has the recorded hash.")
     verify.add_argument("--ledger", required=True, metavar="FILE", help="The ledger CSV.")
 
     status = sub.add_parser("status", help="Show which kinds of file each host has, and when.",
@@ -1418,8 +1424,9 @@ def _lint_worksheets(args: argparse.Namespace, host: str, files: Sequence[Path])
     if not args.force:
         raise StudyError(
             f"the worksheet lint found {len(findings)} problem(s), listed above; nothing was recorded. A hashed "
-            "worksheet can never be corrected, so correct the worksheet and record it again, or add --force to "
-            f"record it as it is (the ledger note then starts '{LINT_NOTE_PREFIX.strip()}' and lists them)")
+            "worksheet can never be corrected, so correct the worksheet and record it again, or add --force "
+            "--note \"<your reason>\" to record it as it is (the ledger note keeps the reason and lists the "
+            f"findings after '{LINT_NOTE_PREFIX.strip()}')")
     text = _lint_note(findings, several=len(files) > 1)
     return f"{note.strip()}; {text}" if note and note.strip() else text
 
@@ -1432,28 +1439,46 @@ _FOLDER_KINDS = ((WORKSHEETS_DIR, (WORKSHEET_KIND,)),
                  (REGISTER_DIR, ("register-review", "missed-gaps")))
 
 
-def _check_kinds(ledger: Path, kind: str, files: Sequence[Path]) -> None:
+def _check_kinds(ledger: Path, host: str, kind: str, files: Sequence[Path]) -> None:
     """`ledger record` refuses a file in worksheets/, outputs/ or register/
     next to the ledger under a kind other than that folder's own
-    (_FOLDER_KINDS), and an input file whose name gives no role: it must end
-    with -attestation.json or -inventory-record.json, or a swap of the two
-    files could not be detected (check_run_inputs)."""
+    (_FOLDER_KINDS), or under the folder's other kind when it was already
+    recorded as one (outputs/: tool-output or facts; register/:
+    register-review or missed-gaps); and an input file not named after its
+    own host and role, <H>-attestation.json or <H>-inventory-record.json, or
+    a swap of the two files, or another host's file, could not be detected
+    (check_run_inputs)."""
     folder = ledger.resolve().parent
+    earlier = read_ledger(ledger) if ledger.is_file() else []
     for name, kinds in _FOLDER_KINDS:
-        if kind in kinds:
-            continue
         key = file_key(folder / name)
         for path in files:
-            if _in_folders(file_key(path), (key,)):
+            path_in = file_key(path)
+            if not _in_folders(path_in, (key,)):
+                continue
+            if kind not in kinds:
                 allowed = " or ".join(f"--kind {value}" for value in kinds)
                 raise StudyError(f"{path} is in {name}/, whose files are recorded only with {allowed} (each is "
                                  f"hashed once, under its own kind), not --kind {kind}; nothing was recorded")
+            other = next(((index, row) for index, row in enumerate(earlier)
+                          if path_key(ledger, row.path) == path_in and row_kind(row) in kinds
+                          and row_kind(row) != kind), None)
+            if other is not None:
+                raise StudyError(f"{path} was already recorded as {row_kind(other[1])} at "
+                                 f"{other[1].recorded_at_utc} (ledger line {other[0] + 2}); a file in {name}/ has "
+                                 "one kind, so nothing was recorded")
     if kind == INPUT_KIND:
+        if is_study_code(host):
+            raise StudyError(f"input files belong to one host: record them with --host <H>, named "
+                             f"<H>-attestation.json or <H>-inventory-record.json, not --host {host}; nothing was "
+                             "recorded")
+        expected = {f"{host}{suffix}".lower(): role for suffix, role in ROLE_SUFFIXES}
         for path in files:
-            if input_role(str(path)) is None:
+            if PureWindowsPath(str(path)).name.lower() not in expected:
                 raise StudyError(
-                    f"{path}: name an input file <H>-attestation.json or <H>-inventory-record.json, so that its role "
-                    "is known and a swap of the two files can be detected; nothing was recorded")
+                    f"{path}: an input file of {host} is named {host}-attestation.json or "
+                    f"{host}-inventory-record.json, so that its host and role are known and a swap of the files can "
+                    "be detected; nothing was recorded")
 
 
 def _check_study_configs(files: Sequence[Path]) -> None:
@@ -1483,7 +1508,7 @@ def _run_record(args: argparse.Namespace) -> int:
     missing = [str(p) for p in files if not p.is_file()]
     if missing:
         raise StudyError(f"cannot record missing file(s): {', '.join(missing)}")
-    _check_kinds(ledger, args.kind, files)
+    _check_kinds(ledger, host, args.kind, files)
     _check_study_configs(files)
     note = args.note
     if args.kind == WORKSHEET_KIND:
@@ -1524,7 +1549,7 @@ def _run_verify(args: argparse.Namespace) -> int:
         if item.state == ARCHIVED:
             what = (f"{item.row.host_code} withdrawn" if is_withdrawal(item.row)
                     else "the configuration when the seal was opened")
-            line += (f"  {what}; the file has changed since, and "
+            line += (f"  {what}; the file has changed or is gone since, and "
                      f"{ledger_relpath(args.ledger, archive_path(args.ledger, item.row))} keeps the recorded copy")
         if item.out_of_order:
             line += f"  OUT OF ORDER ({notes.get(item.index, '')})"

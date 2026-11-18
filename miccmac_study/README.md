@@ -85,8 +85,9 @@ Replace the parts in angle brackets.
 - Write `inputs\<H>-attestation.json` and `inputs\<H>-inventory-record.json`
   for each host (decision 3, input files for every host), with exactly these
   names: the identical-inputs check tells the two files apart by name, and
-  `ledger record --kind input` refuses other names. The assessor gets the
-  same files and the same check list.
+  `ledger record --kind input --host <H>` refuses any other name, another
+  host's file included. The assessor gets the same files and the same check
+  list.
 - Save JSON and YAML as UTF-8 (in Notepad: Save as, Encoding UTF-8). The
   tools also read what PowerShell writes (`>` saves UTF-16), but the ledger
   hashes the bytes, so settle the encoding before you record a file.
@@ -199,20 +200,27 @@ window, so start with the same line as Setup. Windows hosts use
   step 3 printed in the body. A local commit alone is dated by your own
   clock; a push or an e-mail gives an outside timestamp. Do it before
   step 4.
-- Step 5: one live collection per revert. If step 5 stops with an error and
-  wrote no facts file, revert again (step 4) before you repeat it. Keep the
+- Step 5: one live collection per revert. If step 5 stops with an error
+  after it connected (`could not SSH ...`, `cannot write --save-facts file
+  ...; the facts were collected ... but not saved`, or any error once the
+  collection ran), revert again (step 4) before you repeat it. Keep the
   options in the guide's order: `--save-facts` and `--as-of` come first and
   `-o` last, so a line cut or wrapped anywhere when pasted is refused before
-  it connects (for example `--save-facts requires --connector`, `--connector
-  ssh-osquery requires --ssh-user and --ssh-key`, or, for a line that lost
-  its `-o`, `error: this run's report holds results, so it goes to a file
-  ...`). A `--connector` line without `--save-facts` and `--as-of` is not a
-  study run and would print the host's report. An empty `$key` stops with
-  `error: argument --ssh-key: expected one argument`. A refused line needs
-  no revert: fix it and run it. Never add `--stdout` here. If step 5 ends
-  with `error: cannot write --output ...`, the message names the saved
-  facts: do not collect again, but build the CMMI report from them with
-  step 6's command, with `cmmi` in place of `cisa-ztmm` (twice).
+  it connects. For example: `--save-facts requires --connector`,
+  `--connector ssh-osquery requires --ssh-user and --ssh-key`, `... holds a
+  line break or another control character` (wrapped inside a file name),
+  or, for a line that lost its `-o`, `error: this run's report holds
+  results, so it goes to a file ...`. Only `assess $ip` alone runs: it
+  prints the tool's stub report (every check `[TODO]`, no result). A
+  `--connector` line without `--save-facts` and `--as-of` is not a study run
+  and would print the host's report. An empty `$key` stops with `error:
+  argument --ssh-key: expected one argument`, and an empty `$ip` with `a
+  live run with --save-facts or --as-of needs the target's address`. A
+  refused line needs no revert: fix it and run it. Never add `--stdout`
+  here. If step 5 ends with `error: cannot write --output ...`, the message
+  names the saved facts: do not collect again, but build the CMMI report
+  from them with step 6's command, with `cmmi` in place of `cisa-ztmm`
+  (twice).
 - Steps 5 and 6: study runs never overwrite a file, and `-o` never replaces
   a facts file. A repeated command is refused before anything runs
   (`error: refusing to replace ...`): choose a new file name. `--overwrite`
@@ -276,14 +284,21 @@ a commit made with the Setup `.gitattributes`, or the attachment of step 3b
     gives a WARNING and labels a run with the changed settings a
     sensitivity run; the pre-registered analysis is the run with the
     earlier version, which the WARNING names (`--config
-    ledger-archive\<sha256>.yaml`). `ledger verify` shows the earlier row as
-    CHANGED, and the hosts of the earlier version stay in the seal. Record
-    the deviation in the protocol log.
+    ledger-archive\<sha256>.yaml`). If the hosts changed too, the WARNING
+    says so: copy that file, set its `hosts` to those of the line it names,
+    record the copy with `--kind other`, and pass the copy with `--config`.
+    `ledger verify` shows the earlier row as CHANGED, and the hosts of the
+    earlier version stay in the seal. Record the deviation in the protocol
+    log.
   - A run whose configuration differs from study.yaml as it was when the
     seal first opened (study.yaml recorded again after that, or a
     `--config` with other settings or fewer hosts) is CRITICAL and labelled
-    a sensitivity run. Planned sensitivity runs use the options in "After
+    a sensitivity run. A setting put back to its value at the first tool
+    run is no change. Planned sensitivity runs use the options in "After
     the last host".
+  - If study.yaml was never recorded, the configuration recorded when the
+    seal first opened is the reference instead (agreement still warns that
+    study.yaml was never recorded).
   - Withdrawal and `seal opened by` rows record study.yaml (or the
     `--config` file) as it was then. Once that file changes or is moved,
     `ledger verify` shows them as ARCHIVED, which passes: their
@@ -377,7 +392,8 @@ before the freeze.
     lint checks every level you type against it, and refuses to hash a
     sheet until it is declared (with `approved`, `overall` too, for the
     overall levels). agreement reports a typed level that does not follow
-    it (a sheet hashed with `--force`) as a WARNING, with rule_only blank.
+    it (a sheet hashed with `--force`) as a WARNING, with rule_only and
+    l5_rule_only blank (not counted in summary section 5.6).
     `approved` needs `manual_max_level: {cmmi: 4, cisa-ztmm: 4}`;
     `tool-cutoffs` needs `cmmi: 5`.
   - `tool_side: tool-cutoffs` compares the levels the tool reports;
@@ -416,9 +432,11 @@ folder, and never share a key. The analysis CSVs contain none of these
 Work in scratch folders under `$env:TEMP\miccmac-check`, outside the
 repository and the study folder, in a window started with the Setup line.
 The synthetic outputs show the tool's detail strings, which name its policy
-limits; they describe no study host. To repeat the checklist, first remove
-the old scratch folders: `Remove-Item -Recurse -Force
-$env:TEMP\miccmac-check`.
+limits; they describe no study host. To repeat the checklist, close Excel,
+remove the old scratch folders from outside them, and start again at
+step 2:
+
+    Set-Location $HOME; Remove-Item -Recurse -Force $env:TEMP\miccmac-check
 
 1. Tests (10 min). `Set-Location $repo; & $py -m pytest -q`: every test
    passes; a few are skipped (the opt-in live-VM tests, symlink tests
@@ -524,19 +542,22 @@ $env:TEMP\miccmac-check`.
      `level_rule`: step 3 must refuse with a `lint` line and record nothing.
      Correct it and run step 3 again.
    - Step 5, no live run: copy the synthetic facts and score them with
-     step 6's command for cmmi. The warning that the target differs is
-     expected (the facts name synthetic-H1).
+     step 6's command for cmmi, a few seconds after step 3 (the ledger and
+     the run times are to the second, and a tie is reported). The warning
+     that the target differs is expected (the facts name synthetic-H1).
 
          Copy-Item "$syn\outputs\$h-facts.json" outputs\
          & $py -m miccmac assess $ip --facts "outputs\$h-facts.json" --as-of $day --attestation "inputs\$h-attestation.json" --inventory-record "inputs\$h-inventory-record.json" --methodology cmmi --risk-register --format json -o "outputs\$h-cmmi.json"
 
    - Step 6: run it twice; the second run must be refused (`refusing to replace`).
-   - Step 8: only the `tool_tree_clean` PROBLEM lines; H2's extended facts
-     show `(not collected: audit_policy)`.
+   - Step 8: no PROBLEM line, except `tool_tree_clean` while the tool has
+     uncommitted changes; H2's extended facts show `(not collected:
+     audit_policy)`.
    - H3 is not assessed: withdraw it as in "Withdrawing a host", with
      `--reason "rehearsal: Windows 11 fallback"`.
    - Then "After the last host" with `--hosts H1,H2,H3` and fake review
-     entries (the `git status` line lists files until the freeze).
+     entries (the `git status` line lists files while the instruments have
+     uncommitted changes).
      `ledger status` shows H3 as WITHDRAWN. agreement exits 3 with a
      synthetic CRITICAL per host, because the copied facts name the
      synthetic connector (expected here, never on study data), and reports

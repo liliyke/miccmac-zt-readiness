@@ -241,11 +241,20 @@ def _parse_as_of_option(raw: Optional[str]) -> Optional[datetime.date]:
 
 def _reject_blank_file_names(args) -> None:
     """A blank or whitespace value for an option that names a file is an
-    error, in every run and for list-checks' --config too."""
+    error, in every run and for list-checks' --config too. So is a value
+    holding a line break or any other control character: a command wrapped
+    inside a quoted file name when pasted carries one, and no real file name
+    does, so the run stops before anything is read or collected."""
     for flag, attr in _FILE_NAME_OPTIONS:
         value = getattr(args, attr, None)
-        if value is not None and not value.strip():
+        if value is None:
+            continue
+        if not value.strip():
             raise ConfigError(f"{flag} needs a file name")
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ConfigError(f"{flag} holds a line break or another control character, as a command "
+                              f"wrapped when pasted does; type the command again on one line "
+                              f"(nothing was read or collected)")
 
 
 def _check_fact_options(args) -> None:
@@ -265,6 +274,11 @@ def _check_fact_options(args) -> None:
                           "from a live target)")
     if args.connector in CONNECTORS and (not args.ssh_user or not args.ssh_key):
         raise ConfigError(f"--connector {args.connector} requires --ssh-user and --ssh-key")
+    if args.connector and args.target is None and (args.save_facts or args.as_of is not None):
+        # A study run never falls back to localhost: an empty shell variable for
+        # the address must not collect (and save) another machine's facts.
+        raise ConfigError(f"a live run with --save-facts or --as-of needs the target's address "
+                          f"(for example: assess 192.0.2.10 ...); it never defaults to {DEFAULT_TARGET}")
     _check_report_destination(args)
     _check_output_option(args)
     if args.save_facts:
@@ -409,7 +423,12 @@ def _collect_live(args, target: str, as_of: Optional[datetime.date]) -> _FactsSo
         facts, tool_version=__version__, tool_commit=provenance_mod.tool_commit(),
         connector=args.connector, target=target, collected_at_utc=collected_at, as_of=as_of,
     )
-    saved = facts_file_mod.save_envelope(args.save_facts, envelope)
+    try:
+        saved = facts_file_mod.save_envelope(args.save_facts, envelope)
+    except facts_file_mod.FactsFileError as exc:
+        raise facts_file_mod.FactsFileError(
+            f"{exc}; the facts were collected from {target} but not saved, so running the command "
+            f"again collects again") from None
     return _FactsSource(
         facts=saved.facts, kind="connector", collected_at_utc=collected_at,
         file={"path": args.save_facts, "sha256": saved.sha256, "role": "saved"},

@@ -465,6 +465,11 @@ def test_the_windows_extended_length_spelling_is_the_same_file(tmp_path):
     other = study / "outputs" / "H1-cmmi.json"
     row = ledger.record_files(ledger_file, "H1", "tool-output", [Path("\\\\?\\" + str(other.resolve()))])[0]
     assert row.path == "outputs/H1-cmmi.json"
+    # Only drive-letter and UNC spellings are rewritten; a volume GUID path has no other spelling.
+    from miccmac_study.formats import plain_path
+    assert str(plain_path(Path("\\\\?\\UNC\\server\\share\\x.csv"))) == "\\\\server\\share\\x.csv"
+    volume = "\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\x.csv"
+    assert str(plain_path(Path(volume))) == str(Path(volume))
 
 
 def test_record_keeps_each_sealed_folder_to_its_own_kinds(tmp_path, capsys):
@@ -493,6 +498,24 @@ def test_record_keeps_each_sealed_folder_to_its_own_kinds(tmp_path, capsys):
     assert [row.kind for row in read_ledger(ledger_file)] == ["register-review", "tool-output"]
 
 
+def test_record_keeps_a_sealed_file_to_the_kind_it_was_recorded_as(tmp_path, capsys):
+    """Round 3 (V3): outputs/H1-cmmi.json recorded as tool-output, then again as facts, added a second row that
+    no check reported. A file in outputs/ or register/ keeps the kind it was first recorded as."""
+    study = _study(tmp_path)
+    ledger_file = study / "ledger.csv"
+    output = study / "outputs" / "H1-cmmi.json"
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "tool-output",
+                 str(output)]) == 0
+    capsys.readouterr()
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "facts",
+                 str(output)]) == 2
+    assert ("was already recorded as tool-output at" in capsys.readouterr().err)
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "tool-output",
+                 str(output)]) == 0                      # the same kind again: "already recorded", no row
+    assert "already recorded at" in capsys.readouterr().out
+    assert [row.kind for row in read_ledger(ledger_file)] == ["tool-output"]
+
+
 @pytest.mark.parametrize("note, owner", [
     ("withdrawn: by hand", "ledger withdraw"),
     ("seal opened by hand: hosts H1", "register-sheet and agreement"),
@@ -519,10 +542,20 @@ def test_record_refuses_an_input_file_named_without_its_role(tmp_path, capsys):
         path.write_text("{}\n", encoding="utf-8")
     assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "input",
                  str(named), str(anonymous)]) == 2
-    assert ("name an input file <H>-attestation.json or <H>-inventory-record.json, so that its role is known and a "
-            "swap of the two files can be detected; nothing was recorded") in capsys.readouterr().err
+    assert ("an input file of H1 is named H1-attestation.json or H1-inventory-record.json, so that its host and "
+            "role are known and a swap of the files can be detected; nothing was recorded") in capsys.readouterr().err
+    assert not ledger_file.exists()
+    # Round 3 (V1): another host's file under --host H1, and inputs under STUDY, are refused too.
+    other = study / "inputs" / "H2-attestation.json"
+    other.write_text("{}\n", encoding="utf-8")
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "input", str(other)]) == 2
+    assert "an input file of H1 is named H1-attestation.json" in capsys.readouterr().err
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "STUDY", "--kind", "input",
+                 str(named)]) == 2
+    assert "input files belong to one host: record them with --host <H>" in capsys.readouterr().err
     assert not ledger_file.exists()
     assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "input", str(named)]) == 0
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H2", "--kind", "input", str(other)]) == 0
 
 
 def test_files_that_are_not_sealed_can_still_be_recorded_with_new_bytes(tmp_path):
@@ -601,7 +634,7 @@ def test_record_refuses_a_worksheet_the_lint_finds_problems_in(tmp_path, capsys)
     assert f"lint CRITICAL {sheet}: cmmi current: level '9' is outside 1-4" in err
     assert len(err) == 3
     assert "the worksheet lint found 2 problem(s), listed above; nothing was recorded" in err[-1]
-    assert "add --force to record it as it is" in err[-1]
+    assert "add --force --note \"<your reason>\" to record it as it is" in err[-1]
     assert not ledger_file.exists() and not (study / "ledger-archive").exists()
 
 
@@ -932,10 +965,10 @@ def test_withdrawal_and_seal_opening_rows_are_archived_never_superseded(tmp_path
     assert main(["ledger", "verify", "--ledger", str(ledger_file)]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[1:3] == [
-        f"ARCHIVED study.yaml  (protocol)  H3 withdrawn; the file has changed since, and "
+        f"ARCHIVED study.yaml  (protocol)  H3 withdrawn; the file has changed or is gone since, and "
         f"ledger-archive/{old_sha}.yaml keeps the recorded copy",
-        f"ARCHIVED study.yaml  (protocol)  the configuration when the seal was opened; the file has changed since, "
-        f"and ledger-archive/{old_sha}.yaml keeps the recorded copy"]
+        f"ARCHIVED study.yaml  (protocol)  the configuration when the seal was opened; the file has changed or is "
+        f"gone since, and ledger-archive/{old_sha}.yaml keeps the recorded copy"]
     # A copy that no longer has the recorded hash does not count.
     copy.write_bytes(old + b"# edited\n")
     assert [s.state for s in ledger.row_states(ledger_file)][1:3] == [ledger.CHANGED, ledger.CHANGED]

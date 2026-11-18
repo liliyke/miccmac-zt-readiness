@@ -1674,6 +1674,19 @@ def test_every_cut_of_the_guide_tool_lines_is_refused_before_it_connects_or_writ
                 assert re.search(r"\[(?!TODO\])[A-Z/]+\]\s+[A-Z]{3}-\d{2}\b", out) is None, out
             else:
                 assert code == 2 and out == "", (argv[:cut], out, err)
+        # Round 3 (V1, V3): a paste wrapped inside a quoted file name keeps the line break in the value.
+        for position, token in enumerate(tokens):
+            if not (len(token) > 1 and token[0] == token[-1] == '"'):
+                continue
+            value = argv[position]
+            for cut in range(1, len(value)):
+                for brk in ("\n", "\r\n"):
+                    wrapped = argv[:position] + [value[:cut] + brk + value[cut:]] + argv[position + 1:]
+                    code, out, err = run(wrapped)
+                    assert calls == [], wrapped
+                    assert (code, out) == (2, ""), (wrapped, err)
+                    assert "holds a line break or another control character" in err, err
+                    assert sorted(p.name for p in (study / "outputs").iterdir()) == before, wrapped
         code, out, err = run(argv)
     assert code == 0, err
     assert out == f"Report written to {argv[-1]}\n"

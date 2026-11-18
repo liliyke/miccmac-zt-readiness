@@ -1871,16 +1871,25 @@ def _check_config(study: Study) -> None:
       otherwise (restore it from its archive copy; recording it again after
       the first tool run does not make it pre-registered); a WARNING when it
       was never recorded (_check_config_rows).
-    - The pre-registered configuration is DIR/study.yaml as the ledger holds
-      it: R, the latest version recorded before the first tool-output or
-      facts row (in force at the first tool run), and U, the latest one
-      recorded before the first seal opening (in force when tool results
-      first became available). The configuration this run loaded (before
-      command-line overrides and before withdrawn hosts are left out) must
-      equal U in every setting: each difference is listed in one CRITICAL,
-      and the run is labelled a sensitivity run. U must equal R: a
-      difference is a WARNING, a deviation for the protocol log
-      (_check_preregistered)."""
+    - DIR/study.yaml as the ledger holds it: R, the latest version recorded
+      before the first tool-output or facts row (in force at the first tool
+      run), and U, the latest one recorded before the first seal opening (in
+      force when tool results first became available). The configuration
+      this run loaded (before command-line overrides and before withdrawn
+      hosts are left out) is compared with both (_check_preregistered):
+      - against U: each difference, except a setting put back to its value
+        in R, is listed in one CRITICAL (a change after unsealing);
+      - against the pre-registered analysis, R's settings with U's hosts
+        (protocol section 6: the settings are fixed before the first tool
+        run; host changes before unsealing were blind): any difference
+        labels the run a sensitivity run (config_differences);
+      - U against R: a difference is a WARNING, a deviation for the protocol
+        log, which says whether this run uses the changed settings and names
+        the archive copy for the pre-registered run.
+      With no version recorded before the first opening, the configuration
+      that opening recorded is the reference (_check_against_opening).
+    A copy of a recorded version (its ledger-archive copy) counts as that
+    version (_check_config_rows)."""
     parts = [text for text in (_check_config_rows(study), _check_preregistered(study)) if text]
     study.checked["config"] = "; ".join(parts) or "no problems found"
 
@@ -1975,13 +1984,14 @@ def _check_preregistered(study: Study) -> Optional[str]:
     name = study.config_path.name
     versions = study_ledger.study_config_rows(study.ledger_path, study.ledger, study.study_dir)
     default = study.study_dir / CONFIG_FILE
+    opened = _first_seal_opening(study)
     if not versions:
         if study_ledger.file_key(study.config_path) != study_ledger.file_key(default):
             study.add("config", WARNING, "",
                       f"{CONFIG_FILE} was never recorded in the ledger, so {name} cannot be compared with the "
                       "pre-registered configuration")
+        _check_against_opening(study, opened)
         return None
-    opened = _first_seal_opening(study)
     tool = study_ledger.first_tool_row(study.ledger)
     before_opening = [item for item in versions if opened is None or item[0] < opened[0]]
     if not before_opening:
@@ -1989,6 +1999,7 @@ def _check_preregistered(study: Study) -> Optional[str]:
                   f"{CONFIG_FILE} was first recorded at ledger line {versions[0][0] + 2}, after the seal was first "
                   f"opened (ledger line {opened[0] + 2 if opened else '?'}), so the settings used cannot be shown to "
                   "be the ones fixed in advance")
+        _check_against_opening(study, opened)
         return None
     u_index, u_row = before_opening[-1]
     if tool is None:
@@ -2020,8 +2031,10 @@ def _check_preregistered(study: Study) -> Optional[str]:
         # U's hosts (host changes before unsealing were blind: the seal keeps R's hosts in any case).
         if r_config is not None:
             labelled = _config_differences(dataclasses.replace(r_config, hosts=list(u_config.hosts)), used)
+            hosts_note = (f", with the hosts of ledger line {u_index + 2}"
+                          if set(r_config.hosts) != set(u_config.hosts) else "")
             study.config_reference = (f"the pre-registered settings ({CONFIG_FILE} as recorded at ledger line "
-                                      f"{at_tool[0] + 2}, in force at the first tool run)")
+                                      f"{at_tool[0] + 2}, in force at the first tool run{hosts_note})")
         else:
             labelled = critical
             study.config_reference = f"{CONFIG_FILE} as recorded at ledger line {u_index + 2}, when the seal first opened"
@@ -2047,14 +2060,15 @@ def _check_preregistered(study: Study) -> Optional[str]:
                     f"{at_tool[0] + 2}; version when the seal opened: line {u_index + 2}): {'; '.join(changed)}; "
                     "record this deviation in the protocol log")
             settings_changed = any(not item.startswith("hosts:") for item in changed)
-            if labelled and not critical:
+            if settings_changed and labelled:
                 copy = study.rel(study_ledger.archive_path(study.ledger_path, at_tool[1]))
-                hosts = (f", with the hosts of ledger line {u_index + 2}"
-                         if set(r_config.hosts) != set(u_config.hosts) else "")
-                text += (f"; this run uses the settings changed since then, so it is labelled a sensitivity run; "
-                         f"the pre-registered analysis uses those of ledger line {at_tool[0] + 2} (--config {copy}"
-                         f"{hosts})")
-            elif settings_changed and not labelled:
+                text += (f"; this run is labelled a sensitivity run: the pre-registered analysis uses the settings "
+                         f"of ledger line {at_tool[0] + 2} (--config {copy}")
+                if set(r_config.hosts) != set(u_config.hosts):
+                    text += (f", with the hosts of ledger line {u_index + 2}: copy that file, set its hosts to "
+                             f"those of line {u_index + 2}, and record the copy with ledger record --kind other")
+                text += ")"
+            elif settings_changed:
                 text += "; this run uses the settings in force at the first tool run, as pre-registered"
             study.add("config", WARNING, "", text)
     if not quiet:
@@ -2064,6 +2078,36 @@ def _check_preregistered(study: Study) -> Optional[str]:
                 "the first tool run and when the seal first opened")
     return (f"the configuration used equals {CONFIG_FILE} as in force when the seal first opened (ledger line "
             f"{u_index + 2}) and at the first tool run (ledger line {at_tool[0] + 2})")
+
+
+def _check_against_opening(study: Study, opened: Optional[Tuple[int, LedgerRow]]) -> None:
+    """With no version of DIR/study.yaml recorded before the seal first
+    opened (never recorded, or first recorded later), the configuration that
+    opening recorded (its ledger-archive copy) is the reference: the
+    configuration used must equal it in every setting. Each difference is
+    listed in one CRITICAL, and the run is labelled a sensitivity run."""
+    if opened is None:
+        return
+    index, row = opened
+    try:
+        if sha256_file(study.config_path) == row.sha256:
+            return
+    except OSError:
+        pass
+    reference, why = _recorded_config(study, row)
+    if reference is None:
+        study.add("config", CRITICAL, "",
+                  f"cannot load the configuration recorded when the seal first opened (ledger line {index + 2}: "
+                  f"{why}): the configuration used cannot be compared with it")
+        return
+    differences = _config_differences(reference, study.loaded_config or study.config)
+    if differences:
+        study.config_differences = differences
+        study.config_reference = f"the configuration recorded when the seal first opened (ledger line {index + 2})"
+        study.add("config", CRITICAL, "",
+                  f"the configuration used ({study.config_path.name}) differs from the one recorded when the seal "
+                  f"first opened (ledger line {index + 2}): {'; '.join(differences)}; this run is a sensitivity "
+                  "run, not the pre-registered analysis")
 
 
 def _reverted(current: StudyConfig, earlier: StudyConfig, used: StudyConfig) -> StudyConfig:
@@ -3543,8 +3587,9 @@ def _md_secondary(study: Study, analysis: Analysis, records: Optional[List[Dict[
     out += ["### 5.6 Level 5 rule", "",
             "Exact mismatches where the tool is at its top level and the manual level is at the configured cap "
             "below it (manual_max_level), counted separately; not applicable when the tool's top level is not "
-            "above the manual cap. Rule only (see 5.1) counts every exact mismatch that comes from how the levels "
-            "were derived rather than from the verdicts, the Level 5 cases included.", ""]
+            "above the manual cap. A typed manual level that does not follow the declared manual rule is not "
+            "counted here (l5_rule_only blank). Rule only (see 5.1) counts every exact mismatch that comes from "
+            "how the levels were derived rather than from the verdicts, the Level 5 cases included.", ""]
     rows = []
     for methodology in config.methodologies:
         selected = [r for r in analysis.l5 if r["methodology"] == methodology and r["scope"] in H1_SCOPES]

@@ -605,6 +605,14 @@ anything:
   instead; the run then stops with argparse's `error: argument <option>:
   expected one argument` (or, before the target, takes the target as the
   file name and cannot read it), exit 2 in every case.
+- A file name holding a line break or another control character is an
+  error too (`error: <option> holds a line break or another control
+  character ...`): a command wrapped inside a quoted file name when pasted
+  carries one, and it would otherwise pass every check and fail only when
+  the file is written, after the collection.
+- A live run with `--save-facts` or `--as-of` needs an explicit target:
+  with an empty `$ip` PowerShell drops the argument, and the run would
+  otherwise collect from `localhost`, the researcher's own machine.
 - A run whose report holds study results, one with `--facts` or
   `--save-facts`, or with `--connector` and `--as-of` (the protocol's tool
   runs), needs `-o FILE` or `--stdout`. With neither it stops with `error:

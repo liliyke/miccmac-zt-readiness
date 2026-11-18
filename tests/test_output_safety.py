@@ -191,6 +191,65 @@ def test_a_blank_file_name_is_an_error(args, flag, study, capsys):
     assert _snapshot() == before  # nothing written
 
 
+@pytest.mark.parametrize("args, flag", [
+    (_live(save="outputs/H2-\nfacts.json"), "--save-facts"),
+    (_live(out="outputs/H2-cm\nmi.json"), "--output"),
+    (_live(out="outputs/H2-cmmi.json\r"), "--output"),
+    (_replay("outputs/H1-cisa-\nztmm.json"), "--output"),
+    (["assess", "--facts", "outputs/H1-\nfacts.json", "--format", "json", "-o", "outputs/x.json",
+      "--as-of", SESSION_DATE], "--facts"),
+    (_live() + ["--attestation", "inputs/attes\ntation.json"], "--attestation"),
+    (_live() + ["--inventory-record", "inputs/inventory-\trecord.json"], "--inventory-record"),
+    (_live() + ["--config", "inputs/con\nfig.yaml"], "--config"),
+    (["assess", TARGET, "--connector", "ssh-osquery", "--ssh-user", "assessor", "--ssh-key", "keys/id_\ned25519",
+      "--format", "json", "-o", "outputs/H2-cmmi.json", "--as-of", SESSION_DATE], "--ssh-key"),
+])
+def test_a_file_name_with_a_line_break_is_an_error_before_anything_runs(args, flag, study, capsys):
+    """Round 3 (V1, V3): a step-5 line pasted with a line break inside a quoted file name passed every check,
+    collected, and failed only when it wrote the file. Such a value is refused before anything is read."""
+    before = _snapshot()
+    assert main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.err == (f"error: {flag} holds a line break or another control character, as a command wrapped "
+                            "when pasted does; type the command again on one line (nothing was read or collected)\n")
+    assert captured.out == ""
+    assert study == []  # no connection
+    assert _snapshot() == before  # nothing written
+
+
+def test_list_checks_refuses_a_config_name_with_a_line_break(capsys):
+    assert main(["list-checks", "--config", "inputs/con\nfig.yaml", "--format", "json"]) == 2
+    assert capsys.readouterr().err.startswith("error: --config holds a line break")
+
+
+@pytest.mark.parametrize("extra", [["--save-facts", "outputs/H2-facts.json", "-o", "outputs/H2-cmmi.json"],
+                                   ["--as-of", SESSION_DATE, "-o", "outputs/H2-cmmi.json"]])
+def test_a_live_study_run_needs_its_target(extra, study, capsys):
+    """Round 3 (V3): with an empty $ip PowerShell drops the target, and the live run fell back to localhost,
+    collecting (and saving) the researcher's own machine. A study run never falls back."""
+    before = _snapshot()
+    assert main(["assess", "--connector", "ssh-osquery", *SSH, "--format", "json", *extra]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ("error: a live run with --save-facts or --as-of needs the target's address (for "
+                            "example: assess 192.0.2.10 ...); it never defaults to localhost\n")
+    assert (captured.out, study) == ("", [])
+    assert _snapshot() == before
+
+
+def test_a_facts_save_that_fails_after_the_collection_says_the_facts_were_collected(study, capsys, monkeypatch):
+    """Round 3 (V3): a failed save must not read like a refusal, so the researcher reverts before repeating."""
+    def full_disk(path, envelope):
+        raise facts_file.FactsFileError(f"cannot write --save-facts file {path}: [Errno 28] No space left on device")
+
+    monkeypatch.setattr(facts_file, "save_envelope", full_disk)
+    assert main(_live()) == 2
+    err = capsys.readouterr().err
+    assert err == ("error: cannot write --save-facts file outputs/H2-facts.json: [Errno 28] No space left on device; "
+                   f"the facts were collected from {TARGET} but not saved, so running the command again collects "
+                   "again\n")
+    assert study == [(TARGET, True)]
+
+
 @pytest.mark.parametrize("value", ["", "   "])
 def test_list_checks_refuses_a_blank_config(value, capsys):
     """The enabled-check export (the fairness control) with an unset
