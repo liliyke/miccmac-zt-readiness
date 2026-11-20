@@ -14,7 +14,7 @@ interpretation. No command fills those fields.
 |---|---|
 | `worksheet` | Blank manual worksheet per host: check id, property, intent, control references, and the levels you may enter. No results. |
 | `ledger` | `record` hashes files and keeps a copy of each in `ledger-archive\` (a worksheet is linted first; a file in `worksheets\`, `outputs\` or `register\` is hashed once, never again); `verify` re-hashes them; `status` lists what each host has; `withdraw` takes a host out of the study. |
-| `health` | Checks facts files and tool outputs after a run (with `--ledger` and `--host`, against the ledger too), or input files before the study (`--inputs`). Prints ok/PROBLEM lines only, never a result. |
+| `health` | Checks facts files and tool outputs after a run (with `--ledger` and `--host`, against the ledger too), or input files before the study (`--inputs`: their dates, and whether they give every entry the checks read). Prints ok/PROBLEM lines only, never a result. |
 | `register-sheet` | Register review sheets. Refuses until every host of the study has its worksheet hashed and unchanged, or is withdrawn. |
 | `agreement` | The analysis plan's counts, rates and intervals, behind the same seal. |
 | `synthetic` | A made-up study folder for testing all of the above. Never study data. |
@@ -93,15 +93,24 @@ Replace the parts in angle brackets.
   hashes the bytes, so settle the encoding before you record a file.
   (`list-checks.json` above is UTF-16 and is fine as it is.)
 
-Check every date in the input files before the first session. This runs the
-checks on the input files alone and prints only whether each date they read
-is readable:
+Check every date and entry in the input files before the first session.
+This runs the checks on the input files alone and prints only whether each
+date they read is readable, and whether each file gives every entry the
+checks read from it:
 
     & $py -m miccmac_study health --inputs --as-of 2026-11-23 (Get-ChildItem inputs\*-attestation.json, inputs\*-inventory-record.json).FullName
 
 Use the first session's date for `--as-of`. Every line must start with
 `ok`. A PROBLEM names the field and your value: fix the file and run it
-again. Then hash the fixed inputs:
+again. `every entry the checks read from an attestation is given: no,
+absent: <names>` names entries the file leaves out: each would leave its
+check unevaluated, as a missing-data entry of the register that the H2
+reviewers then judge. Add them. Only an entry left out on purpose (a
+decision you record in the protocol log) is named with `--allow-missing
+<name>` (repeat it for each), which turns the PROBLEM into an ok line. For
+an inventory record the line names an absent `device_id`, `tracked` or
+`last_reviewed`, which INV-01 or INV-04 would count against the device.
+Then hash the fixed inputs:
 
     & $py -m miccmac_study ledger record --ledger ledger.csv --host STUDY --kind list-checks inputs\list-checks.json
     & $py -m miccmac_study ledger record --ledger ledger.csv --host STUDY --kind other --note "study configuration" study.yaml
@@ -144,11 +153,24 @@ The status line must print nothing. The last line prints the commit that
 step 8 checks (`$commit`). The study venv uses Python 3.12; any supported
 Python (3.9 or later) gives the same verdicts, including Windows CUR-01.
 
+The tool changed on 20 November 2026: CMMI became its default maturity
+lens, and the risk register gained missing-data entries, next-level hints
+and fields arranged after NIST SP 800-30 Rev. 1, whose drafted threat-source
+types and events await your review in `docs\sp800-30-review.md`. Confirm or
+correct them before this freeze, then run the test suite and the synthetic
+kit again (test checklist steps 1, 2 and 6); if the review cannot finish in
+time, that file says how to keep `data\` unchanged during the study. Never
+edit `miccmac\` or `data\` between this freeze and the last host's tool run.
+
 ## Per host
 
 One session per host, in the order below. Each session is a new PowerShell
 window, so start with the same line as Setup. Windows hosts use
-`--connector ssh-osquery-windows` in step 5.
+`--connector ssh-osquery-windows` in step 5. Since 20 November CMMI is the
+tool's default maturity lens; steps 5 and 6 still name `--methodology cmmi`
+and `--methodology cisa-ztmm`, and must: step 6 without it would write CMMI
+levels under the CISA ZTMM name (step 7 then refuses the file, and step 8
+reports it).
 
     $repo = "<path to miccmac-zt-readiness>"; $py = "$repo\.venv\Scripts\python.exe"; $env:PYTHONPATH = $repo
     Set-Location "<study folder>"
@@ -202,8 +224,15 @@ window, so start with the same line as Setup. Windows hosts use
   step 4.
 - Step 5: one live collection per revert. If step 5 stops with an error
   after it connected (`could not SSH ...`, `cannot write --save-facts file
-  ...; the facts were collected ... but not saved`, or any error once the
-  collection ran), revert again (step 4) before you repeat it. Keep the
+  ...; the facts were collected ... but not saved`, or any other error once
+  the collection ran) and the message does not say the facts were saved,
+  revert again (step 4) before you repeat it. An error that says `no report
+  was written. The facts were saved to outputs\<H>-facts.json, so the report
+  can be built from them with --facts ...` came after the facts were saved:
+  do not collect again, but build the CMMI report from them with step 6's
+  command, with `cmmi` in place of `cisa-ztmm` (twice). If that stops with
+  the same error, write both lines in the session log and stop this host's
+  session: the tool needs a fix, a protocol deviation. Keep the
   options in the guide's order: `--save-facts` and `--as-of` come first and
   `-o` last, so a line cut or wrapped anywhere when pasted is refused before
   it connects. For example: `--save-facts requires --connector`,
@@ -212,8 +241,9 @@ window, so start with the same line as Setup. Windows hosts use
   or, for a line that lost its `-o`, `error: this run's report holds
   results, so it goes to a file ...`. A cut right after `assess`, inside or
   right after `$ip`, or just after the first two dashes of `--save-facts`
-  runs, but only prints the tool's stub report (every check `[TODO]`, no
-  result) and connects nowhere. A
+  runs, but only prints the tool's stub report (every check `[TODO]`, every
+  CMMI level `Unassessed`, the CMMI legend's score bands, no result) and
+  connects nowhere. A
   `--connector` line without `--save-facts` and `--as-of` is not a study run
   and would print the host's report. An empty `$key` stops with `error:
   argument --ssh-key: expected one argument`, and an empty `$ip` with `a
@@ -223,6 +253,13 @@ window, so start with the same line as Setup. Windows hosts use
   names the saved facts: do not collect again, but build the CMMI report
   from them with step 6's command, with `cmmi` in place of `cisa-ztmm`
   (twice).
+- Step 7: `ledger record --kind tool-output` refuses an output whose
+  methodology is not the one its name says (for example CMMI levels in
+  `<H>-cisa-ztmm.json`, from a step-6 line that lost `--methodology
+  cisa-ztmm`) and records nothing. Do not open the file: move it, unopened,
+  out of `outputs\` (it was never hashed), write the refusal in the session
+  log, and score the saved facts again with step 6's command and the
+  methodology the file name says (`cmmi` for `<H>-cmmi.json`).
 - Steps 5 and 6: study runs never overwrite a file, and `-o` never replaces
   a facts file. A repeated command is refused before anything runs
   (`error: refusing to replace ...`): choose a new file name. `--overwrite`
@@ -231,6 +268,9 @@ window, so start with the same line as Setup. Windows hosts use
 - Step 8: every line should start with `ok`. These are expected:
   - `ok ... extended facts: N of M items collected (not collected: ...)`:
     some extended items need elevation; no check reads them.
+  - `ok ... methodology matches the file name (cmmi)` (and `(cisa-ztmm)`) and
+    `ok      pair: methodologies differ: yes`: each output holds the
+    methodology its name says.
   - With decision 3 "exclude": `PROBLEM ... inputs match the ledger for H1:
     no input rows for H1 in the ledger` on each output.
   - Only in rehearsals, before the freeze: `PROBLEM ... tool_tree_clean is true`.
@@ -355,9 +395,32 @@ fallback, decision 9) leaves the study only through a dated ledger row:
   (`ledger status` lists it as `STUDY  protocol`) on every run that opens
   the seal. A worksheet hashed after the first such row is CRITICAL, so
   every blind pass ends before the first register-sheet or agreement run.
-- Review sheet: accurate Y/N, actionable Y/N, prioritized Y/N/UNSURE, a
-  one-line reason. Judge every entry. Missed gaps: gaps found manually that
-  have no entry.
+- Review sheet: one row per register entry of the primary methodology's
+  output, in the tool's order: findings (`entry_type` finding: FAIL,
+  PARTIAL) first, then missing-data entries (`entry_type` missing-data: an
+  ERROR, or an organizational input not supplied). A check whose control is
+  missing is a finding; a missing-data entry is a check the tool could not
+  evaluate. The tool's columns:
+  `recommended_fix` (the action to take: the fix for a finding; for a
+  missing-data entry how to supply the data, then the fix), `rating_basis`
+  (`finding`, or `if the control is absent`: a missing-data entry's
+  `risk_rating` is the rating the finding would get), `missing_data` and
+  `how_to_supply` (missing-data entries only), `next_level` (the primary
+  methodology's hint; the CISA ZTMM hints are not reviewed), and
+  `threat_source_type`, `threat_event` and `sp800_30_review` (the SP 800-30
+  fields, `drafted` until confirmed).
+- Judge every entry, missing-data entries too, against the criteria of
+  protocol section 7. Proposed criteria, to confirm there before the freeze:
+  `accurate` Y/N = the row's claim is true (for a finding, its detail; for a
+  missing-data entry, that the data named was missing or unreadable);
+  `actionable` Y/N = `recommended_fix` can be followed as written;
+  `prioritized` Y/N/UNSURE = the row's place within its group is right. The
+  optional `next_level_accurate` (is the hint right?) and `threat_plausible`
+  (do the drafted threat source type and event fit?) are descriptive: blank
+  answers are fine, and neither ever enters H2's k. Then a one-line reason.
+- Missed gaps: checks you found FAIL or PARTIAL that have no finding in the
+  register (no entry at all, or only a missing-data entry, which reports no
+  gap), and gaps outside the checks.
 - Record each register sheet once, when it is final: like worksheets, they
   are frozen once hashed.
 - `agreement` exit 0: outputs written; 3: written, with CRITICAL integrity
@@ -384,6 +447,26 @@ before the freeze.
 - Every register entry must be judged (accurate and actionable both
   answered, or either one N); an entry not judged is CRITICAL (exit 3) and
   left out of n.
+- Missing-data entries count in H2 like findings: `h2_unit: all-entries` in
+  study.yaml (the default) tests the threshold on every entry. `h2_unit:
+  findings` tests it on the findings only. agreement reports both either
+  way (summary section 4.1, `register_h2.csv`), so choose the pre-registered
+  unit before the freeze. An entry for a missing input is close to
+  automatically accurate when the input really is missing, so the split
+  matters for reading H2.
+- A tool ERROR now also has a missing-data register entry (it still counts as
+  a disagreement and scores 0, as above).
+- The register's threat-source types and threat events are drafted with AI
+  assistance: confirm them before the freeze (`docs\sp800-30-review.md`), or
+  accept that the baseline outputs say `drafted`, and declare it in the
+  AI-use log. H2 then judges entries that carry AI-drafted text.
+- Inputs that are present but incomplete stay findings, as the checks score
+  them: an attestation entry given as null, ASM-01 or ASM-02 "performed" with
+  no date or `interval_days` (PARTIAL), an inventory record without
+  `device_id`, `tracked` or `last_reviewed` (FAIL). The one fix per check does
+  not always match a PARTIAL result (CTL-02 "no elevation path", ASM-01 and
+  ASM-02 "no date or interval"): a known limitation for the actionability
+  judgments.
 - Prioritization rate = Y / (Y + N): UNSURE is left out of n and counted
   separately; no threshold.
 - The level rule (decision 4), in study.yaml:
@@ -436,6 +519,7 @@ folder, and never share a key. The analysis CSVs contain none of these
 
 Work in scratch folders under `$env:TEMP\miccmac-check`, outside the
 repository and the study folder, in a window started with the Setup line.
+After the tool change of 20 November, repeat at least steps 1, 2 and 6.
 The synthetic outputs show the tool's detail strings, which name its policy
 limits; they describe no study host. To repeat the checklist, close Excel,
 remove the old scratch folders from outside them, and start again at
@@ -453,7 +537,7 @@ step 2:
        Set-Location $env:TEMP\miccmac-check\synthetic
        & $py -m miccmac_study health --expect-as-of 2026-11-23 --list-checks inputs\list-checks.json (Get-ChildItem outputs\*.json).FullName
        foreach ($h in "H1","H2","H3","H4","H5") { & $py -m miccmac_study health --pair --ledger ledger.csv --host $h "outputs\$h-facts.json" "outputs\$h-cmmi.json" "outputs\$h-cisa-ztmm.json" }
-       & $py -m miccmac_study health --inputs --as-of 2026-11-23 (Get-ChildItem inputs\*-attestation.json, inputs\*-inventory-record.json).FullName
+       & $py -m miccmac_study health --inputs --as-of 2026-11-23 --allow-missing firmware_currency (Get-ChildItem inputs\*-attestation.json, inputs\*-inventory-record.json).FullName
        & $py -m miccmac_study ledger verify --ledger ledger.csv
        & $py -m miccmac_study ledger status --ledger ledger.csv --hosts H1,H2,H3,H4,H5
 
@@ -462,8 +546,12 @@ step 2:
    tool_tree_clean is true` and agreement WARNINGs about the tool's tree and
    the analysis code; nothing else is a PROBLEM or CRITICAL. H2's facts
    show `(not collected: audit_policy)` on an ok line, as a Windows host
-   without elevation would. The `STUDY  protocol` row of `ledger status`
-   is register-sheet's seal opening while the kit was built.
+   without elevation would. The kit's H3 attestation leaves
+   `firmware_currency` out on purpose, hence `--allow-missing
+   firmware_currency` (its ok line names it): H3's register has a CUR-03
+   missing-data row, and summary section 4.1 counts it. The `STUDY
+   protocol` row of `ledger status` is register-sheet's seal opening while
+   the kit was built.
 3. Blank worksheet (10 min). Open `blank-worksheets\H1-worksheet.csv` in
    Excel. Confirm it shows no results, thresholds, queries or level cutoffs:
    only check ids, properties, intents, control references, the
@@ -632,5 +720,5 @@ In `analysis\` (prefixed `SYNTHETIC-` for synthetic data, which also gets a bann
 - `check_agreement.csv`: verdict agreement for device-observable, input-driven and all checks: k, n, rate, Wilson interval, host-bootstrap interval (boot_*), Cohen's kappa and kappa_note.
 - `confusion_levels_<methodology>.csv`: counts of tool level against manual level over host x property pairs, with manual_unassessed and manual_missing columns.
 - `confusion_verdicts.csv`: counts of tool status against manual verdict over compared checks.
-- `register_h2.csv`: per host and TOTAL: entries, judged, not_judged, accurate Y, actionable Y, k, n, rate, Wilson interval (TOTAL row: threshold result and host-bootstrap interval), prioritized Y/N/UNSURE, prioritization k/n, rate and Wilson interval, missed gaps.
+- `register_h2.csv`: per host and TOTAL: entries, judged, not_judged, accurate Y, actionable Y, k, n, rate, Wilson interval (TOTAL row: threshold result and host-bootstrap interval), prioritized Y/N/UNSURE, prioritization k/n, rate and Wilson interval, missed gaps; then the same H2 counts for findings (with their rate and Wilson interval, and on the TOTAL row their threshold result and bootstrap interval) and for missing-data entries, the optional next_level_accurate and threat_plausible Y/N counts, and on the TOTAL row h2_unit, which says which threshold result is the pre-registered test.
 - `disagreements.csv`: every exact level mismatch and verdict mismatch, with rule_only, and blank root_cause, action and assessor_error_note.

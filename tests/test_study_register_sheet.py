@@ -8,7 +8,14 @@ the one seal-opening ledger row each run that writes sheets appends.
 Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts with a provenance block per the miccmac-provenance/1 spec and
 the register from miccmac.risk_register.build_risk_register. Everything is
-synthetic and lives under tmp_path."""
+synthetic and lives under tmp_path.
+
+In this file, AI assistance also covers the tests added with missing-data
+entries, next-level hints and the SP 800-30 fields: the new review-sheet
+columns, missing-data and ERROR rows, an output written before those fields
+existed, a malformed nested field, and a forced sheet without next-level
+hints (test_forced_run_records_the_reason_in_the_ledger_first was updated for
+the note that says so)."""
 from __future__ import annotations
 
 import csv
@@ -223,7 +230,9 @@ def test_forced_run_records_the_reason_in_the_ledger_first(study, capsys):
     assert len(rows) == 2                     # the FORCE row only, no seal-opening row
     forced = rows[-1]
     assert (forced.host_code, forced.kind, forced.path) == (ledger.STUDY_HOST_CODE, "other", "study.yaml")
-    assert forced.note == "register sheets generated before every worksheet was hashed: pipeline dry run on synthetic data"
+    # Deliberately changed: the note says that the forced sheets show no next-level hint.
+    assert forced.note == ("register sheets generated before every worksheet was hashed: pipeline dry run on "
+                           "synthetic data (next_level cells left blank: the seal was closed)")
     assert forced.note.startswith(register_sheet.FORCE_NOTE_PREFIX)
     assert [state for _, state in ledger.verify_rows(study / "ledger.csv")] == [ledger.OK, ledger.OK]
     assert ledger.archive_path(study / "ledger.csv", forced).is_file()
@@ -509,3 +518,103 @@ def test_library_entry_point_returns_paths(study):
                                        "H2-register-review.csv", "H2-missed-gaps.csv"]
     with pytest.raises(StudyError, match="non-empty --reason"):
         register_sheet.generate_register_sheets(study, force_reason="  ")
+
+
+# ---------- missing-data entries, hints and the SP 800-30 columns ----------
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+def _write_output_with_inputs(study, host, attestation, inventory_record, methodology="cmmi"):
+    """A tool output whose register has missing-data entries."""
+    context = {"facts": _win_facts(), "attestation": attestation}
+    if inventory_record is not None:
+        context["inventory_record"] = inventory_record
+    assessment = run_assessment(TARGET, context=context, methodology_name=methodology)
+    entries = [e.to_dict() for e in build_risk_register(assessment)]
+    path = study / "outputs" / f"{host}-{methodology}.json"
+    path.write_text(json.dumps({"assessment": assessment.to_dict(), "risk_register": entries}, indent=2),
+                    encoding="utf-8")
+    return entries
+
+
+def test_missing_data_entries_get_review_rows_with_the_new_columns(study, capsys):
+    attestation = {k: v for k, v in ATTESTATION.items() if k != "firmware_currency"}
+    attestation["vulnerability_scanning"] = {"performed": True, "last_scan": "23/11/2026", "interval_days": 30}
+    entries = _write_output_with_inputs(study, "H1", attestation, None)
+    _hash_worksheets(study, "H1", "H2")
+    assert _run(study) == 0
+    rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)
+    assert [r["check_id"] for r in rows] == [e["check_id"] for e in entries]
+    by_id = {r["check_id"]: r for r in rows}
+    kinds = {e["check_id"]: e["entry_type"] for e in entries}
+    assert {kinds[c] for c in ("CUR-03", "INV-01", "INV-04", "ASM-01")} == {"missing-data"}
+    assert by_id["ASM-01"]["tool_status"] == "ERROR"            # an ERROR row reaches the sheet
+    for entry in entries:
+        row = by_id[entry["check_id"]]
+        assert row["entry_type"] == entry["entry_type"]
+        assert row["recommended_fix"] == entry["sp800_30"]["response"]
+        assert row["next_level"] == entry["next_level"]["text"]
+        assert (row["threat_source_type"], row["threat_event"], row["sp800_30_review"]) == (
+            entry["sp800_30"]["threat_source_type"], entry["sp800_30"]["threat_event"], entry["sp800_30"]["review"])
+        if entry["entry_type"] == "missing-data":
+            assert row["rating_basis"] == "if the control is absent"
+            assert (row["missing_data"], row["how_to_supply"]) == (entry["missing_data"]["what"],
+                                                                  entry["missing_data"]["how_to_supply"])
+            assert row["recommended_fix"].startswith(entry["missing_data"]["how_to_supply"])
+        else:
+            assert row["rating_basis"] == "finding" and row["missing_data"] == row["how_to_supply"] == ""
+            assert row["recommended_fix"] == (entry["remediation"] or "")    # findings: unchanged
+        assert all(row[c] == "" for c in register_sheet.REVIEW_JUDGMENT_COLUMNS)
+    assert by_id["CUR-03"]["missing_data"] == ('The attestation file has no "firmware_currency" entry, so CUR-03 '
+                                               "could not be evaluated.")
+    assert by_id["INV-01"]["missing_data"].startswith("No inventory-system record was given")
+
+
+def test_an_output_from_before_the_new_fields_still_gives_a_sheet(study, capsys):
+    data = json.loads((study / "outputs" / "H1-cmmi.json").read_text(encoding="utf-8"))
+    for entry in data["risk_register"]:
+        for key in ("entry_type", "missing_data", "next_level", "sp800_30"):
+            entry.pop(key)
+    data["risk_register"].append(dict(data["risk_register"][0], check_id="X-99", status="ERROR"))
+    (study / "outputs" / "H1-cmmi.json").write_text(json.dumps(data), encoding="utf-8")
+    _hash_worksheets(study, "H1", "H2")
+    assert _run(study) == 0
+    rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)
+    assert {r["entry_type"] for r in rows[:-1]} == {"finding"} and rows[-1]["entry_type"] == "missing-data"
+    assert all(r["recommended_fix"] == e["remediation"] for r, e in zip(rows, data["risk_register"]))
+    assert all(r["next_level"] == r["threat_event"] == "" for r in rows)
+
+
+@pytest.mark.parametrize("key, value", [("missing_data", "absent"), ("next_level", ["text"]), ("sp800_30", 3)])
+def test_a_malformed_nested_field_is_refused_and_nothing_is_written(study, capsys, key, value):
+    data = json.loads((study / "outputs" / "H1-cmmi.json").read_text(encoding="utf-8"))
+    data["risk_register"][0][key] = value
+    (study / "outputs" / "H1-cmmi.json").write_text(json.dumps(data), encoding="utf-8")
+    _hash_worksheets(study, "H1", "H2")
+    assert _run(study) == 2
+    err = capsys.readouterr().err
+    assert f"H1: risk register entry 1 in " in err and f"is malformed: its {key} is a" in err
+    assert not (study / "register").exists()
+
+
+def test_a_forced_sheet_shows_no_next_level_hint(study, capsys):
+    """Critique: a sheet forced before the seal opened must not show the
+    tool's maturity levels; once the seal is open the hints appear."""
+    _hash_worksheets(study, "H1")
+    assert _run(study, "--force-before-unseal", "--reason", "early look") == 0
+    rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)
+    assert rows and all(r["next_level"] == "" for r in rows)
+    assert all(r["threat_event"] for r in rows)
+    _hash_worksheets(study, "H2")
+    assert _run(study, "--overwrite") == 0
+    rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)
+    assert all(r["next_level"].startswith(("Fixing this check", "Controlled", "Monitored", "Inventoried", "Claimed",
+                                           "Minimized", "Assessed", "Current", "If this check")) for r in rows)
+
+
+@pytest.mark.parametrize("column", ["next_level_accurate", "threat_plausible"])
+def test_the_optional_judgment_columns_are_protected_too(study, capsys, column):
+    _hash_worksheets(study, "H1", "H2")
+    assert _run(study) == 0
+    _set_cell(_sheet(study, "H1"), 1, column, "Y")
+    assert _run(study, "--overwrite") == 2
+    assert f"{column} is filled in" in capsys.readouterr().err

@@ -41,6 +41,15 @@ Everything is synthetic and nothing connects anywhere. The tool's build
 state (tool_commit, tool_tree_clean) is pinned to what a clean checkout
 reports, so the health checks do not depend on the git state of the
 working copy that runs the tests.
+
+In this file, AI assistance also covers the changes made with the
+register's missing-data entries and CMMI as the default lens: the kit's H3
+leaves firmware_currency out of its attestation, so health --inputs gets
+--allow-missing firmware_currency here and in GuideStudy.setup (each test
+says so), H3's CUR-03 missing-data entry is followed through both outputs,
+the review sheet and H2, missed gaps are compared with findings only, the
+blinding checks cover the new register texts, and every guide line that
+writes a tool output names the methodology its file name names.
 """
 from __future__ import annotations
 
@@ -73,7 +82,7 @@ from miccmac import clock, facts_file, provenance
 from miccmac.cli import build_parser as miccmac_parser
 from miccmac.cli import main as miccmac_main
 from miccmac.engine import enabled_check_ids, run_assessment
-from miccmac.metadata import load_check_metadata
+from miccmac.metadata import load_check_metadata, load_register_metadata
 from miccmac_study import agreement as study_agreement
 from miccmac_study import ledger as study_ledger
 from miccmac_study import synthetic
@@ -229,6 +238,17 @@ def _critical(summary: dict) -> List[tuple]:
     return sorted((r["check"], r["host"]) for r in summary["integrity"]["checks"] if r["result"] == "CRITICAL")
 
 
+def _register_texts(entries) -> set:
+    """Every text a register entry carries: detail, fix, what is missing and
+    how to supply it, the next-level hint, the threat event and the response."""
+    found = set()
+    for e in entries or []:
+        missing, hint, sp800_30 = (e.get(k) or {} for k in ("missing_data", "next_level", "sp800_30"))
+        found.update(s for s in (e["detail"], e["remediation"], missing.get("what"), missing.get("how_to_supply"),
+                                 hint.get("text"), sp800_30.get("threat_event"), sp800_30.get("response")) if s)
+    return found
+
+
 def _tool_texts(root: Path, hosts: Sequence[str]) -> set:
     """Every result string the tool wrote for these hosts: details, evidence,
     register text, plus the status and tier words."""
@@ -237,7 +257,7 @@ def _tool_texts(root: Path, hosts: Sequence[str]) -> set:
         for methodology in METHODOLOGIES:
             output = _output(root, host, methodology)
             found.update(s for c in output.checks() for s in (c["detail"], c["evidence"]) if s)
-            found.update(s for e in output.risk_register or [] for s in (e["detail"], e["remediation"]) if s)
+            found.update(_register_texts(output.risk_register))
     return found
 
 
@@ -424,11 +444,53 @@ def test_health_is_ok_for_every_facts_file_and_tool_output(pipeline, monkeypatch
 
 
 def test_health_inputs_finds_every_date_readable(pipeline, monkeypatch):
+    """Deliberately changed: a file named by its role also gets the entry
+    line, and the kit's H3 attestation leaves firmware_currency out, which
+    is a PROBLEM unless named with --allow-missing."""
     monkeypatch.chdir(pipeline.root)
     files = [f"inputs/{name(h)}" for h in HOSTS for name in (synthetic.attestation_name, synthetic.inventory_name)]
-    code, out, _ = _run(main, ["health", "--inputs", "--as-of", SESSION, *files])
+    code, out, _ = _run(main, ["health", "--inputs", "--as-of", SESSION, "--allow-missing", "firmware_currency",
+                               *files])
     assert code == 0, out
-    assert out.splitlines() == [f"ok      {f}: every date the checks read is readable" for f in files]
+    expected = []
+    for f in files:
+        role = "an attestation" if f.endswith("-attestation.json") else "an inventory record"
+        entries = f"ok      {f}: every entry the checks read from {role} is given"
+        if f == "inputs/H3-attestation.json":
+            entries += ", apart from firmware_currency (--allow-missing)"
+        expected += [f"ok      {f}: every date the checks read is readable", entries]
+    assert out.splitlines() == expected
+    code, out, _ = _run(main, ["health", "--inputs", "--as-of", SESSION, *files])
+    assert code == 1
+    assert [line for line in out.splitlines() if line.startswith("PROBLEM")] == [
+        "PROBLEM inputs/H3-attestation.json: every entry the checks read from an attestation is given: no, absent: "
+        "firmware_currency (each leaves its check not evaluated, as missing data; add each one, or name one left out "
+        "on purpose with --allow-missing NAME)"]
+
+
+def test_h3s_missing_firmware_entry_runs_through_the_register_and_h2(pipeline):
+    """The kit's missing-owner host has no firmware_currency attestation: CUR-03
+    is a missing-data entry in both outputs, in the same place, and gets a
+    judged review row that counts in H2."""
+    plan = synthetic.plan_host("H3", 2, synthetic.DEFAULT_SEED, dt.date.fromisoformat(SESSION))
+    assert plan.profile == "missing-owner" and synthetic.OMITTED_ATTESTATION_ENTRY not in plan.attestation
+    registers = {m: _output(pipeline.root, "H3", m).risk_register for m in METHODOLOGIES}
+    for methodology, register in registers.items():
+        entry = next(e for e in register if e["check_id"] == "CUR-03")
+        assert (entry["entry_type"], entry["status"]) == ("missing-data", "NOT_APPLICABLE"), methodology
+        assert entry["missing_data"]["field"] == "firmware_currency"
+        assert entry["next_level"]["methodology"] == methodology
+    assert [e["check_id"] for e in registers["cmmi"]] == [e["check_id"] for e in registers["cisa-ztmm"]]
+    review = read_csv(pipeline.root / "register" / "H3-register-review.csv", REGISTER_REVIEW_COLUMNS)
+    row = next(r for r in review if r["check_id"] == "CUR-03")
+    assert (row["entry_type"], row["rating_basis"]) == ("missing-data", "if the control is absent")
+    assert row["missing_data"].startswith('The attestation file has no "firmware_currency" entry')
+    assert normalize_yes_no(row["accurate"]) and normalize_yes_no(row["actionable"])
+    h2 = {r["host"]: r for r in _rows(_analysis(pipeline.root, "register_h2.csv"))}
+    assert (h2["H3"]["missing_data_entries"], h2["TOTAL"]["missing_data_entries"]) == ("1", "1")
+    assert int(h2["TOTAL"]["finding_judged"]) + int(h2["TOTAL"]["missing_data_judged"]) == int(h2["TOTAL"]["n"])
+    for host in ("H1", "H2", "H4", "H5"):
+        assert all(e["entry_type"] == "finding" for e in _output(pipeline.root, host).risk_register), host
 
 
 def test_ledger_verifies_and_every_worksheet_was_hashed_before_its_tool_outputs(pipeline):
@@ -615,6 +677,10 @@ def test_blank_worksheets_contain_no_tool_derived_text(pipeline):
     forbidden = set()
     forbidden.update(m.remediation for m in metadata.values())
     forbidden.update(["IG1", "IG2", "IG3", "LOW", "MEDIUM", "HIGH", "UNRATED", "MODERATE", "CRITICAL"])
+    # The SP 800-30 fields of the register: threat events, source types, review states.
+    forbidden.update(m.threat_event for m in load_register_metadata().values())
+    forbidden.update(["adversarial", "accidental", "structural", "environmental", "drafted", "missing-data",
+                      "if the control is absent", "threat_source_type", "threat_event", "next_level"])
     # Tool statuses only: UNASSESSED is an assessor's option, named in the sheet's own instructions.
     forbidden.update(["PASS", "PARTIAL", "FAIL", "NOT_APPLICABLE", "NOT_IMPLEMENTED", "ERROR"])
     forbidden.update(["Check not yet implemented", "Excluded:", "SELECT", "FROM ", "day(s)", "7-day", "30-day",
@@ -626,7 +692,7 @@ def test_blank_worksheets_contain_no_tool_derived_text(pipeline):
         for methodology in METHODOLOGIES:
             output = _output(root, host, methodology)
             forbidden.update(s for c in output.checks() for s in (c["detail"], c["evidence"]) if s)
-            forbidden.update(s for e in output.risk_register for s in (e["detail"], e["remediation"]) if s)
+            forbidden.update(_register_texts(output.risk_register))
 
     instruction = META_HELP["worksheet_format"]
     assert all(word in instruction for word in ("PASS", "PARTIAL", "FAIL", "N/A", "UNASSESSED", "NONE"))
@@ -710,7 +776,10 @@ def test_register_sheets_hold_valid_dummy_judgments(pipeline):
         assert [r["gap_no"] for r in gaps] == ["1", "2", "3", "4", "5"]
         filled = [r for r in gaps if r["description"]]
         assert len(filled) <= 2 and all(r["description"].startswith("synthetic:") for r in filled)
-        assert not ({r["check_id"] for r in filled if r["check_id"]} & {e["check_id"] for e in register})
+        # A missed gap has no finding in the register (deliberately changed: a check with only a
+        # missing-data entry reports no gap, so it can be a missed gap).
+        findings = {e["check_id"] for e in register if e["entry_type"] == "finding"}
+        assert not ({r["check_id"] for r in filled if r["check_id"]} & findings)
         total_gaps += len(filled)
     assert total_gaps > 0
 
@@ -912,7 +981,9 @@ class GuideStudy:
         (self.root / "study.yaml").write_text(text, encoding="utf-8")
         with_inputs = list(hosts if inputs_for is None else inputs_for)
         inputs = [path for host in with_inputs for path in self.write_inputs(host)]
-        self.ok(self.study(["health", "--inputs", "--as-of", SESSION, *inputs]))
+        # The kit's H3 attestation leaves firmware_currency out on purpose (a missing-data entry).
+        self.ok(self.study(["health", "--inputs", "--as-of", SESSION, "--allow-missing", "firmware_currency",
+                            *inputs]))
         self.record("STUDY", "list-checks", "inputs/list-checks.json")
         self.ok(self.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",
                             "--note", "study configuration", "study.yaml"]))
@@ -1600,6 +1671,24 @@ def test_every_command_in_the_guide_parses_as_written():
                 raise AssertionError(f"{' '.join(tokens)}: {err.getvalue()}") from None
     assert seen == {"worksheet", "ledger record", "ledger verify", "ledger status", "ledger withdraw", "health",
                     "register-sheet", "agreement", "synthetic", "miccmac assess", "miccmac list-checks"}
+
+
+def test_every_guide_line_that_writes_a_tool_output_names_its_methodology():
+    """Critique: CMMI is the tool's default lens, so a guide line writing
+    <H>-<methodology>.json must name that methodology itself; one that
+    relied on the default would put CMMI levels under another name."""
+    writers = 0
+    for tokens in _guide_commands():
+        if tokens[:2] != ["miccmac", "assess"] or "-o" not in tokens:
+            continue
+        target = tokens[tokens.index("-o") + 1].strip('"').replace("\\", "/")
+        match = re.search(r"-(cmmi|cisa-ztmm)\.json$", target)
+        if match is None:
+            continue
+        writers += 1
+        assert "--methodology" in tokens, tokens
+        assert tokens[tokens.index("--methodology") + 1] == match.group(1), tokens
+    assert writers >= 3            # steps 5 and 6, and the rehearsal's step 5
 
 
 def _guide_tool_line(flag: str) -> List[str]:

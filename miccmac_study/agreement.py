@@ -63,6 +63,14 @@ lint_worksheet() is the pre-hash check that `ledger record --kind worksheet`
 runs on a filled worksheet: it reads only that worksheet and the study
 configuration, never a tool output.
 
+H2 counts every register entry, and reports findings (FAIL, PARTIAL) and
+missing-data entries (ERROR, or an input not supplied) separately as well;
+study.yaml's h2_unit names the pre-registered test (all-entries, the
+default, or findings). The review sheet's optional next_level_accurate and
+threat_plausible answers are counted descriptively and never enter k.
+In this module, AI assistance covers, besides the rest, that split, h2_unit
+and the descriptive counts.
+
 Nothing here fills a judgment field: root causes, actions, assessor-error
 notes and every interpretation are left blank for the researcher.
 
@@ -100,6 +108,9 @@ from miccmac_study.formats import (
     ANALYSIS_DIR,
     APPROVED_MAX_LEVEL,
     CONFIG_FILE,
+    ENTRY_FINDING,
+    H2_ALL_ENTRIES,
+    H2_FINDINGS,
     LEDGER_FILE,
     LEVEL_RULE_APPROVED,
     LEVEL_RULE_TOOL_CUTOFFS,
@@ -140,6 +151,7 @@ from miccmac_study.formats import (
     parse_utc_timestamp,
     read_csv,
     read_ledger,
+    register_entry_type,
     register_review_name,
     resolve_ledger_path,
     sha256_file,
@@ -256,6 +268,14 @@ REGISTER_H2_COLUMNS = (
     "wilson_high", "meets_threshold", "boot_low", "boot_high", "boot_method", "boot_resamples", "boot_hosts",
     "prioritized_y", "prioritized_n", "prioritized_unsure", "prioritization_k", "prioritization_n",
     "prioritization_rate", "prioritization_wilson_low", "prioritization_wilson_high", "missed_gaps",
+    # Added with missing-data entries: the same H2 counts for findings and for
+    # missing-data entries (threshold and bootstrap for findings on the TOTAL
+    # row), the optional descriptive judgments, and h2_unit (TOTAL row: which
+    # threshold result is the pre-registered test).
+    "finding_entries", "finding_judged", "finding_k", "finding_rate", "finding_wilson_low",
+    "finding_wilson_high", "finding_meets_threshold", "finding_boot_low", "finding_boot_high",
+    "missing_data_entries", "missing_data_judged", "missing_data_k",
+    "next_level_accurate_y", "next_level_accurate_n", "threat_plausible_y", "threat_plausible_n", "h2_unit",
 )
 DISAGREEMENT_COLUMNS = (
     "kind", "host", "methodology", "item", "tool_value", "manual_value", "diff", "within_one",
@@ -347,7 +367,8 @@ class CheckComparison:
 
 @dataclass
 class RegisterHost:
-    """Register-review counts for one host (H2)."""
+    """Register-review counts for one host (H2), overall and per entry type
+    (formats.ENTRY_TYPES), plus the optional descriptive judgments."""
     host: str
     entries: int = 0
     judged: int = 0
@@ -357,6 +378,14 @@ class RegisterHost:
     k: int = 0
     prioritized: Counter = field(default_factory=Counter)
     missed_gaps: int = 0
+    finding_entries: int = 0
+    finding_judged: int = 0
+    finding_k: int = 0
+    missing_data_entries: int = 0
+    missing_data_judged: int = 0
+    missing_data_k: int = 0
+    next_level_accurate: Counter = field(default_factory=Counter)    # Y / N
+    threat_plausible: Counter = field(default_factory=Counter)       # Y / N
 
 
 @dataclass
@@ -2147,6 +2176,7 @@ _COMPARED_FIELDS = frozenset({
     "hosts", "threshold", "primary_methodology", "secondary_methodologies", "manual_max_level",
     "input_driven_checks", "input_driven_properties", "bootstrap_iterations", "bootstrap_seed",
     "bootstrap_exact_limit", "weighted_kappa", "synthetic", "manual_level_rule", "tool_side_rule", "overall_rule",
+    "h2_unit",
 })
 
 
@@ -2182,7 +2212,8 @@ def _config_differences(reference: StudyConfig, used: StudyConfig) -> List[str]:
     for key, attr in (("bootstrap.iterations", "bootstrap_iterations"), ("bootstrap.seed", "bootstrap_seed"),
                       ("bootstrap.exact_limit", "bootstrap_exact_limit"), ("weighted_kappa", "weighted_kappa"),
                       ("synthetic", "synthetic"), ("level_rule.manual", "manual_level_rule"),
-                      ("level_rule.tool_side", "tool_side_rule"), ("level_rule.overall", "overall_rule")):
+                      ("level_rule.tool_side", "tool_side_rule"), ("level_rule.overall", "overall_rule"),
+                      ("h2_unit", "h2_unit")):
         before, after = getattr(reference, attr), getattr(used, attr)
         if before != after:
             items.append(f"{key} {_yaml_text(before)} -> {_yaml_text(after)}")
@@ -2648,7 +2679,10 @@ def _register_host(study: Study, host: str) -> RegisterHost:
         study.add("register", CRITICAL, host, f"{output.path.name} has no risk_register (run with --risk-register)")
         return counts
     entry_ids = [str(e.get("check_id")) for e in entries]
+    entry_kinds = {str(e.get("check_id")): register_entry_type(e) for e in entries}
     counts.entries = len(entries)
+    counts.finding_entries = sum(1 for kind in entry_kinds.values() if kind == ENTRY_FINDING)
+    counts.missing_data_entries = counts.entries - counts.finding_entries
     for methodology, other in study.outputs.get(host, {}).items():
         if other is output or other.risk_register is None:
             continue
@@ -2673,7 +2707,7 @@ def _register_host(study: Study, host: str) -> RegisterHost:
         return counts
     reviews = _review_rows_by_check(study, host, rows, set(entry_ids))
     for entry_id in entry_ids:
-        _count_review(study, host, counts, entry_id, reviews.get(entry_id))
+        _count_review(study, host, counts, entry_id, reviews.get(entry_id), entry_kinds[entry_id])
     if counts.not_judged:
         study.add("register", CRITICAL, host, f"{counts.not_judged} of {counts.entries} {_NOT_JUDGED_TEXT}")
     return counts
@@ -2706,11 +2740,20 @@ def _review_rows_by_check(study: Study, host: str, rows: List[Dict[str, str]],
 
 
 def _count_review(study: Study, host: str, counts: RegisterHost, entry_id: str,
-                  row: Optional[Dict[str, str]]) -> None:
+                  row: Optional[Dict[str, str]], kind: str = ENTRY_FINDING) -> None:
     if row is None:
         study.add("register", CRITICAL, host, f"register entry {entry_id} has no review row")
         counts.not_judged += 1
         return
+    for column, counter in (("next_level_accurate", counts.next_level_accurate),
+                            ("threat_plausible", counts.threat_plausible)):
+        try:
+            answer = normalize_yes_no(row.get(column))     # optional and descriptive
+        except StudyError as exc:
+            study.add("register", WARNING, host, f"{entry_id} {column}: {exc} (descriptive only; not counted)")
+            answer = None
+        if answer is not None:
+            counter[answer] += 1
     try:
         prioritized = normalize_yes_no(row.get("prioritized"), allow_unsure=True)
     except StudyError as exc:
@@ -2733,6 +2776,9 @@ def _count_review(study: Study, host: str, counts: RegisterHost, entry_id: str,
     counts.accurate_y += accurate == "Y"
     counts.actionable_y += actionable == "Y"
     counts.k += accurate == "Y" and actionable == "Y"
+    prefix = "finding" if kind == ENTRY_FINDING else "missing_data"
+    setattr(counts, f"{prefix}_judged", getattr(counts, f"{prefix}_judged") + 1)
+    setattr(counts, f"{prefix}_k", getattr(counts, f"{prefix}_k") + (accurate == "Y" and actionable == "Y"))
 
 
 # ------------------------------------------------------------------ aggregates
@@ -2952,16 +2998,24 @@ def _register_records(study: Study, register: Sequence[RegisterHost]) -> List[Di
     which also carries a host-cluster bootstrap interval (secondary)."""
     rows = []
     total = RegisterHost(host="TOTAL")
-    clusters = []
+    clusters, finding_clusters = [], []
     for counts in register:
         rows.append(_register_record(counts, None))
-        for name in ("entries", "judged", "not_judged", "accurate_y", "actionable_y", "k", "missed_gaps"):
+        for name in ("entries", "judged", "not_judged", "accurate_y", "actionable_y", "k", "missed_gaps",
+                     "finding_entries", "finding_judged", "finding_k", "missing_data_entries",
+                     "missing_data_judged", "missing_data_k"):
             setattr(total, name, getattr(total, name) + getattr(counts, name))
-        total.prioritized.update(counts.prioritized)
+        for name in ("prioritized", "next_level_accurate", "threat_plausible"):
+            getattr(total, name).update(getattr(counts, name))
         clusters.append((counts.k, counts.judged))
+        finding_clusters.append((counts.finding_k, counts.finding_judged))
     record = _register_record(total, study.config.threshold)
     record["clusters"] = [list(c) for c in clusters]
     record.update(_host_bootstrap(clusters, study.config))
+    findings = _host_bootstrap(finding_clusters, study.config)
+    record["finding_clusters"] = [list(c) for c in finding_clusters]
+    record.update({"finding_boot_low": findings["boot_low"], "finding_boot_high": findings["boot_high"],
+                   "h2_unit": study.config.h2_unit})
     rows.append(record)
     return rows
 
@@ -2982,6 +3036,18 @@ def _register_record(counts: RegisterHost, threshold: Optional[Fraction]) -> Dic
                    "prioritization_wilson_low": prioritization["wilson_low"],
                    "prioritization_wilson_high": prioritization["wilson_high"],
                    "missed_gaps": counts.missed_gaps})
+    finding = _rate_record(counts.finding_k, counts.finding_judged, threshold)
+    record.update({"finding_entries": counts.finding_entries, "finding_judged": counts.finding_judged,
+                   "finding_k": counts.finding_k, "finding_rate": finding["rate"],
+                   "finding_wilson_low": finding["wilson_low"], "finding_wilson_high": finding["wilson_high"],
+                   "missing_data_entries": counts.missing_data_entries,
+                   "missing_data_judged": counts.missing_data_judged, "missing_data_k": counts.missing_data_k,
+                   "next_level_accurate_y": counts.next_level_accurate["Y"],
+                   "next_level_accurate_n": counts.next_level_accurate["N"],
+                   "threat_plausible_y": counts.threat_plausible["Y"],
+                   "threat_plausible_n": counts.threat_plausible["N"]})
+    if threshold is not None:
+        record.update({"finding_meets_threshold": finding["meets_threshold"], "finding_needed": finding["needed"]})
     return record
 
 
@@ -3085,7 +3151,8 @@ def _check_agreement_csv_rows(analysis: Analysis) -> List[Dict[str, object]]:
 
 
 _REGISTER_FLOATS = ("rate", "wilson_low", "wilson_high", "boot_low", "boot_high", "prioritization_rate",
-                    "prioritization_wilson_low", "prioritization_wilson_high")
+                    "prioritization_wilson_low", "prioritization_wilson_high", "finding_rate", "finding_wilson_low",
+                    "finding_wilson_high", "finding_boot_low", "finding_boot_high")
 
 
 def _register_csv_rows(records: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
@@ -3095,6 +3162,7 @@ def _register_csv_rows(records: Sequence[Dict[str, object]]) -> List[Dict[str, o
         row = {key: r.get(key) for key in REGISTER_H2_COLUMNS}
         row.update({key: _fmt(r.get(key)) for key in _REGISTER_FLOATS})
         row["meets_threshold"] = _yes_no(r.get("meets_threshold"))
+        row["finding_meets_threshold"] = _yes_no(r.get("finding_meets_threshold"))
         rows.append(row)
     return rows
 
@@ -3247,6 +3315,7 @@ def _config_echo(study: Study) -> Dict[str, object]:
         "bootstrap": {"iterations": config.bootstrap_iterations, "seed": config.bootstrap_seed,
                       "exact_limit": config.bootstrap_exact_limit},
         "weighted_kappa": config.weighted_kappa,
+        "h2_unit": config.h2_unit,
         "synthetic": config.synthetic,
         # The level rule used in this run, and the study configuration's own values.
         "level_rule": config.level_rule,
@@ -3343,7 +3412,7 @@ def _h2_json(study: Study, records: Optional[List[Dict[str, object]]]) -> Dict[s
     if records is None:
         return {"available": False, "reason": "no register review sheets in register/"}
     return {"available": True, "methodology": study.config.primary_methodology, "unit": "register entries",
-            "total": records[-1], "per_host": records[:-1]}
+            "h2_unit": study.config.h2_unit, "total": records[-1], "per_host": records[:-1]}
 
 
 def _summary_md(study: Study, analysis: Analysis, register_records: Optional[List[Dict[str, object]]],
@@ -3491,7 +3560,8 @@ def _md_h2(study: Study, records: Optional[List[Dict[str, object]]]) -> List[str
     if records is None:
         return out + ["Not yet available: no register review sheets in register/.", ""]
     total = records[-1]
-    out += [f"Unit: risk-register entries of the {study.config.primary_methodology} outputs. An entry is judged "
+    out += [f"Unit: risk-register entries of the {study.config.primary_methodology} outputs (findings and "
+            "missing-data entries). An entry is judged "
             "when accurate and actionable are both answered, or when either is N (it cannot count as k whatever "
             "the other answer). n = judged entries; k = entries with accurate = Y and actionable = Y. An entry "
             "with Y and a blank, or two blanks, is not judged: a CRITICAL integrity problem, because every entry "
@@ -3516,6 +3586,44 @@ def _md_h2(study: Study, records: Optional[List[Dict[str, object]]]) -> List[str
     if total["not_judged"]:
         out += [f"{total['not_judged']} entries are not judged and are left out of n (CRITICAL: every entry must "
                 "be judged before the final analysis; see section 2).", ""]
+    return out + _md_h2_by_type(study, records)
+
+
+def _md_h2_by_type(study: Study, records: List[Dict[str, object]]) -> List[str]:
+    """Section 4's split by entry type, the unit the threshold is tested on
+    (study.yaml h2_unit) and the optional descriptive judgments."""
+    total = records[-1]
+    unit = study.config.h2_unit
+    out = ["### 4.1 By entry type", "",
+           f"Unit pre-registered for the threshold (study.yaml h2_unit): {unit}. "
+           + ("The threshold result above (TOTAL, all entries) is the H2 test; the findings row below is "
+              "descriptive." if unit == H2_ALL_ENTRIES else
+              "The findings row below is the H2 test; the TOTAL row above (all entries) is descriptive."),
+           "",
+           "Findings are FAIL or PARTIAL checks; missing-data entries are checks the tool could not evaluate "
+           "(ERROR, or an organizational input not supplied).", ""]
+    table = [(r["host"], r["finding_entries"], r["finding_judged"], f"{r['finding_k']}/{r['finding_judged']}",
+              _fmt(r["finding_rate"]) or "n/a", _ci(r, "finding_wilson_low", "finding_wilson_high"),
+              r["missing_data_entries"], r["missing_data_judged"],
+              f"{r['missing_data_k']}/{r['missing_data_judged']}") for r in records]
+    out += _md_table(("Host", "Findings", "Judged", "Findings k/n", "Rate", "Wilson 95% CI", "Missing-data entries",
+                      "Judged", "Missing-data k/n"), table)
+    role = "the pre-registered H2 test" if unit == H2_FINDINGS else "descriptive"
+    if total["finding_judged"]:
+        out += [f"Findings only ({role}): k/n = {total['finding_k']}/{total['finding_judged']}, rate "
+                f"{_fmt(total['finding_rate'])}, Wilson 95% CI {_ci(total, 'finding_wilson_low', 'finding_wilson_high')}"
+                f", threshold {_threshold_text(study.config.threshold)}, needs at least {total['finding_needed']} of "
+                f"{total['finding_judged']}, meets threshold: {_yes_no(total['finding_meets_threshold'])}; "
+                f"host-cluster bootstrap 95% CI {_ci(total, 'finding_boot_low', 'finding_boot_high')}.", ""]
+    else:
+        out += [f"Findings only ({role}): no judged findings yet.", ""]
+    count = total["missing_data_entries"]
+    out += [f"Of the {total['entries']} entries, {count} "
+            f"{'is a missing-data entry' if count == 1 else 'are missing-data entries'} "
+            f"(k = {total['missing_data_k']} of {total['missing_data_judged']} judged).", "",
+            "Optional descriptive judgments, never part of H2's k: next_level_accurate Y/N = "
+            f"{total['next_level_accurate_y']}/{total['next_level_accurate_n']}; threat_plausible Y/N = "
+            f"{total['threat_plausible_y']}/{total['threat_plausible_n']} (blank answers are not counted).", ""]
     return out
 
 
@@ -3728,6 +3836,9 @@ def _md_hand_check(study: Study, analysis: Analysis, files: Sequence[str]) -> Li
                    "to the TOTAL row.")
         out.append(f"- Prioritization (5.7): in {name['register_h2.csv']}, prioritization_k = prioritized_y and "
                    "prioritization_n = prioritized_y + prioritized_n; UNSURE answers are left out of n.")
+        out.append(f"- By entry type (4.1): in {name['register_h2.csv']}, finding_k/finding_judged and "
+                   "missing_data_k/missing_data_judged add up to k/n on every row; the entry_type column of the "
+                   "review sheets tells the two apart.")
     out += [f"- {name['disagreements.csv']} lists every exact level mismatch and every verdict mismatch. The "
             "researcher fills root_cause (one of: " + "; ".join(ROOT_CAUSES) + "), action and "
             "assessor_error_note; this command leaves them blank.", ""]
