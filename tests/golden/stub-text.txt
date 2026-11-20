@@ -1,0 +1,102 @@
+================================================================
+  MICCMAC ZERO TRUST DEVICE READINESS ASSESSMENT
+================================================================
+  Target          : test-device
+  Overall score   : n/a
+  Readiness tier  : Unassessed
+================================================================
+
+  M  Monitored  (n/a)
+  ------------------------------------------------------------
+   [TODO] MON-01  Endpoint security logging enabled
+          Check not yet implemented.
+   [TODO] MON-02  Logs forwarded to a centralized SIEM / log platform
+          Check not yet implemented.
+   [TODO] MON-03  EDR / endpoint telemetry agent installed and healthy
+          Check not yet implemented.
+   [TODO] MON-04  Audit policy covers authentication, privilege, and process events
+          Check not yet implemented.
+
+  I  Inventoried  (n/a)
+  ------------------------------------------------------------
+   [TODO] INV-01  Device present in the authoritative asset inventory
+          Check not yet implemented.
+   [TODO] INV-02  Hardware attributes recorded (make, model, serial)
+          Check not yet implemented.
+   [TODO] INV-03  Installed-software inventory maintained for the device
+          Check not yet implemented.
+   [TODO] INV-04  Inventory record reviewed within the policy interval
+          Check not yet implemented.
+
+  C  Controlled  (n/a)
+  ------------------------------------------------------------
+   [TODO] CTL-01  Device enrolled in central configuration management / MDM
+          Check not yet implemented.
+   [TODO] CTL-02  Administrative privileges restricted (least privilege)
+          Check not yet implemented.
+   [TODO] CTL-03  Access governed by identity-aware / conditional-access policy
+          Check not yet implemented.
+   [TODO] CTL-04  Configuration baseline enforced and drift-monitored
+          Check not yet implemented.
+
+  C  Claimed  (n/a)
+  ------------------------------------------------------------
+   [TODO] CLM-01  Accountable business owner assigned and recorded
+          Check not yet implemented.
+   [TODO] CLM-02  Responsible system administrator identified
+          Check not yet implemented.
+   [TODO] CLM-03  Business purpose and data classification documented
+          Check not yet implemented.
+
+  M  Minimized  (n/a)
+  ------------------------------------------------------------
+   [TODO] MIN-01  Unnecessary services and daemons disabled
+          Check not yet implemented.
+   [TODO] MIN-02  Unused or unauthorized software removed
+          Check not yet implemented.
+   [TODO] MIN-03  Host firewall enabled; unused network ports closed
+          Check not yet implemented.
+   [TODO] MIN-04  Recognized hardening baseline (e.g. CIS Benchmark) applied
+          Check not yet implemented.
+
+  A  Assessed  (n/a)
+  ------------------------------------------------------------
+   [TODO] ASM-01  Authenticated vulnerability scanning performed on schedule
+          Check not yet implemented.
+   [TODO] ASM-02  Configuration / compliance assessment performed on schedule
+          Check not yet implemented.
+   [TODO] ASM-03  Findings tracked to remediation against defined SLAs
+          Check not yet implemented.
+
+  C  Current  (n/a)
+  ------------------------------------------------------------
+   [TODO] CUR-01  Operating-system patch level within policy
+          Check not yet implemented.
+   [TODO] CUR-02  Third-party software updated within policy
+          Check not yet implemented.
+   [TODO] CUR-03  Firmware / BIOS current
+          Check not yet implemented.
+   [TODO] CUR-04  Certificates and cryptographic material valid and unexpired
+          Check not yet implemented.
+
+================================================================
+  NOTE: 26 check(s) await implementation. See miccmac/checks/.
+================================================================
+
+  LEGEND
+  --------------------------------------------------------------
+  MICCMAC properties (framework name spelled out by the property order):
+    M Monitored   I Inventoried   C Controlled   C Claimed   M Minimized   A Assessed   C Current
+  Check status:
+    [PASS] control fully satisfied
+    [PART] control partially satisfied
+    [FAIL] control not satisfied
+    [TODO] check logic not yet implemented
+    [ N/A] excluded by config, or not applicable to this device
+    [ ERR] check could not be evaluated (e.g. data source unreachable)
+  Overall score -> readiness tier (always computed; thresholds are tunable):
+    90-100  Zero Trust Ready
+    70-89   Defensible
+    40-69   Developing
+    0-39    Not Ready
+================================================================
