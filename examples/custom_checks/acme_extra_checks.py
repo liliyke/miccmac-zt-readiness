@@ -19,6 +19,16 @@ ATTACH_TO = "controlled"
 # UNRATED, since a rating needs both FAIR axes). "remediation" is also
 # optional -- a recommended-fix string shown in the risk register's
 # "Recommended fix" line; omit it and that line reads "n/a" for this check.
+# "threat_source_type" (adversarial, accidental, structural or environmental,
+# the NIST SP 800-30 Rev. 1 Appendix D types) and "threat_event" (a short
+# string) are optional too; without them the register's SP 800-30 line reads
+# "n/a (not declared)".
+#
+# A check that cannot be evaluated because an input it reads is absent may
+# return Status.NOT_APPLICABLE with missing_data=MissingData(...) (from
+# miccmac.model) to get a missing-data register entry saying what to supply;
+# an ERROR always gets one. A plain NOT_APPLICABLE means "does not apply" and
+# gets no entry; NOT_IMPLEMENTED, as below, gets none either.
 RISK_METADATA = {
     "ACME-01": {
         "cis_ig": "IG2", "fair_frequency": "MEDIUM", "fair_magnitude": "MEDIUM",

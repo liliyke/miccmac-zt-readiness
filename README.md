@@ -85,15 +85,18 @@ miccmac assess my-laptop-01 --format json
 # Write the report to a file
 miccmac assess my-laptop-01 --format markdown --output reports/my-laptop-01.md
 
-# Score against a maturity-model methodology in addition to the default score
-miccmac assess my-laptop-01 --methodology cmmi
+# Every assessment also shows CMMI maturity levels (the default lens); choose
+# CISA's Zero Trust Maturity Model instead, or no maturity lens at all
 miccmac assess my-laptop-01 --methodology cisa-ztmm
+miccmac assess my-laptop-01 --methodology none
 
 # Exclude built-in checks / add your own via a config file (see
 # examples/miccmac-config.example.yaml and examples/custom_checks/)
 miccmac assess my-laptop-01 --config my-config.yaml
 
-# Append a CIS Implementation Group + FAIR-inspired risk register
+# Append the risk register: findings and missing-data entries with a CIS
+# Implementation Group + FAIR-inspired rating, next-level hints, and the
+# fields arranged after NIST SP 800-30 Rev. 1
 miccmac assess my-laptop-01 --risk-register
 
 # Print the exact enabled check-id set for a configuration -- the "fairness
@@ -104,6 +107,17 @@ miccmac list-checks --config my-config.yaml
 Pluggable scoring methodologies, check exclusion/custom checks, and the risk
 register are documented in full, including the scoring tables and rationale,
 in [`docs/methodology.md`](docs/methodology.md).
+
+The risk register lists one entry per `FAIL` or `PARTIAL` check (a finding)
+and one per check the tool could not evaluate because data was missing (an
+`ERROR`, or an organizational input that was not supplied), saying what is
+missing and how to supply it. Each entry gives the check's CIS IG and
+FAIR-inspired rating, a hint at what fixing it does toward the property's
+next maturity level, and its fields arranged as the risk factors of NIST SP
+800-30 Rev. 1 plus a recommended response. That arrangement is not an SP
+800-30 risk assessment, and no rating is quantitative. The threat-source
+types and threat events it shows were drafted with AI assistance and await
+the researcher's review ([`docs/sp800-30-review.md`](docs/sp800-30-review.md)).
 
 ### Reproducible study runs
 
@@ -150,7 +164,10 @@ back to `localhost`. No live run accepts a blank target or one holding a
 line break.
 
 Collect once and score against CMMI, then score CISA ZTMM from the same
-saved facts with no second collection:
+saved facts with no second collection. Study commands always name
+`--methodology`: CMMI is the default lens, so a command that lost its
+`--methodology cisa-ztmm` would write CMMI levels under the CISA ZTMM name
+(the study instruments refuse to record or pass such a file):
 
 ```bash
 python -m miccmac assess 192.0.2.10 --save-facts H1-facts.json --as-of 2026-11-23 \
@@ -173,9 +190,12 @@ tool refuses to replace them anyway. Details, including what `--as-of` does
 not change, are in
 [`docs/methodology.md`](docs/methodology.md#11-reproducibility-reference-date-saved-facts-and-provenance).
 The reproducible-run features (`--as-of`, `--save-facts`, `--facts`, the
-provenance block and the `-o` and `--stdout` safeguards) and the study
-instruments in [`miccmac_study/`](miccmac_study/README.md) were drafted
-with AI assistance (Claude Code, Anthropic) for the researcher's review.
+provenance block and the `-o` and `--stdout` safeguards), the study
+instruments in [`miccmac_study/`](miccmac_study/README.md), CMMI as the
+default lens, the register's missing-data entries, next-level hints and SP
+800-30 structure, and the drafted threat-source types and events were
+drafted with AI assistance (Claude Code, Anthropic) for the researcher's
+review.
 
 ## Example output
 
@@ -186,9 +206,10 @@ with AI assistance (Claude Code, Anthropic) for the researcher's review.
   Target          : my-laptop-01
   Overall score   : 71.4/100
   Readiness tier  : Defensible
+  CMMI            : Level 4/5 - Quantitatively Managed (75.0%)
 ================================================================
 
-  M  Monitored  (87.5/100)
+  M  Monitored  (87.5/100)  [CMMI: Level 4/5 - Quantitatively Managed (75.0%)]
   ------------------------------------------------------------
    [PASS] MON-01  Endpoint security logging enabled
    [PASS] MON-02  Logs forwarded to a centralized SIEM / log platform
@@ -202,7 +223,9 @@ illustrative HTML scorecard renderings (from real assessments against all three 
 a target switcher) are in [`examples/sample-scorecard.html`](examples/sample-scorecard.html)
 (CMMI methodology) and [`examples/sample-scorecard-cisa-ztmm.html`](examples/sample-scorecard-cisa-ztmm.html)
 (CISA ZTMM methodology, same underlying check results) -- the two editions are kept side by
-side to show both maturity-methodology lenses on the same data.
+side to show both maturity-methodology lenses on the same data. The two HTML scorecards are
+illustrations made before the risk register gained missing-data entries, next-level hints and
+its SP 800-30 layout, and do not show those.
 
 ## How scoring works
 
@@ -220,6 +243,13 @@ is the mean of the property scores, which maps to a readiness tier:
 | 70 - 89 | Defensible |
 | 40 - 69 | Developing |
 | 0 - 39 | Not Ready |
+
+By default a run also maps the property and overall scores to CMMI maturity
+levels (levels 1-5 from 0, 20, 40, 70 and 90); `--methodology cisa-ztmm`
+maps them to CISA ZTMM stages instead (stages 1-4 from 0, 40, 70 and 90),
+and `--methodology none` to no levels at all. A score with nothing scorable
+is "Unassessed", never level 1. The levels are this tool's score bands under those models' names,
+not a CMMI appraisal or a CISA assessment.
 
 Scoring and tier thresholds are documented, and can be tuned, in
 [`docs/methodology.md`](docs/methodology.md).
@@ -240,9 +270,9 @@ architecture and design rationale.
 | Text / Markdown / JSON renderers | Working |
 | 7 property modules with 26 named checks | Defined, with control references |
 | Per-check NIST 800-207 / 800-53 / CIS v8 mappings | Complete (see [`data/control-mappings.yaml`](data/control-mappings.yaml)) |
-| Pluggable CMMI / CISA ZTMM scoring methodologies | Working (`--methodology`) |
+| Pluggable CMMI / CISA ZTMM scoring methodologies | Working: CMMI by default; `--methodology cisa-ztmm` or `none` |
 | Check exclusion + custom-check plugins, fairness control | Working (`--config`, `list-checks`) |
-| CIS IG + FAIR-inspired risk register | Working (`--risk-register`) |
+| Risk register: findings and missing-data entries, CIS IG + FAIR-inspired rating, next-level hints, NIST SP 800-30 Rev. 1 structure | Working (`--risk-register`); the drafted threat-source types and events await review |
 | SSH + osquery target connectors | Working — `--connector ssh-osquery` (Linux, proven against a live Ubuntu 26.04 LTS VM) and `--connector ssh-osquery-windows` (Windows, proven against both live Windows 11 Enterprise 25H2 and Windows Server 2025 Standard VMs) |
 | All 7 MICCMAC properties, all 26 checks — real detection logic | Working, all 3 named platforms — see [`docs/methodology.md`](docs/methodology.md#10-target-connectors-and-real-detection-logic) |
 
@@ -258,8 +288,10 @@ proven end-to-end against real, live VMs — the vertical slice is complete.
 
 Running `python -m miccmac assess <target>` with no `--connector` or
 `--facts` flag still prints the *structure* of a real assessment without
-inspecting anything — byte-identical to the original scaffold's output,
-verified by diffing against it directly through every pass of this work.
+inspecting anything. With `--methodology none` it is byte-identical to the
+original scaffold's output (test-verified against goldens captured at
+commit 4644c33, `tests/test_golden_stub.py`); the default run adds the CMMI
+lens, every value of it "Unassessed" in such a run.
 (Adding `--as-of` to such a run changes no result; it only adds the
 provenance block to JSON output. `--facts` scores facts saved by an earlier
 run.) Add `--connector

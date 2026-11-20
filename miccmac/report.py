@@ -1,4 +1,13 @@
-"""Render an Assessment as text, markdown, or JSON."""
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Render an Assessment as text, markdown, or JSON.
+
+In this module, AI assistance covers one legend line: when some check
+carries a missing-data marker (miccmac.model.MissingData), the legend adds
+that [ N/A] can also mean "not evaluated: an input it reads was not
+supplied". Without such a check (for example a stub run) every render is
+exactly as before.
+"""
 from __future__ import annotations
 
 import json
@@ -6,7 +15,7 @@ import json
 from miccmac.engine import READINESS_TIERS
 from miccmac.methodology import FULL_NAMES as METHODOLOGY_FULL_NAMES
 from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
-from miccmac.model import Assessment, Status
+from miccmac.model import Assessment, MissingData, Status
 
 _STATUS_GLYPH = {
     Status.PASS: "[PASS]",
@@ -25,6 +34,11 @@ _STATUS_MEANING = [
     ("[ N/A]", "excluded by config, or not applicable to this device"),
     ("[ ERR]", "check could not be evaluated (e.g. data source unreachable)"),
 ]
+
+# Added to the [ N/A] meaning only when some check is NOT_APPLICABLE for want
+# of an input (it carries a MissingData marker).
+_MISSING_INPUT_MEANING = ("or not evaluated: an organizational input it reads was not supplied "
+                          "(see its detail and the risk register)")
 
 # M-I-C-C-M-A-C: the seven MICCMAC properties, in framework order.
 _PROPERTY_LETTERS = [
@@ -68,6 +82,11 @@ def _level_ranges(methodology):
     return ranges
 
 
+def _has_missing_input(assessment: Assessment) -> bool:
+    return any(c.status is Status.NOT_APPLICABLE and isinstance(c.missing_data, MissingData)
+               for p in assessment.properties for c in p.checks)
+
+
 def _legend_lines(assessment: Assessment):
     lines = [
         "  LEGEND",
@@ -78,6 +97,8 @@ def _legend_lines(assessment: Assessment):
     ]
     for glyph, meaning in _STATUS_MEANING:
         lines.append(f"    {glyph} {meaning}")
+        if glyph == "[ N/A]" and _has_missing_input(assessment):
+            lines.append(f"           {_MISSING_INPUT_MEANING}")
     lines.append("  Overall score -> readiness tier (always computed; thresholds are tunable):")
     for rng, label in _tier_ranges():
         lines.append(f"    {rng:7s} {label}")
@@ -97,8 +118,10 @@ def _legend_markdown(assessment: Assessment):
         "- **MICCMAC properties** (framework name spelled out by the property "
         "order): " + ", ".join(f"**{letter}** {name}" for letter, name in _PROPERTY_LETTERS) + "."
     )
+    meanings = [(g, m + (f", {_MISSING_INPUT_MEANING}" if g == "[ N/A]" and _has_missing_input(assessment) else ""))
+                for g, m in _STATUS_MEANING]
     md.append(
-        "- **Check status:** " + "; ".join(f"`{g}` {m}" for g, m in _STATUS_MEANING) + "."
+        "- **Check status:** " + "; ".join(f"`{g}` {m}" for g, m in meanings) + "."
     )
     tier_str = "; ".join(f"`{rng}` {label}" for rng, label in _tier_ranges())
     md.append(

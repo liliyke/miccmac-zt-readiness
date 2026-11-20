@@ -220,18 +220,61 @@ def test_saved_facts_envelope_format(study, set_clock):
     assert sorted(p.name for p in Path("outputs").iterdir()) == ["H1-cmmi.json", "H1-facts.json"]
 
 
-def test_facts_are_saved_before_the_checks_run(study, set_clock, monkeypatch):
+def test_facts_are_saved_before_the_checks_run(study, set_clock, monkeypatch, capsys):
+    """Deliberately changed: a failure after the facts were saved used to end
+    in a traceback; it is now an error (exit 2) that names the saved facts
+    and how to build the report from them, and never the exception's text."""
     def crash(*args, **kwargs):
         raise RuntimeError("simulated failure while running the checks")
 
     monkeypatch.setattr("miccmac.cli.run_assessment", crash)
     set_clock(LIVE_CLOCK)
-    with pytest.raises(RuntimeError, match="simulated failure"):
-        main(_live_args())
+    assert main(_live_args()) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "error: an internal error (RuntimeError) while scoring the collected facts; no report was written. The "
+        f"facts were saved to {FACTS_PATH}, so the report can be built from them with --facts {FACTS_PATH} (no new "
+        "collection needed)\n")
+    assert "simulated failure" not in captured.err
     envelope = _load(FACTS_PATH)
     assert envelope["facts"]["os"]["platform"] == "ubuntu"
     assert envelope["facts"]["extra"] == EXTRA
     assert sorted(p.name for p in Path("outputs").iterdir()) == ["H1-facts.json"]
+
+
+def test_a_register_failure_after_the_save_names_the_saved_facts(study, set_clock, monkeypatch, capsys):
+    """Drafted with AI assistance (Claude Code, Anthropic): critique round of
+    the register change. A failure inside the new register code after
+    --save-facts saved the facts says how to rebuild the report; a replay
+    with --facts (no save) still raises as before."""
+    def crash(*args, **kwargs):
+        raise KeyError("FAIL")
+
+    monkeypatch.setattr("miccmac.cli.build_risk_register", crash)
+    set_clock(LIVE_CLOCK)
+    assert main(_live_args()) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and "(KeyError)" in captured.err and f"--facts {FACTS_PATH}" in captured.err
+    assert "FAIL" not in captured.err     # the exception's own text is never printed
+    assert not Path("outputs/H1-cmmi.json").exists()
+    with pytest.raises(KeyError):
+        main(_replay_args())
+
+
+def test_a_register_run_checks_the_mappings_before_it_connects(study, set_clock, monkeypatch, capsys):
+    """Drafted with AI assistance (Claude Code, Anthropic): a broken mappings
+    file stops a --risk-register run before anything is collected or saved."""
+    from miccmac.metadata import MappingsError
+
+    def broken(*args, **kwargs):
+        raise MappingsError("data/control-mappings.yaml: CUR-04 has invalid review 'confimed'")
+
+    monkeypatch.setattr("miccmac.cli.load_register_metadata", broken)
+    set_clock(LIVE_CLOCK)
+    assert main(_live_args()) == 2
+    assert "invalid review 'confimed'" in capsys.readouterr().err
+    assert study == [] and not Path(FACTS_PATH).exists()
 
 
 def test_an_existing_save_facts_file_is_refused_before_connecting(study, set_clock, capsys):
@@ -484,3 +527,38 @@ def test_replay_of_windows_facts(tmp_path, monkeypatch, capsys):
                                  "22 day(s) ago." + LABEL)
     assert data["provenance"]["os"] == {"platform": "windows", "name": "Microsoft Windows 11 Enterprise",
                                         "version": "10.0.26200", "build": "26200"}
+
+
+# ---------------------------------------------------------------- the risk register in a replay
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+def test_a_replay_reproduces_a_register_with_missing_data_entries(study, set_clock, capsys):
+    """An attestation without business_purpose (CLM-03 not supplied) and with
+    an unreadable last_scan (ASM-01 ERROR), plus the config's MON-02
+    exclusion: the live and replayed registers are identical, next-level
+    hints and SP 800-30 fields included; a CISA ZTMM replay lists the same
+    entries in the same order with its own hints."""
+    attestation = copy.deepcopy(ATTESTATION)
+    del attestation["business_purpose"]
+    attestation["vulnerability_scanning"]["last_scan"] = "23/11/2026"
+    Path("inputs/attestation.json").write_text(json.dumps(attestation), encoding="utf-8")
+    live = _live_run(set_clock)
+    set_clock(REPLAY_CLOCK)
+    assert main(_replay_args()) == 0
+    replay = _load("outputs/H1-cmmi-replay.json")
+    assert replay["risk_register"] == live["risk_register"]
+    kinds = {e["check_id"]: (e["entry_type"], e["status"]) for e in live["risk_register"]}
+    assert kinds["CLM-03"] == ("missing-data", "NOT_APPLICABLE")
+    assert kinds["ASM-01"] == ("missing-data", "ERROR")
+    assert "MON-02" not in kinds          # excluded by the config: no entry
+    entries = live["risk_register"]
+    assert [e["entry_type"] for e in entries] == sorted(e["entry_type"] for e in entries)   # findings first
+    assert all(e["next_level"]["methodology"] == "cmmi" for e in entries)
+
+    assert main(_replay_args(methodology="cisa-ztmm", out="outputs/H1-cisa-ztmm.json")) == 0
+    cisa = _load("outputs/H1-cisa-ztmm.json")["risk_register"]
+    assert [e["check_id"] for e in cisa] == [e["check_id"] for e in entries]
+    assert all(e["next_level"]["methodology"] == "cisa-ztmm" for e in cisa)
+    assert [e["next_level"]["text"] for e in cisa] != [e["next_level"]["text"] for e in entries]
+    strip = [{k: v for k, v in e.items() if k != "next_level"} for e in cisa]
+    assert strip == [{k: v for k, v in e.items() if k != "next_level"} for e in entries]

@@ -1,4 +1,6 @@
-"""MICCMAC property: Controlled (C).
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+MICCMAC property: Controlled (C).
 
 Intent: Configuration and access to the device are centrally governed by enforced policy, not left to local discretion.
 
@@ -23,10 +25,15 @@ When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
 NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
 unchanged from the Alpha scaffold.
+
+In this module, AI assistance covers the missing-data marker
+(CheckResult.missing_data) of CTL-03's NOT_APPLICABLE result: the
+attestation, or its identity_aware_access entry, was not supplied. Detail
+strings are unchanged.
 """
 from __future__ import annotations
 
-from miccmac.model import CheckResult, PropertyResult, Status
+from miccmac.model import CheckResult, MissingData, PropertyResult, Status
 
 KEY = "controlled"
 LETTER = "C"
@@ -38,6 +45,16 @@ _CONTROL_REFS = {
     "CTL-03": ["NIST 800-207 Tenet 4", "NIST 800-53 AC-3", "CIS v8 6.7"],
     "CTL-04": ["NIST 800-53 CM-6", "CIS v8 4.2"],
 }
+
+# What a valid attestation entry looks like, for the risk register's
+# missing-data entries.
+CTL03_EXPECTED = '{"enabled": true or false}'
+
+
+def _attestation_supplied(attestation: dict | None, attestation_given: bool | None) -> bool:
+    """Whether --attestation was given (None: taken from whether there is one)."""
+    return attestation is not None if attestation_given is None else bool(attestation_given)
+
 
 _NAMES = {
     "CTL-01": "Device enrolled in central configuration management / MDM",
@@ -115,14 +132,16 @@ def _check_ctl02(root_locked: bool, sudo_users: list) -> CheckResult:
     )
 
 
-def _check_ctl03(attestation: dict | None) -> CheckResult:
+def _check_ctl03(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "identity_aware_access" not in attestation:
+        problem = "missing-field" if _attestation_supplied(attestation, attestation_given) else "not-supplied"
         return CheckResult(
             check_id="CTL-03", name=_NAMES["CTL-03"], status=Status.NOT_APPLICABLE,
             detail="No --attestation supplied for identity_aware_access; conditional-access "
                    "policy is enforced by a cloud identity provider and is not observable "
                    "from the device itself.",
             control_refs=_CONTROL_REFS["CTL-03"],
+            missing_data=MissingData("attestation", problem, "identity_aware_access", CTL03_EXPECTED),
         )
     enabled = bool(attestation["identity_aware_access"].get("enabled")) \
         if isinstance(attestation["identity_aware_access"], dict) else bool(attestation["identity_aware_access"])
@@ -209,6 +228,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return _stub_checks()
 
     attestation = context.get("attestation")
+    supplied = "attestation" in context
 
     if (facts.get("os") or {}).get("platform") == "windows":
         programs = facts.get("programs") or []
@@ -217,7 +237,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return [
             _check_ctl01_windows(programs),
             _check_ctl02_windows(builtin_admin_enabled, local_admins),
-            _check_ctl03(attestation),
+            _check_ctl03(attestation, attestation_given=supplied),
             _check_ctl04_windows(programs),
         ]
 
@@ -228,7 +248,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
     return [
         _check_ctl01(deb_packages),
         _check_ctl02(root_locked, sudo_users),
-        _check_ctl03(attestation),
+        _check_ctl03(attestation, attestation_given=supplied),
         _check_ctl04(deb_packages),
     ]
 

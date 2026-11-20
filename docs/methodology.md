@@ -36,9 +36,13 @@ references it maps to.
 | `PASS` | The control is fully satisfied. |
 | `PARTIAL` | The control is partially satisfied. |
 | `FAIL` | The control is not satisfied. |
-| `NOT_APPLICABLE` | The check does not apply to this device. |
-| `NOT_IMPLEMENTED` | Check logic has not been written yet (scaffold default). |
+| `NOT_APPLICABLE` | The check does not apply to this device, or an organizational input it reads was not supplied. |
+| `NOT_IMPLEMENTED` | Check logic has not been written yet (scaffold default), or no facts or inputs reached the check. |
 | `ERROR` | The check could not be evaluated. |
+
+An `ERROR`, and a `NOT_APPLICABLE` caused only by an organizational input that
+was not supplied, get missing-data entries in the risk register (section 9);
+a check that does not apply gets none.
 
 ## 4. Scoring
 
@@ -66,9 +70,9 @@ should record any change here.
 
 Every text/markdown scorecard render (`miccmac/report.py`) ends with a legend
 reprinting this table, the MICCMAC property-letter meanings, the check-status
-glyphs, and -- when `--methodology` is used -- the selected methodology's own
-score-to-level chart, so the scorecard is self-explanatory without this doc
-open alongside it.
+glyphs, and -- whenever a maturity lens is applied, which is CMMI by default
+-- the methodology's own score-to-level chart, so the scorecard is
+self-explanatory without this doc open alongside it.
 
 ## 6. Design choices and limitations
 
@@ -83,10 +87,15 @@ open alongside it.
 
 ## 7. Pluggable maturity-model methodologies
 
-The default scoring above (Section 4-5) is always computed. Passing
-`--methodology cmmi` or `--methodology cisa-ztmm` additionally re-buckets
-that same flat 0-100 score into an ordinal maturity level under the chosen
-model, without changing the flat score itself.
+The default scoring above (Section 4-5) is always computed. A maturity lens
+additionally re-buckets that same flat 0-100 score into an ordinal maturity
+level, without changing the flat score itself. `miccmac assess` applies CMMI
+unless told otherwise: `--methodology cisa-ztmm` applies CISA's Zero Trust
+Maturity Model instead, and `--methodology none` applies no lens (the flat
+score and readiness tier only, as every run did before CMMI became the
+default on 2026-11-20). `engine.run_assessment` itself still applies no lens
+unless it is given a methodology name. Provenance records the methodology
+applied (`cmmi`, `cisa-ztmm`, or null with `none`).
 
 CMMI (5 levels) and CISA's Zero Trust Maturity Model (4 stages) have
 different numbers of levels, so a level alone isn't comparable across
@@ -161,7 +170,13 @@ required `cis_ig` -- omit them and the check still gets its CIS IG shown and
 used for sort-tiebreaking, but its `risk_rating` stays `UNRATED` since a
 rating needs both FAIR axes. `remediation` (a recommended-fix string shown
 as the register entry's "Recommended fix" line) is also optional -- omit it
-and that line reads "n/a" for the check. See
+and that line reads "n/a" for the check. So are `threat_source_type` (one of
+adversarial, accidental, structural, environmental) and `threat_event` (a
+non-empty string), the register's SP 800-30 fields (section 9); without them
+those fields read "n/a (not declared)". A plugin check that cannot be
+evaluated because an input it reads is absent may return `NOT_APPLICABLE`
+with `missing_data=MissingData(...)` (miccmac/model.py) to get a missing-data
+register entry; an `ERROR` always gets one. See
 `examples/custom_checks/acme_extra_checks.py` and
 `examples/miccmac-config.example.yaml` for a worked example.
 
@@ -176,11 +191,66 @@ so a manual scorer can be told exactly which checks to evaluate by hand.
 Implementation: `miccmac/config.py`, `enabled_check_ids()` in
 `miccmac/engine.py`.
 
-## 9. CIS Implementation Group + FAIR-inspired risk register
+## 9. Risk register: CIS IG + FAIR-inspired rating, structured after NIST SP 800-30 Rev. 1
+
+*This section was rewritten, and the register features it describes beyond
+the CIS IG/FAIR rating were drafted, with AI assistance (Claude Code,
+Anthropic) for the researcher's review: missing-data entries, next-level
+hints, the SP 800-30 Rev. 1 structure and the drafted threat-source types and
+threat events.*
 
 `miccmac assess --risk-register` appends a prioritized remediation view. It
-is not a new scoring methodology -- it enriches the findings from a
-completed assessment.
+is not a new scoring methodology: it enriches the results of a completed
+assessment.
+
+### Which checks get an entry
+
+| Check result | Entry | `entry_type` |
+|---|---|---|
+| `FAIL`, `PARTIAL` | yes | `finding` |
+| `ERROR` (any check, built-in or custom) | yes | `missing-data` |
+| `NOT_APPLICABLE` because an organizational input was not supplied: no `--attestation` or `--inventory-record`, or the file has no entry for the check | yes | `missing-data` |
+| `NOT_APPLICABLE` because the check does not apply (for example CUR-02 with no third-party software), or a custom check's own `NOT_APPLICABLE` | no | - |
+| Excluded by the config (`NOT_APPLICABLE`, `Excluded: <reason>`) | no | - |
+| `NOT_IMPLEMENTED` | no | - |
+| `PASS` | no | - |
+
+A check whose control is missing is a `FAIL` finding; a missing-data entry is
+a check the tool could not evaluate. The tool tells the two kinds of
+`NOT_APPLICABLE` apart without reading detail text: a check that returns
+`NOT_APPLICABLE` for an input that was not supplied, or `ERROR` for a value it
+cannot read, also sets a structured marker on its result
+(`CheckResult.missing_data`: source `attestation`, `inventory_record` or
+`facts`; problem `not-supplied`, `missing-field` or `invalid-value`; the field
+read and what valid data looks like). The JSON shows the marker on the check
+as `missing_data`, only when it is set. These checks set it:
+
+| Check | Marker set when | Source / field |
+|---|---|---|
+| INV-01, INV-04 | no inventory record (`not-supplied`; `missing-field` when the file holds null) | `inventory_record` |
+| INV-04 | `last_reviewed` is not a valid date (`ERROR`) | `inventory_record` / `last_reviewed` |
+| CTL-03, CLM-01, CLM-02, CLM-03, ASM-01, ASM-02, ASM-03, CUR-03 | no attestation (`not-supplied`), or no entry for the check's key (`missing-field`) | `attestation` / the key |
+| ASM-01, ASM-02 | the scan or assessment date is not a valid date (`ERROR`) | `attestation` / e.g. `vulnerability_scanning.last_scan` |
+| CUR-01 (Windows) | the last update install time is not a valid timestamp (`ERROR`) | `facts` / `last_update_installed_iso` |
+
+`not-supplied` means the option was not given at all; a file given with no
+entry for the check, or holding JSON null, is `missing-field`. Detail strings
+are unchanged. Some incomplete inputs stay findings, as the check logic
+decides them: an attestation entry that is present with a null value, ASM-01
+or ASM-02 "performed" with no date or interval (`PARTIAL`), and an inventory
+record without `device_id`, `tracked` or `last_reviewed` (`FAIL`).
+
+**Why NOT_IMPLEMENTED gets no entry.** In a built-in check it means that the
+run gave the check's property no data at all (no facts for the device
+checks, an empty context for Claimed and Assessed); in a custom check it marks
+a placeholder. Either way it is a condition of the run, not a gap of the
+device: one entry per check would add up to 26 identical "run with
+--connector or --facts" rows. The text and markdown registers say instead,
+in one line, how many checks are `NOT_IMPLEMENTED` and that they have no
+entry. Study runs always have facts, so built-in checks never report it
+there.
+
+### Metadata
 
 Every built-in check is tagged, in `data/control-mappings.yaml`'s `checks:`
 section, with:
@@ -201,13 +271,36 @@ section, with:
   unmanaged endpoint, unrestricted local admin, no host firewall, unpatched
   software) are rated HIGH/HIGH. Administrative/record-keeping checks
   (ownership records, review cadence) are rated LOW/LOW.
-- **`remediation`** -- a short, actionable recommended fix for a FAIL/PARTIAL
-  result on this check (e.g. "Enroll the device in the organization's central
+- **`remediation`** -- a short recommended fix for a FAIL/PARTIAL result on
+  this check (e.g. "Enroll the device in the organization's central
   configuration-management/MDM platform" for CTL-01). Required for every
-  built-in check; shown as each register entry's "Recommended fix" line so
-  the register reads as a prioritized action plan, not just a list of gaps.
+  built-in check and shown as each entry's recommended fix. It is one fixed
+  text per check, so for some `PARTIAL` results it does not match the gap
+  (CTL-02 "no elevation path at all"; ASM-01 and ASM-02 "performed, but no
+  date or interval"): a known limitation.
 
-These two ratings combine into an overall risk rating via a 3x3 qualitative
+The `threats:` section, added in version 0.3.0 of the file, adds per check
+(drafted with AI assistance and marked `review: drafted`):
+
+- **`threat_source_type`** -- the NIST SP 800-30 Rev. 1 Appendix D type of
+  threat source most likely to exploit a failure of the check: adversarial,
+  accidental, structural or environmental. A judgment per check, not an
+  analysis of any organization's threats.
+- **`threat_event`** -- a short, generic threat event for the check, not
+  threat intelligence.
+
+The 26 drafted rows await the researcher's review in
+[`docs/sp800-30-review.md`](sp800-30-review.md), which says how to confirm
+them before the study's baseline freeze, or how to record the review without
+touching the tool during the study. The section is read only for the risk
+register: `list-checks`, an assessment without `--risk-register`, and the
+study's worksheet and input checks read `checks:` alone, so a typo there
+stops only register runs (before anything is collected). When present, the
+section must cover every check of `checks:`.
+
+### Rating and order
+
+The two FAIR bands combine into an overall risk rating via a 3x3 qualitative
 lookup table (deliberately a lookup, not a numeric product -- ordinal
 LOW/MEDIUM/HIGH values cannot be validly multiplied):
 
@@ -217,27 +310,149 @@ LOW/MEDIUM/HIGH values cannot be validly multiplied):
 | **MEDIUM** | LOW | MODERATE | HIGH |
 | **HIGH** | MODERATE | HIGH | CRITICAL |
 
-The register lists every `FAIL`/`PARTIAL` check, sorted by risk rating first
-(fix CRITICALs before HIGHs regardless of IG -- rating reflects actual
-measured exposure) and CIS IG as the tiebreaker within a rating band (an IG1
-failure is more foundational, expected of every organization, than an IG2
-failure at the same risk level, so it is remediated first). A check with no
-metadata entry (e.g. an unrated custom check) sorts last as `UNRATED` rather
-than being dropped.
+A missing-data entry carries its check's own ratings: those the finding would
+have if the control turned out to be absent (`sp800_30.risk_basis`
+`if-control-absent`). The register lists findings first, then missing-data
+entries, so an unconfirmed gap never outranks a confirmed finding. Within
+each group it sorts by risk rating (fix CRITICALs before HIGHs regardless of
+IG), then by CIS IG as the tiebreaker within a rating band (an IG1 failure is
+more foundational, expected of every organization, than an IG2 failure at the
+same risk level, so it is remediated first), then by check id. A check with no
+metadata entry (e.g. an unrated custom check) sorts last in its group as
+`UNRATED` rather than being dropped. The order depends only on the assessment
+and the metadata, never on the methodology, so the CMMI and CISA ZTMM outputs
+of one run list the same entries in the same order and a `--facts` replay
+reproduces it; findings keep exactly the order they had before missing-data
+entries existed.
+
+### What a missing-data entry says
+
+Each missing-data entry has a `missing_data` object: the marker's source,
+problem, field and expected value, `what` (what is missing) and
+`how_to_supply` (how to supply it). For example, with no attestation:
+
+- what: `No attestation file was given (--attestation), so CTL-03 could not be evaluated.`
+- how to supply it: `Give an --attestation JSON file with the entry "identity_aware_access": {"enabled": true or false}, recording this device's facts, and run the assessment again. If this check does not apply to this device, exclude it with a reason in the --config file (excluded_checks) instead.`
+
+The recommended response of a missing-data entry is how to supply the data,
+then "If the check then fails: " and the check's fix. An `ERROR` without a
+marker (a custom check) gets generic texts that point to its detail.
+
+### Next level
+
+With a maturity lens (CMMI unless `--methodology` names CISA ZTMM or none),
+each entry states its property's level now and what fixing this check does
+toward the property's next level ("fix mapped to the next maturity level").
+Definitions:
+
+- A fix means the check re-tests as `PASS` and nothing else changes. Scores
+  and levels after a fix use the engine's own scoring and the methodology's
+  cutoffs, so a hint agrees with what a re-test would report.
+- The current level is the one the assessment reports for the property.
+- The open entries of a property are its `FAIL`, `PARTIAL` and `ERROR`
+  checks, taken largest score gain first (`FAIL` and `ERROR` before
+  `PARTIAL`, then by check id), which gives the fewest fixes for a level.
+- Hints are per property; the overall level gets none.
+
+The `effect`, and what the text says:
+
+| Effect | When | The text says |
+|---|---|---|
+| `alone` | this fix alone reaches the next level | the level reached and the score change, citing the cutoff of the level reached (a fix can jump two levels) |
+| `with-others` | it does not, and every fewest set of fixes that reaches the next level includes this check | which other fixes reach it with this one (K fixes), and whether the next level can be reached without this check at all |
+| `not-needed` | it does not, and a fewest set of fixes reaches the next level without this check | that the next level does not need it, which fixes reach it, and the score with this check fixed too |
+| `top-level` | the property is at the methodology's top level | that there is no next level |
+| `not-scored` | the check is `NOT_APPLICABLE` until its data is supplied | that it is not scored until then and its result can change the level (no arithmetic) |
+
+Examples (real cutoffs, CMMI 20/40/70/90 and CISA ZTMM 40/70/90):
+
+- Controlled with CTL-01 `FAIL`, CTL-02 `PARTIAL`, two `PASS` (62.5, CMMI
+  level 3): CTL-01: "Fixing this check alone raises Controlled from CMMI
+  level 3 (Defined) to level 4 (Quantitatively Managed): score 62.5 -> 87.5
+  (level 4 needs 70)."
+- Claimed with CLM-01 `FAIL`, CLM-02 `PASS`, CLM-03 `PARTIAL` (50.0): CLM-03:
+  "... Fixing this check alone gives 66.7. Level 4 does not need this check:
+  fixing CLM-01 reaches it (score 83.3). Together with CLM-01, this check
+  gives 100.0."
+- Current with three `FAIL`s and CUR-02 not applying (0.0): under CMMI each
+  fix alone reaches level 2; under CISA ZTMM (stage 2 needs 40) each is
+  `not-needed`, since any two of the three reach it.
+- Current with CUR-03 not supplied: "Current is at CMMI level 1 (Initial)
+  without this check, which is not scored until its data is supplied; its
+  result can then change that level." Missing data changes the denominator:
+  with CUR-03 unscored, one fix gives 50.0 instead of 33.3.
+
+CISA's Zero Trust Maturity Model calls its levels stages, and the hints do
+too. Levels and stages are this tool's score bands under CMMI or CISA ZTMM
+names (section 7), not a CMMI appraisal or a CISA assessment; the top band
+(CMMI level 5, CISA ZTMM stage 4) reflects one snapshot scoring 90 or more,
+not sustained improvement. With `--methodology none` there is no hint.
+
+### NIST SP 800-30 Rev. 1 structure
+
+Each entry's `sp800_30` object arranges the register's own fields as the
+risk factors of SP 800-30 Rev. 1's risk model, plus a recommended response.
+Its direction, from each weakness found to a threat event that could
+exploit it, resembles the vulnerability-oriented analysis approach SP 800-30
+describes (section 2.3.3); it follows that approach in structure only.
+
+| Element | Key | From | Note |
+|---|---|---|---|
+| Threat source (type) | `threat_source_type` | `threats:` | Appendix D type; drafted, pending review |
+| Threat event | `threat_event` | `threats:` | generic per check; drafted, pending review |
+| Vulnerability or predisposing condition | `vulnerability` | the finding (the check's detail, or its name when the detail is empty) | null for missing data: not determined |
+| Likelihood | `likelihood` | `fair_frequency` | 3 levels, not SP 800-30's 5-level scale; not derived through SP 800-30's tables or from the device's exposure |
+| Impact | `impact` | `fair_magnitude` | the same caveat |
+| Risk | `risk` | `risk_rating` | this register's 3x3 matrix, not SP 800-30's risk table; `risk_basis` says whether it rates a finding or applies if the control is absent |
+| Recommended response | `response` | `remediation`; for missing data, how to supply the data, then the fix | an assessment informs the response; choosing it (accept, avoid, mitigate, share or transfer) is the organization's decision, as in NIST SP 800-39 |
+| (review state) | `review` | `threats:` | `drafted` or `confirmed`; null for a custom check |
+
+What this is not: it is not an SP 800-30 risk assessment. There is no
+organization-specific threat analysis, no SP 800-30 assessment scale or
+table, and no quantitative estimate (FAIR/Monte Carlo or other); no SP 800-30
+table is reproduced. The FAIR bands were rated for how often adversaries
+exploit the failure in the wild, so on a row whose threat-source type is
+accidental or structural they stand in for likelihood and impact and were
+not rated for that source; the review table asks whether they fit.
+
+### Output
 
 Every text/markdown render of the register opens with a legend explaining
-`IG1`/`IG2`/`IG3`, FAIR frequency/magnitude, and the risk-rating scale above,
-and entries are sorted highest-priority first so the register itself reads as
-the recommended order of operations -- fix the top entry first.
+`IG1`/`IG2`/`IG3`, FAIR frequency/magnitude, the risk-rating scale, the entry
+types, the SP 800-30 elements with the notes above, which threat fields are
+still drafted, and the next-level hint; then the order, the "Not evaluated"
+line when checks are `NOT_IMPLEMENTED`, and the entries in two groups,
+findings and missing data, numbered in order (`#n`, the study's review-sheet
+`entry_no`). The scorecard's legend adds, only when some check lacks an
+input, that `[ N/A]` can also mean "not evaluated: an organizational input it
+reads was not supplied".
 
-Implementation: `miccmac/risk_register.py`.
+In JSON, `risk_register` is a list of entries. Each keeps the original keys
+in their original order (`check_id`, `property_key`, `name`, `status`,
+`cis_ig`, `fair_frequency`, `fair_magnitude`, `risk_rating`, `detail`,
+`remediation`) and adds four: `entry_type`, `missing_data` (null for
+findings), `next_level` (null without a lens; `methodology`, `effect`,
+`current_level`, `current_label`, `current_score`, `max_level`,
+`target_level`, `target_label`, `target_min_score`, `score_if_fixed`,
+`level_if_fixed`, `level_if_fixed_label`, `fixes_needed`, `with_check_ids`,
+`fewest_fixes`, `target_reachable_without_this`, `without_check_ids`, `text`)
+and `sp800_30`. An entry's `status` can now also be `ERROR` or
+`NOT_APPLICABLE`: a consumer that counts entries as findings should filter on
+`entry_type` (or on `status` `FAIL`/`PARTIAL`, which gives the same entries),
+and should read a missing-data entry's ratings as applying if the control is
+absent.
+
+Implementation: `miccmac/risk_register.py`, `miccmac/metadata.py`.
 
 **Provenance:** the `cis_ig`/`fair_frequency`/`fair_magnitude` values for all
 26 built-in checks were assigned by the researcher (Isaac Ojeh) and reviewed
 against a per-check rationale table on 2026-08-29; all 26 ratings were
 confirmed as-is with no adjustments. These are qualitative judgment calls,
 not derived from an external framework or SME panel beyond the researcher's
-own analysis.
+own analysis. The remediation text was not part of that review. The
+`threat_source_type` and `threat_event` values were drafted with AI
+assistance on 2026-11-20; their review (with the remediation text) is
+pending, in docs/sp800-30-review.md.
 
 ## 10. Target connectors and real detection logic
 
@@ -329,10 +544,12 @@ data dependency stays self-documenting from the flag name alone.
 if `context` has no `"facts"` key at all (the default invocation, with
 neither `--connector` nor `--facts`; `--facts` supplies saved facts without
 a connector), it falls back to the identical `NOT_IMPLEMENTED` stub behavior.
-This is why `miccmac assess <target>` with no flags has stayed byte-for-byte
-identical to the original Alpha scaffold's output through every pass of
-this architecture work -- verified by diffing against the original commit,
-not just by inspection.
+This is why `miccmac assess <target> --methodology none` stays byte-for-byte
+identical to the original Alpha scaffold's output (the output of a plain
+`miccmac assess <target>` before CMMI became the default lens) -- verified by
+`tests/test_golden_stub.py` against goldens captured at commit 4644c33. The
+default run adds only the CMMI lens, every value of it "Unassessed" in a stub
+run.
 
 **A real finding from live testing:** INV-02 (hardware attributes recorded)
 reliably FAILs against a stock VMware VM, because osquery's `system_info`
@@ -685,7 +902,9 @@ without these options has no block. Its fields, in order:
 - `run_at_utc` (the real clock when the run started, never the reference
   date), `as_of`, and `as_of_source` (`cli`, `facts-file`,
   `facts-collected-date`, or null when no reference date was set);
-- `methodology`, `risk_register`, `target`;
+- `methodology` (the maturity methodology applied: `cmmi` unless
+  `--methodology` says otherwise, or null with `--methodology none`),
+  `risk_register`, `target`;
 - `facts_source` (`connector`, `facts-file` or `none`), `connector` (used by
   this run), `facts_collected_at_utc`, and `facts_file` (`path`, `sha256`,
   and `role`: `saved` or `replayed`);

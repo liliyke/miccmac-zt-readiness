@@ -1,16 +1,30 @@
-"""Loads and indexes the per-check CIS Implementation Group / FAIR-inspired
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Loads and indexes the per-check CIS Implementation Group / FAIR-inspired
 risk metadata from data/control-mappings.yaml's `checks:` section, and
 derives the canonical built-in check-id manifest from it.
 
 This module never imports miccmac.checks.* -- it is the single source of
 truth for "what built-in check ids exist and what property they belong to",
 read from data, not from the check modules themselves.
+
+The file's optional `threats:` section adds, per check, the NIST SP 800-30
+Rev. 1 threat-source type and a short threat event that the risk register
+shows (load_threat_metadata). It is read only for the register
+(load_register_metadata): the check manifest (builtin_check_ids_by_property,
+all_builtin_check_ids) and load_check_metadata read `checks:` alone, so an
+error in `threats:` never stops `list-checks`, an assessment without
+--risk-register, or the study's worksheet and input checks.
+
+In this module, AI assistance covers the `threats:` section: its fields on
+CheckMetadata, load_threat_metadata and load_register_metadata.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import yaml
 
@@ -20,6 +34,11 @@ DEFAULT_MAPPINGS_PATH = Path(__file__).resolve().parent.parent / "data" / "contr
 
 VALID_IGS = ("IG1", "IG2", "IG3")
 VALID_FAIR_LEVELS = ("LOW", "MEDIUM", "HIGH")
+# NIST SP 800-30 Rev. 1 Appendix D threat-source types.
+VALID_THREAT_SOURCE_TYPES = ("adversarial", "accidental", "structural", "environmental")
+# Review state of a check's drafted threat fields: drafted (with AI
+# assistance, not yet confirmed) or confirmed by the researcher.
+VALID_REVIEW_STATES = ("drafted", "confirmed")
 
 
 class MappingsError(RuntimeError):
@@ -38,6 +57,13 @@ class CheckMetadata:
     # Optional (defaults to None) so existing custom-check plugins that don't
     # declare one keep working -- see miccmac/config.py.
     remediation: Optional[str] = None
+    # NIST SP 800-30 Rev. 1 fields from the `threats:` section (None when the
+    # file has none, and for a custom check that declares none): the Appendix
+    # D threat-source type, a short generic threat event, and the review
+    # state of those two (drafted/confirmed; always None for custom checks).
+    threat_source_type: Optional[str] = None
+    threat_event: Optional[str] = None
+    sp800_30_review: Optional[str] = None
 
 
 def load_raw_mappings(path: Path | str = DEFAULT_MAPPINGS_PATH) -> dict:
@@ -117,6 +143,74 @@ def load_check_metadata(path: Path | str = DEFAULT_MAPPINGS_PATH) -> Dict[str, C
             remediation=remediation,
         )
     return result
+
+
+def load_threat_metadata(path: Path | str = DEFAULT_MAPPINGS_PATH,
+                         check_ids: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]:
+    """Validate and index the optional top-level `threats:` list into
+    check_id -> {"threat_source_type", "threat_event", "review"}; {} when the
+    file has no `threats:` section.
+
+    When present it must be a list of mappings, each with a check_id of the
+    `checks:` section (``check_ids``; default: read from the same file), no
+    duplicates, a threat_source_type of VALID_THREAT_SOURCE_TYPES, a
+    non-empty threat_event and a review of VALID_REVIEW_STATES, and it must
+    cover every check of `checks:`, so that a half-filled section cannot
+    leave some entries without these fields. Raises MappingsError naming the
+    file and the check ids."""
+    path = Path(path)
+    data = load_raw_mappings(path)
+    if "threats" not in data:
+        return {}
+    entries = data["threats"]
+    if not isinstance(entries, list):
+        raise MappingsError(f"{path}: 'threats:' must be a list of per-check entries")
+    known = list(check_ids) if check_ids is not None else list(load_check_metadata(path))
+    result: Dict[str, Dict[str, str]] = {}
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise MappingsError(f"{path}: threats[{i}] is not a mapping")
+        check_id = entry.get("check_id")
+        if not isinstance(check_id, str) or not check_id:
+            raise MappingsError(f"{path}: threats[{i}] missing a valid check_id")
+        if check_id not in known:
+            raise MappingsError(f"{path}: threats[{i}] names {check_id!r}, which is not in the 'checks:' section")
+        if check_id in result:
+            raise MappingsError(f"{path}: duplicate threats entry for {check_id!r}")
+        source_type = entry.get("threat_source_type")
+        if source_type not in VALID_THREAT_SOURCE_TYPES:
+            raise MappingsError(f"{path}: {check_id} has invalid threat_source_type {source_type!r}; "
+                                f"must be one of {VALID_THREAT_SOURCE_TYPES}")
+        event = entry.get("threat_event")
+        if not isinstance(event, str) or not event.strip():
+            raise MappingsError(f"{path}: {check_id} missing a non-empty threat_event string")
+        review = entry.get("review")
+        if review not in VALID_REVIEW_STATES:
+            raise MappingsError(f"{path}: {check_id} has invalid review {review!r}; "
+                                f"must be one of {VALID_REVIEW_STATES}")
+        unknown = set(entry) - {"check_id", "threat_source_type", "threat_event", "review"}
+        if unknown:
+            raise MappingsError(f"{path}: {check_id} threats entry has unknown key(s) {sorted(unknown)}")
+        result[check_id] = {"threat_source_type": source_type, "threat_event": " ".join(event.split()),
+                            "review": review}
+    missing = [check_id for check_id in known if check_id not in result]
+    if missing:
+        raise MappingsError(f"{path}: the 'threats:' section has no entry for {', '.join(missing)}; when "
+                            f"present it must cover every check of 'checks:'")
+    return result
+
+
+def load_register_metadata(path: Path | str = DEFAULT_MAPPINGS_PATH) -> Dict[str, CheckMetadata]:
+    """load_check_metadata with the `threats:` fields filled in (they stay
+    None when the file has no `threats:` section): what the risk register
+    reads. Raises MappingsError for either section."""
+    metadata = load_check_metadata(path)
+    threats = load_threat_metadata(path, check_ids=list(metadata))
+    for check_id, fields in threats.items():
+        metadata[check_id] = dataclasses.replace(
+            metadata[check_id], threat_source_type=fields["threat_source_type"],
+            threat_event=fields["threat_event"], sp800_30_review=fields["review"])
+    return metadata
 
 
 def builtin_check_ids_by_property(path: Path | str = DEFAULT_MAPPINGS_PATH) -> Dict[str, List[str]]:

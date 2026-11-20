@@ -1,6 +1,10 @@
 """Tests for miccmac.report: text/markdown/json rendering, including the
 methodology display fix (assessment.methodology was computed but never
-shown outside --format json before this)."""
+shown outside --format json before this).
+
+In this file, AI assistance (Claude Code, Anthropic) covers
+test_the_legend_explains_a_missing_input_only_when_a_check_lacks_one, drafted
+for the researcher's review."""
 from miccmac.methodology import apply_methodology
 from miccmac.model import Assessment, PropertyResult
 from miccmac.report import to_json, to_markdown, to_text
@@ -63,3 +67,19 @@ def test_to_json_still_includes_methodology():
     assessment = _assessment_with_methodology()
     data = json.loads(to_json(assessment))
     assert data["methodology"]["name"] == "cmmi"
+
+
+# The legend line for a NOT_APPLICABLE check that lacks an input.
+def test_the_legend_explains_a_missing_input_only_when_a_check_lacks_one():
+    from miccmac.engine import run_assessment
+
+    facts = {"os": {"platform": "ubuntu"}, "system_info": {}, "deb_packages": []}
+    with_gap = run_assessment("x", context={"facts": facts})
+    assert any(c.missing_data for p in with_gap.properties for c in p.checks)
+    line = "or not evaluated: an organizational input it reads was not supplied"
+    assert line in to_text(with_gap) and line in to_markdown(with_gap)
+    text = to_text(with_gap).splitlines()
+    assert text[text.index("    [ N/A] excluded by config, or not applicable to this device") + 1].strip().startswith(
+        "or not evaluated")
+    stub = run_assessment("x")
+    assert line not in to_text(stub) and line not in to_markdown(stub)

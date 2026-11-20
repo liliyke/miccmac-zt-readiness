@@ -1,4 +1,6 @@
-"""Pluggable maturity-model scoring methodologies.
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Pluggable maturity-model scoring methodologies.
 
 These re-bucket the *existing* flat 0-100 score (PropertyResult.score /
 Assessment.overall_score) into an ordinal maturity level, rather than
@@ -17,15 +19,29 @@ shared threshold anchors (CISA's 4 stages map 1:1 onto the default readiness
 tiers; CMMI's 5th level bisects the bottom band at 20). That shared-anchor
 design is what makes "comparable regardless of methodology" a defensible
 claim rather than an arbitrary one.
+
+The CLI applies CMMI unless --methodology says otherwise
+(DEFAULT_METHODOLOGY), and --methodology none (NO_METHODOLOGY) applies no
+methodology at all. engine.run_assessment itself still applies none unless
+it is given a methodology name.
+
+In this module, AI assistance covers DEFAULT_METHODOLOGY, NO_METHODOLOGY,
+LEVEL_WORDS, level_for_score and min_score_for_level, which the CLI's
+default lens and the risk register's next-level hints use.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from miccmac.model import PROPERTY_KEYS, Assessment, PropertyResult
 
 UNASSESSED_LABEL = "Unassessed"
+# The lens `miccmac assess` applies when --methodology is not given.
+DEFAULT_METHODOLOGY = "cmmi"
+# `--methodology none`: no lens (flat score and readiness tier only). Never a
+# REGISTRY key, so apply_methodology rejects it.
+NO_METHODOLOGY = "none"
 
 
 @dataclass(frozen=True)
@@ -82,6 +98,18 @@ class _ThresholdMethodology:
     levels: List[str] = []
     _cutoffs: List[float] = []
 
+    def level_for_score(self, score: Optional[float]) -> LevelResult:
+        """The LevelResult a property or overall score gets under this
+        methodology (Unassessed for None), exactly as score_property and
+        score_overall report it."""
+        return self._level_result(score)
+
+    def min_score_for_level(self, level: int) -> float:
+        """The lowest score that gets `level` (0.0 for level 1)."""
+        if not 1 <= level <= len(self.levels):
+            raise ValueError(f"{self.name} has levels 1-{len(self.levels)}, not {level}")
+        return 0.0 if level == 1 else self._cutoffs[level - 2]
+
     def _level_result(self, score: Optional[float]) -> LevelResult:
         max_level = len(self.levels)
         level = _bucket(score, self._cutoffs)
@@ -131,6 +159,16 @@ REGISTRY: Dict[str, _ThresholdMethodology] = {
 FULL_NAMES: Dict[str, str] = {
     "cmmi": "Capability Maturity Model Integration",
     "cisa-ztmm": "CISA (Cybersecurity and Infrastructure Security Agency) Zero Trust Maturity Model",
+}
+
+
+# How running text names each methodology and its levels: (display name,
+# level word). CISA's Zero Trust Maturity Model calls its levels stages. Used
+# by the risk register's next-level hints and the study worksheets (whose
+# wording these are).
+LEVEL_WORDS: Dict[str, Tuple[str, str]] = {
+    "cmmi": ("CMMI", "level"),
+    "cisa-ztmm": ("CISA ZTMM", "stage"),
 }
 
 

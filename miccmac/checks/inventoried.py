@@ -29,7 +29,10 @@ date: the --as-of date when one was given (context["as_of"]), otherwise
 today.
 
 In this module, AI assistance covers the --as-of reference date of INV-04
-(the today and as_of_label parameters and the " (as of ...)" detail suffix).
+(the today and as_of_label parameters and the " (as of ...)" detail suffix),
+and the missing-data markers (CheckResult.missing_data) of INV-01 and INV-04:
+no inventory record supplied (NOT_APPLICABLE), and INV-04's unreadable
+last_reviewed date (ERROR). Detail strings are unchanged.
 """
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ import datetime
 import json
 
 from miccmac import clock
-from miccmac.model import CheckResult, PropertyResult, Status
+from miccmac.model import CheckResult, MissingData, PropertyResult, Status
 
 KEY = "inventoried"
 LETTER = "I"
@@ -53,6 +56,13 @@ _CONTROL_REFS = {
     "INV-03": ["NIST 800-53 CM-8(2)", "CIS v8 2.1"],
     "INV-04": ["NIST 800-53 PM-5", "CIS v8 1.1"],
 }
+
+# What valid inventory-record data looks like, for the risk register's
+# missing-data entries (upper-case placeholders, no <> or |, which markdown
+# would hide or split).
+INV01_EXPECTED = '{"device_id": "ASSET ID", "tracked": true or false}'
+INV04_EXPECTED = '{"last_reviewed": "YYYY-MM-DD"}'
+DATE_EXPECTED = "a YYYY-MM-DD date"
 
 _NAMES = {
     "INV-01": "Device present in the authoritative asset inventory",
@@ -76,7 +86,17 @@ def _stub_checks() -> list[CheckResult]:
     return [_stub_result(cid) for cid in ("INV-01", "INV-02", "INV-03", "INV-04")]
 
 
-def _check_inv01(record: dict | None) -> CheckResult:
+def _no_record(record_given: bool | None, expected: str) -> MissingData:
+    """The marker for a run without an inventory record: not-supplied when
+    --inventory-record was not given, missing-field when it was given but
+    holds no record (JSON null). ``record_given`` None: not given."""
+    return MissingData("inventory_record", "missing-field" if record_given else "not-supplied",
+                       None, expected)
+
+
+def _check_inv01(record: dict | None, *, record_given: bool | None = None) -> CheckResult:
+    """``record_given``: whether --inventory-record was given at all (None:
+    taken as not given when ``record`` is None)."""
     if record is None:
         return CheckResult(
             check_id="INV-01", name=_NAMES["INV-01"], status=Status.NOT_APPLICABLE,
@@ -84,6 +104,7 @@ def _check_inv01(record: dict | None) -> CheckResult:
                    "supplied); device presence in an external CMDB cannot be assessed "
                    "from the device alone.",
             control_refs=_CONTROL_REFS["INV-01"],
+            missing_data=_no_record(record_given, INV01_EXPECTED),
         )
     device_id = record.get("device_id")
     tracked = bool(record.get("tracked"))
@@ -148,16 +169,18 @@ def _check_inv03_windows(programs: list) -> CheckResult:
 
 
 def _check_inv04(record: dict | None, *, today: datetime.date | None = None,
-                 as_of_label: str | None = None) -> CheckResult:
+                 as_of_label: str | None = None, record_given: bool | None = None) -> CheckResult:
     """``today`` is the reference date to count the review's age against
     (None: the real date, through miccmac.clock). ``as_of_label`` (e.g.
-    " (as of 2026-11-23)") is appended to a detail that reports an age."""
+    " (as of 2026-11-23)") is appended to a detail that reports an age.
+    ``record_given`` works as in _check_inv01."""
     if record is None:
         return CheckResult(
             check_id="INV-04", name=_NAMES["INV-04"], status=Status.NOT_APPLICABLE,
             detail="No inventory-system integration configured (no --inventory-record "
                    "supplied); review recency cannot be assessed from the device alone.",
             control_refs=_CONTROL_REFS["INV-04"],
+            missing_data=_no_record(record_given, INV04_EXPECTED),
         )
     last_reviewed = record.get("last_reviewed")
     if not last_reviewed:
@@ -173,6 +196,7 @@ def _check_inv04(record: dict | None, *, today: datetime.date | None = None,
             check_id="INV-04", name=_NAMES["INV-04"], status=Status.ERROR,
             detail=f"Supplied inventory record's last_reviewed={last_reviewed!r} is not a valid ISO date.",
             control_refs=_CONTROL_REFS["INV-04"],
+            missing_data=MissingData("inventory_record", "invalid-value", "last_reviewed", DATE_EXPECTED),
         )
     if today is None:
         today = clock.reference_date(None)
@@ -196,6 +220,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return _stub_checks()
 
     inventory_record = context.get("inventory_record")
+    record_given = "inventory_record" in context
     system_info = facts.get("system_info") or {}
 
     if (facts.get("os") or {}).get("platform") == "windows":
@@ -204,11 +229,11 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         inv03 = _check_inv03(facts.get("deb_packages") or [])
 
     return [
-        _check_inv01(inventory_record),
+        _check_inv01(inventory_record, record_given=record_given),
         _check_inv02(system_info),
         inv03,
         _check_inv04(inventory_record, today=clock.reference_date(context),
-                     as_of_label=clock.as_of_label(context)),
+                     as_of_label=clock.as_of_label(context), record_given=record_given),
     ]
 
 

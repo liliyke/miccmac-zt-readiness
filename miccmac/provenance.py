@@ -23,7 +23,9 @@ them is unchanged). Text and markdown reports never show it. Format
     as_of                   reference date "YYYY-MM-DD" for the date-dependent
                             checks, or null when the real clock was used
     as_of_source            "cli", "facts-file", "facts-collected-date" or null
-    methodology             --methodology, or null
+    methodology             the maturity methodology applied (cmmi unless
+                            --methodology says otherwise), or null with
+                            --methodology none
     risk_register           whether --risk-register was used
     target                  the target this run reports on
     facts_source            "connector", "facts-file" or "none"

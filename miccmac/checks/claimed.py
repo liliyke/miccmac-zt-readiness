@@ -1,4 +1,6 @@
-"""MICCMAC property: Claimed (C).
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+MICCMAC property: Claimed (C).
 
 Intent: The device has a known, accountable owner and administrator, and a documented business purpose.
 
@@ -18,10 +20,15 @@ Any other invocation (e.g. --connector alone, --attestation alone) reaches
 real logic, and each check reports NOT_APPLICABLE for itself if its specific
 attestation key is missing, rather than blanket NOT_IMPLEMENTED for checks
 that were, in fact, evaluated.
+
+In this module, AI assistance covers the missing-data marker
+(CheckResult.missing_data) each NOT_APPLICABLE result carries: the
+attestation was not supplied, or it has no entry for the check's key. Detail
+strings are unchanged.
 """
 from __future__ import annotations
 
-from miccmac.model import CheckResult, PropertyResult, Status
+from miccmac.model import CheckResult, MissingData, PropertyResult, Status
 
 KEY = "claimed"
 LETTER = "C"
@@ -31,6 +38,14 @@ _CONTROL_REFS = {
     "CLM-01": ["NIST 800-53 CM-8", "CIS v8 1.1"],
     "CLM-02": ["NIST 800-53 PS-2", "CIS v8 1.1"],
     "CLM-03": ["NIST 800-53 RA-2", "CIS v8 3.2"],
+}
+
+# What a valid attestation entry looks like, for the risk register's
+# missing-data entries (upper-case placeholders, no <> or |).
+EXPECTED = {
+    "business_owner": '{"assigned": true or false, "name": "OWNER NAME"}',
+    "system_administrator": '{"assigned": true or false, "name": "ADMINISTRATOR OR TEAM"}',
+    "business_purpose": '{"documented": true or false, "data_classification": "LABEL"}',
 }
 
 _NAMES = {
@@ -54,18 +69,29 @@ def _stub_checks() -> list[CheckResult]:
     return [_stub_result(cid) for cid in ("CLM-01", "CLM-02", "CLM-03")]
 
 
-def _not_applicable(check_id: str, missing_key: str) -> CheckResult:
+def _attestation_supplied(attestation: dict | None, attestation_given: bool | None) -> bool:
+    """Whether --attestation was given (None: taken from whether there is one)."""
+    return attestation is not None if attestation_given is None else bool(attestation_given)
+
+
+def _not_applicable(check_id: str, missing_key: str, attestation_given: bool = False) -> CheckResult:
+    """NOT_APPLICABLE for an attestation entry that was not supplied: no
+    --attestation at all (not-supplied), or no entry for this key
+    (missing-field)."""
     return CheckResult(
         check_id=check_id, name=_NAMES[check_id], status=Status.NOT_APPLICABLE,
         detail=f"No --attestation supplied for {missing_key!r}; this is an organizational "
                f"record-keeping fact, not observable from the device itself.",
         control_refs=_CONTROL_REFS[check_id],
+        missing_data=MissingData("attestation", "missing-field" if attestation_given else "not-supplied",
+                                 missing_key, EXPECTED[missing_key]),
     )
 
 
-def _check_clm01(attestation: dict | None) -> CheckResult:
+def _check_clm01(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "business_owner" not in attestation:
-        return _not_applicable("CLM-01", "business_owner")
+        return _not_applicable("CLM-01", "business_owner",
+                               _attestation_supplied(attestation, attestation_given))
     owner = attestation["business_owner"] or {}
     if owner.get("assigned") and owner.get("name"):
         status, detail = Status.PASS, f"Business owner recorded: {owner['name']!r}."
@@ -77,9 +103,10 @@ def _check_clm01(attestation: dict | None) -> CheckResult:
     )
 
 
-def _check_clm02(attestation: dict | None) -> CheckResult:
+def _check_clm02(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "system_administrator" not in attestation:
-        return _not_applicable("CLM-02", "system_administrator")
+        return _not_applicable("CLM-02", "system_administrator",
+                               _attestation_supplied(attestation, attestation_given))
     admin = attestation["system_administrator"] or {}
     if admin.get("assigned") and admin.get("name"):
         status, detail = Status.PASS, f"Responsible system administrator identified: {admin['name']!r}."
@@ -91,9 +118,10 @@ def _check_clm02(attestation: dict | None) -> CheckResult:
     )
 
 
-def _check_clm03(attestation: dict | None) -> CheckResult:
+def _check_clm03(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "business_purpose" not in attestation:
-        return _not_applicable("CLM-03", "business_purpose")
+        return _not_applicable("CLM-03", "business_purpose",
+                               _attestation_supplied(attestation, attestation_given))
     purpose = attestation["business_purpose"] or {}
     documented = bool(purpose.get("documented"))
     classification = purpose.get("data_classification")
@@ -117,10 +145,11 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return _stub_checks()
 
     attestation = context.get("attestation")
+    supplied = "attestation" in context
     return [
-        _check_clm01(attestation),
-        _check_clm02(attestation),
-        _check_clm03(attestation),
+        _check_clm01(attestation, attestation_given=supplied),
+        _check_clm02(attestation, attestation_given=supplied),
+        _check_clm03(attestation, attestation_given=supplied),
     ]
 
 
