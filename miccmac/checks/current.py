@@ -43,8 +43,12 @@ Python 3.9 and 3.10, whose datetime.fromisoformat accepts only 3 or 6
 digits and no "Z"; on 3.11 and later the result is what fromisoformat alone
 gives. The saved facts keep the timestamp exactly as collected.
 
-In this module, AI assistance covers the --as-of reference time and the
-timestamp parse helper.
+In this module, AI assistance covers the --as-of reference time, the
+timestamp parse helper, and the missing-data markers
+(CheckResult.missing_data): CUR-03's attestation entry not supplied
+(NOT_APPLICABLE), and the Windows CUR-01 install timestamp that cannot be
+read (ERROR). CUR-02's NOT_APPLICABLE (no third-party software) has no
+marker: that check does not apply. Detail strings are unchanged.
 """
 from __future__ import annotations
 
@@ -52,7 +56,7 @@ import datetime
 import re
 
 from miccmac import clock
-from miccmac.model import CheckResult, PropertyResult, Status
+from miccmac.model import CheckResult, MissingData, PropertyResult, Status
 
 KEY = "current"
 LETTER = "C"
@@ -64,6 +68,16 @@ _CONTROL_REFS = {
     "CUR-03": ["NIST 800-53 SI-2", "CIS v8 7.3"],
     "CUR-04": ["NIST 800-53 SC-12", "CIS v8 3.10"],
 }
+
+# What valid data looks like, for the risk register's missing-data entries.
+CUR03_EXPECTED = '{"current": true or false}'
+CUR01_WINDOWS_EXPECTED = "an ISO 8601 timestamp of the last successful update install"
+
+
+def _attestation_supplied(attestation: dict | None, attestation_given: bool | None) -> bool:
+    """Whether --attestation was given (None: taken from whether there is one)."""
+    return attestation is not None if attestation_given is None else bool(attestation_given)
+
 
 _NAMES = {
     "CUR-01": "Operating-system patch level within policy",
@@ -222,6 +236,8 @@ def _check_cur01_windows(services: dict, last_update_installed_iso: str | None, 
             check_id="CUR-01", name=_NAMES["CUR-01"], status=Status.ERROR,
             detail=f"Last Windows Update install timestamp {last_update_installed_iso!r} is not a valid date.",
             control_refs=_CONTROL_REFS["CUR-01"],
+            missing_data=MissingData("facts", "invalid-value", "last_update_installed_iso",
+                                     CUR01_WINDOWS_EXPECTED),
         )
     if last_update.tzinfo is None:
         last_update = last_update.replace(tzinfo=datetime.timezone.utc)
@@ -266,14 +282,16 @@ def _check_cur02_windows(programs: list) -> CheckResult:
     )
 
 
-def _check_cur03(attestation: dict | None) -> CheckResult:
+def _check_cur03(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "firmware_currency" not in attestation:
+        problem = "missing-field" if _attestation_supplied(attestation, attestation_given) else "not-supplied"
         return CheckResult(
             check_id="CUR-03", name=_NAMES["CUR-03"], status=Status.NOT_APPLICABLE,
             detail="No --attestation supplied for firmware_currency; a device can report its current "
                    "firmware version but never whether that is the latest available -- there is no "
                    "local oracle for that, only a vendor feed.",
             control_refs=_CONTROL_REFS["CUR-03"],
+            missing_data=MissingData("attestation", problem, "firmware_currency", CUR03_EXPECTED),
         )
     firmware = attestation["firmware_currency"] or {}
     if firmware.get("current"):
@@ -307,6 +325,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
 
     expired_certificates = facts.get("expired_certificates") or []
     attestation = context.get("attestation")
+    supplied = "attestation" in context
     now = clock.reference_now(context)
     label = clock.as_of_label(context)
 
@@ -317,7 +336,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
             _check_cur01_windows(services, facts.get("last_update_installed_iso"),
                                  now=now, as_of_label=label),
             _check_cur02_windows(programs),
-            _check_cur03(attestation),
+            _check_cur03(attestation, attestation_given=supplied),
             _check_cur04(expired_certificates),
         ]
 
@@ -328,7 +347,7 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
     return [
         _check_cur01(units, apt_update_stamp_mtime, now=now, as_of_label=label),
         _check_cur02(units, apt_sources),
-        _check_cur03(attestation),
+        _check_cur03(attestation, attestation_given=supplied),
         _check_cur04(expired_certificates),
     ]
 

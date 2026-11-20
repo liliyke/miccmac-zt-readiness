@@ -105,7 +105,16 @@ parsing for known agent names.
 4. Each new check should also include at least one unit test in
    `tests/test_engine.py` (or a new `tests/test_<property>.py`) covering one
    PASS path and one FAIL path with mocked `context`.
-5. Run `pytest` before submitting.
+5. A new built-in check needs a `checks:` row and a `threats:` row in
+   `data/control-mappings.yaml` (its NIST SP 800-30 threat-source type and
+   threat event, `review: drafted` until reviewed), and a row in
+   `docs/sp800-30-review.md`; the tests check that both cover every check.
+6. A check that reads an organizational input (`--attestation`,
+   `--inventory-record`) sets `missing_data=MissingData(...)` on the
+   `NOT_APPLICABLE` it returns when that input was not supplied, and on the
+   `ERROR` it returns for a value it cannot read, so the risk register can say
+   what is missing (see `miccmac/model.py` and `docs/methodology.md` section 9).
+7. Run `pytest` before submitting.
 
 ## Anatomy of a working check (what reviewers look for)
 

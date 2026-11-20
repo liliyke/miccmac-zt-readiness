@@ -4,11 +4,14 @@ Tests for miccmac.cli: new --methodology/--config/--risk-register flags
 and the list-checks subcommand. Run entirely in-process via cli.main();
 no target/network dependency (target is always the label 'test-device').
 
-In this file, AI assistance covers the input-file encoding tests at the end
-and the two tests added with the reproducible-run options
+In this file, AI assistance covers the input-file encoding tests at the end,
+the two tests added with the reproducible-run options
 (test_assess_without_target_still_defaults_to_localhost and
-test_assess_connector_json_gains_provenance_text_unchanged). The --output
-safeguards are tested in tests/test_output_safety.py."""
+test_assess_connector_json_gains_provenance_text_unchanged), and the tests of
+CMMI as the default lens and --methodology none (the first two tests were
+rewritten for it: a default run now shows CMMI, and --methodology none gives
+the original output, which tests/test_golden_stub.py compares byte for
+byte). The --output safeguards are tested in tests/test_output_safety.py."""
 from __future__ import annotations
 
 import codecs
@@ -21,18 +24,40 @@ import pytest
 from miccmac.cli import main
 
 
-def test_assess_default_output_unchanged(capsys):
+def test_assess_default_output_applies_cmmi(capsys):
+    """Deliberately changed: CMMI is the default lens (it was opt-in), so a
+    default run shows the CMMI lines; --methodology none prints the original
+    output (tests/test_golden_stub.py)."""
     assert main(["assess", "test-device"]) == 0
     out = capsys.readouterr().out
     assert "MICCMAC ZERO TRUST DEVICE READINESS ASSESSMENT" in out
-    assert "methodology" not in out.lower()
+    assert "  CMMI            : Unassessed" in out
+    assert "[CMMI: Unassessed]" in out
+    assert "CMMI (Capability Maturity Model Integration) maturity levels" in out
     assert "risk register" not in out.lower()
+    assert main(["assess", "test-device", "--methodology", "none"]) == 0
+    out = capsys.readouterr().out
+    assert "CMMI" not in out and "methodology" not in out.lower()
 
 
-def test_assess_default_json_output_unchanged_keys(capsys):
+def test_assess_default_json_adds_the_cmmi_block_and_none_keeps_the_original_keys(capsys):
+    """Deliberately changed: the default JSON has a methodology block (cmmi);
+    with --methodology none it has exactly the original four keys."""
     assert main(["assess", "test-device", "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
+    assert set(data.keys()) == {"target", "overall_score", "readiness_tier", "properties", "methodology"}
+    assert data["methodology"]["name"] == "cmmi"
+    assert main(["assess", "test-device", "--format", "json", "-m", "none"]) == 0
+    data = json.loads(capsys.readouterr().out)
     assert set(data.keys()) == {"target", "overall_score", "readiness_tier", "properties"}
+
+
+def test_methodology_help_names_the_default_and_none(capsys):
+    with pytest.raises(SystemExit):
+        main(["assess", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "{cisa-ztmm,cmmi,none}" in help_text
+    assert "(default: cmmi)" in help_text and "none turns the lens off" in help_text
 
 
 def test_assess_with_methodology_flag_adds_methodology_json_key(capsys):

@@ -6,7 +6,11 @@ In this module, AI assistance covers the reproducible-run options (--as-of,
 --save-facts, --facts and the provenance block) and the --output safeguards
 (--overwrite, --stdout and the report-destination rule, the blank file-name
 checks, the checks in _check_output_option including the saved-facts guard,
-the atomic write).
+the atomic write); CMMI as the default maturity lens and --methodology none;
+the risk-register run's early check of the mappings file and custom-check
+metadata (before any connection); and the error after a live run with
+--save-facts that stops once the facts are saved, which names the saved
+facts file and how to build the report from it.
 """
 from __future__ import annotations
 
@@ -26,10 +30,11 @@ from miccmac import provenance as provenance_mod
 from miccmac.config import Config, ConfigError
 from miccmac.connectors.base import ConnectorError
 from miccmac.engine import enabled_check_ids, run_assessment
-from miccmac.metadata import MappingsError
+from miccmac.metadata import MappingsError, load_register_metadata
+from miccmac.methodology import DEFAULT_METHODOLOGY, NO_METHODOLOGY
 from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
 from miccmac.report import render as render_assessment
-from miccmac.risk_register import build_risk_register
+from miccmac.risk_register import build_risk_register, not_evaluated_count
 from miccmac.risk_register import render as render_risk_register
 
 CONNECTORS = ("ssh-osquery", "ssh-osquery-windows")
@@ -95,13 +100,20 @@ def build_parser() -> argparse.ArgumentParser:
                                "does not need it. It never lets --output replace one of the "
                                "run's input files or a saved facts file, and --save-facts never "
                                "overwrites a file, with or without it.")
-    p_assess.add_argument("--methodology", "-m", default=None,
-                          choices=sorted(METHODOLOGY_REGISTRY),
-                          help="Additionally score using a maturity-model methodology.")
+    p_assess.add_argument("--methodology", "-m", default=DEFAULT_METHODOLOGY,
+                          choices=sorted(METHODOLOGY_REGISTRY) + [NO_METHODOLOGY],
+                          help="Maturity-model lens for the property and overall levels and for the risk "
+                               "register's next-level hints (default: cmmi). cisa-ztmm uses CISA's Zero Trust "
+                               "Maturity Model; none turns the lens off (flat score and readiness tier only, "
+                               "as before cmmi became the default). The flat score is always computed.")
     p_assess.add_argument("--config", "-c", default=None,
                           help="Path to a YAML config file (excluded_checks, custom_checks_dir).")
     p_assess.add_argument("--risk-register", action="store_true",
-                          help="Append the CIS IG / FAIR-inspired risk register to the output.")
+                          help="Append the risk register: one entry per FAIL or PARTIAL check (a finding) and "
+                               "per check that could not be evaluated for missing data (ERROR, or an "
+                               "organizational input not supplied), with the CIS IG / FAIR-inspired rating, "
+                               "NIST SP 800-30 Rev. 1 risk factors and recommended response and, with a "
+                               "maturity lens, a next-level hint.")
     p_assess.add_argument("--connector", default=None, choices=CONNECTORS,
                           help="Collect real facts from the target instead of the NOT_IMPLEMENTED "
                                "stub. ssh-osquery targets Linux; ssh-osquery-windows targets Windows "
@@ -166,7 +178,9 @@ def _render_output(assessment, entries, fmt: str) -> str:
 
     output = render_assessment(assessment, fmt)
     if entries is not None:
-        output = output + "\n\n" + render_risk_register(entries, fmt)
+        methodology = assessment.methodology.name if assessment.methodology is not None else None
+        output = output + "\n\n" + render_risk_register(
+            entries, fmt, not_evaluated=not_evaluated_count(assessment), methodology=methodology)
     return output
 
 
@@ -517,6 +531,23 @@ def _custom_check_risk_metadata(config: Config) -> dict:
     return merged
 
 
+class _StoppedAfterSaveError(ConfigError):
+    """A live run with --save-facts stopped after the facts were saved; the
+    message says how to build the report from them."""
+
+
+def _stopped_after_save_message(args, exc: BaseException) -> str:
+    """The error for a --save-facts run that stopped after the facts were
+    saved. It names files only: the tool's own errors (ConfigError,
+    MappingsError) keep their text, which names files and check ids; any
+    other exception is named by its type alone, since its text could hold a
+    check's detail or status."""
+    own = isinstance(exc, (ConfigError, MappingsError))
+    reason = str(exc) if own else f"an internal error ({type(exc).__name__}) while scoring the collected facts"
+    return (f"{reason}; no report was written. The facts were saved to {args.save_facts}, so the report can be "
+            f"built from them with --facts {args.save_facts} (no new collection needed)")
+
+
 def _wants_provenance(args) -> bool:
     """Provenance is added for the reproducible-run options only, so a plain
     run's output stays exactly as it was."""
@@ -532,6 +563,14 @@ def _run_assess(args) -> str:
     # Resolving the enabled checks also validates exclusions and custom
     # checks, so a bad config fails here, before any connection is made.
     check_ids = enabled_check_ids(config) if _wants_provenance(args) else None
+    methodology = None if args.methodology == NO_METHODOLOGY else args.methodology
+    extra_metadata = None
+    if args.risk_register:
+        # The register reads the mappings file's checks: and threats: sections
+        # and every custom check's RISK_METADATA: a problem in either stops the
+        # run here, before anything is collected.
+        load_register_metadata()
+        extra_metadata = _custom_check_risk_metadata(config)
 
     if args.facts:
         source = _load_replay(args.facts)
@@ -542,22 +581,29 @@ def _run_assess(args) -> str:
         as_of, as_of_source = cli_as_of, ("cli" if cli_as_of is not None else None)
         source = _collect_live(args, target, as_of) if args.connector else _FactsSource()
 
-    context = _build_context(source, inputs, as_of)
-    assessment = run_assessment(
-        target, context=context, config=config, methodology_name=args.methodology,
-    )
-    if check_ids is not None:
-        assessment.provenance = provenance_mod.build_provenance(
-            run_at_utc=run_at_utc, as_of=as_of, as_of_source=as_of_source,
-            methodology=args.methodology, risk_register=args.risk_register, target=target,
-            facts_source=source.kind, connector=args.connector,
-            facts_collected_at_utc=source.collected_at_utc, facts_file=source.file,
-            inputs=inputs.records, enabled_check_ids=check_ids, facts=source.facts,
+    try:
+        context = _build_context(source, inputs, as_of)
+        assessment = run_assessment(
+            target, context=context, config=config, methodology_name=methodology,
         )
-    entries = None
-    if args.risk_register:
-        entries = build_risk_register(assessment, extra_metadata=_custom_check_risk_metadata(config))
-    return _render_output(assessment, entries, args.format)
+        if check_ids is not None:
+            assessment.provenance = provenance_mod.build_provenance(
+                run_at_utc=run_at_utc, as_of=as_of, as_of_source=as_of_source,
+                methodology=methodology, risk_register=args.risk_register, target=target,
+                facts_source=source.kind, connector=args.connector,
+                facts_collected_at_utc=source.collected_at_utc, facts_file=source.file,
+                inputs=inputs.records, enabled_check_ids=check_ids, facts=source.facts,
+            )
+        entries = None
+        if args.risk_register:
+            entries = build_risk_register(assessment, extra_metadata=extra_metadata)
+        return _render_output(assessment, entries, args.format)
+    except Exception as exc:
+        if (source.file or {}).get("role") == "saved":
+            # The facts are on disk: say so, and how to build the report from
+            # them, instead of an error (or a traceback) that hides it.
+            raise _StoppedAfterSaveError(_stopped_after_save_message(args, exc)) from None
+        raise
 
 
 def _run_list_checks(args) -> str:

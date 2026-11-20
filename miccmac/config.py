@@ -1,4 +1,6 @@
-"""Loads run configuration: excluded built-in check IDs and custom check
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Loads run configuration: excluded built-in check IDs and custom check
 plugins.
 
 A config file (YAML, so a hand-written .json config also parses since JSON
@@ -47,6 +49,23 @@ custom_checks_dir must define, at module scope:
                                   recommended-fix string shown in the risk
                                   register; without it the entry's
                                   "Recommended fix" shows as "n/a".
+                                  "threat_source_type" (one of adversarial,
+                                  accidental, structural, environmental: the
+                                  NIST SP 800-30 Rev. 1 Appendix D types) and
+                                  "threat_event" (a non-empty string) are
+                                  optional too; without them the register's
+                                  SP 800-30 lines show "n/a (not declared)".
+                                  A plugin's fields have no review state
+                                  (sp800_30_review stays None).
+
+A plugin check that cannot be evaluated because an input it reads is absent
+may return NOT_APPLICABLE with missing_data=miccmac.model.MissingData(...)
+to get a missing-data entry in the risk register; an ERROR always gets one,
+with generic texts when it carries no marker. A NOT_APPLICABLE without a
+marker means the check does not apply and gets no entry.
+
+In this module, AI assistance covers the optional threat_source_type and
+threat_event fields of RISK_METADATA and the missing_data note above.
 """
 from __future__ import annotations
 
@@ -57,7 +76,13 @@ from typing import Callable, Dict, List, Optional
 
 import yaml
 
-from miccmac.metadata import VALID_FAIR_LEVELS, VALID_IGS, CheckMetadata, all_builtin_check_ids
+from miccmac.metadata import (
+    VALID_FAIR_LEVELS,
+    VALID_IGS,
+    VALID_THREAT_SOURCE_TYPES,
+    CheckMetadata,
+    all_builtin_check_ids,
+)
 from miccmac.model import PROPERTY_KEYS, CheckResult
 
 
@@ -243,9 +268,22 @@ class Config:
                     f"{py_file}: RISK_METADATA[{check_id!r}]['remediation'] must be a "
                     f"non-empty string (or omitted)"
                 )
+            threat_source_type = entry.get("threat_source_type")
+            if threat_source_type is not None and threat_source_type not in VALID_THREAT_SOURCE_TYPES:
+                raise ConfigError(
+                    f"{py_file}: RISK_METADATA[{check_id!r}]['threat_source_type'] {threat_source_type!r} "
+                    f"must be one of {VALID_THREAT_SOURCE_TYPES} (or omitted)"
+                )
+            threat_event = entry.get("threat_event")
+            if threat_event is not None and (not isinstance(threat_event, str) or not threat_event.strip()):
+                raise ConfigError(
+                    f"{py_file}: RISK_METADATA[{check_id!r}]['threat_event'] must be a "
+                    f"non-empty string (or omitted)"
+                )
             risk_metadata[check_id] = CheckMetadata(
                 check_id=check_id, property_key=attach_to, cis_ig=cis_ig,
                 fair_frequency=fair_frequency, fair_magnitude=fair_magnitude,
-                remediation=remediation,
+                remediation=remediation, threat_source_type=threat_source_type,
+                threat_event=None if threat_event is None else " ".join(threat_event.split()),
             )
         return risk_metadata

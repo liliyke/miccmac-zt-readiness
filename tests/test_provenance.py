@@ -134,12 +134,27 @@ def test_an_as_of_only_run_records_that_no_facts_were_used(lab, set_clock, capsy
     prov = _provenance_of(["assess", "test-device", "--format", "json", "--as-of", "2026-11-23"], capsys)
     assert prov["run_at_utc"] == "2027-01-15T10:00:00Z"  # the real clock, not as_of
     assert (prov["as_of"], prov["as_of_source"]) == ("2026-11-23", "cli")
-    assert (prov["methodology"], prov["risk_register"], prov["target"]) == (None, False, "test-device")
+    # Deliberately changed: CMMI is the default lens, so provenance records it (it was null).
+    assert (prov["methodology"], prov["risk_register"], prov["target"]) == ("cmmi", False, "test-device")
     assert (prov["facts_source"], prov["connector"]) == ("none", None)
     assert (prov["facts_collected_at_utc"], prov["facts_file"]) == (None, None)
     assert prov["inputs"] == {"attestation": None, "inventory_record": None, "config": None}
     assert prov["os"] == {"platform": None, "name": None, "version": None, "build": None}
     assert (prov["osquery_version"], prov["extended_facts"]) == (None, False)
+
+
+def test_methodology_none_records_null_and_the_default_records_cmmi(lab, set_clock, capsys):
+    """Drafted with AI assistance (Claude Code, Anthropic): provenance names
+    the lens actually applied; --methodology none applies none."""
+    set_clock(dt.datetime(2027, 1, 15, 10, 0, tzinfo=UTC))
+    none = _provenance_of(["assess", "test-device", "--format", "json", "--as-of", "2026-11-23",
+                           "--methodology", "none"], capsys)
+    assert none["methodology"] is None
+    ztmm = _provenance_of(["assess", "test-device", "--format", "json", "--as-of", "2026-11-23",
+                           "-m", "cisa-ztmm"], capsys)
+    assert ztmm["methodology"] == "cisa-ztmm"
+    assert main(["assess", "test-device", "--format", "json", "--as-of", "2026-11-23", "-m", "none"]) == 0
+    assert "methodology" not in json.loads(capsys.readouterr().out)
 
 
 def test_a_connector_run_without_save_facts(lab, set_clock, capsys):
@@ -338,6 +353,8 @@ def test_text_and_markdown_reports_do_not_show_provenance(fmt, lab, set_clock, c
     set_clock(dt.datetime(2026, 11, 23, 19, 5, tzinfo=UTC))
     assert main(["assess", TARGET, "--connector", "ssh-osquery", *SSH, "--format", fmt]) == 0
     cli_output = capsys.readouterr().out
-    plain = render(run_assessment(TARGET, context={"facts": copy.deepcopy(LINUX_FACTS)}), fmt)
+    # The CLI's default lens is CMMI (deliberately changed: it was none).
+    plain = render(run_assessment(TARGET, context={"facts": copy.deepcopy(LINUX_FACTS)}, methodology_name="cmmi"),
+                   fmt)
     assert cli_output == plain + "\n"
     assert "provenance" not in cli_output.lower()

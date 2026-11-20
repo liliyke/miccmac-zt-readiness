@@ -23,14 +23,16 @@ miccmac.clock's reference date: the --as-of date when one was given
 
 In this module, AI assistance covers the --as-of reference date of ASM-01
 and ASM-02 (the today and as_of_label parameters and the " (as of ...)"
-detail suffix).
+detail suffix), and the missing-data markers (CheckResult.missing_data):
+the attestation or the check's entry not supplied (NOT_APPLICABLE), and
+ASM-01's or ASM-02's unreadable date (ERROR). Detail strings are unchanged.
 """
 from __future__ import annotations
 
 import datetime
 
 from miccmac import clock
-from miccmac.model import CheckResult, PropertyResult, Status
+from miccmac.model import CheckResult, MissingData, PropertyResult, Status
 
 KEY = "assessed"
 LETTER = "A"
@@ -41,6 +43,22 @@ _CONTROL_REFS = {
     "ASM-02": ["NIST 800-53 CA-2", "CIS v8 7.6"],
     "ASM-03": ["NIST 800-53 CA-7", "CIS v8 7.1"],
 }
+
+# What a valid attestation entry looks like, for the risk register's
+# missing-data entries (upper-case placeholders, no <> or |).
+EXPECTED = {
+    "vulnerability_scanning": '{"performed": true or false, "last_scan": "YYYY-MM-DD", "interval_days": DAYS}',
+    "compliance_assessment": ('{"performed": true or false, "last_assessment": "YYYY-MM-DD", '
+                              '"interval_days": DAYS}'),
+    "finding_remediation_sla": '{"tracked": true or false, "sla_days": DAYS}',
+}
+DATE_EXPECTED = "a YYYY-MM-DD date"
+
+
+def _attestation_supplied(attestation: dict | None, attestation_given: bool | None) -> bool:
+    """Whether --attestation was given (None: taken from whether there is one)."""
+    return attestation is not None if attestation_given is None else bool(attestation_given)
+
 
 _NAMES = {
     "ASM-01": "Authenticated vulnerability scanning performed on schedule",
@@ -63,12 +81,17 @@ def _stub_checks() -> list[CheckResult]:
     return [_stub_result(cid) for cid in ("ASM-01", "ASM-02", "ASM-03")]
 
 
-def _not_applicable(check_id: str, missing_key: str) -> CheckResult:
+def _not_applicable(check_id: str, missing_key: str, attestation_given: bool = False) -> CheckResult:
+    """NOT_APPLICABLE for an attestation entry that was not supplied: no
+    --attestation at all (not-supplied), or no entry for this key
+    (missing-field)."""
     return CheckResult(
         check_id=check_id, name=_NAMES[check_id], status=Status.NOT_APPLICABLE,
         detail=f"No --attestation supplied for {missing_key!r}; scan/assessment history is "
                f"an external process fact, not observable from the device itself.",
         control_refs=_CONTROL_REFS[check_id],
+        missing_data=MissingData("attestation", "missing-field" if attestation_given else "not-supplied",
+                                 missing_key, EXPECTED[missing_key]),
     )
 
 
@@ -105,6 +128,8 @@ def _check_scheduled_activity(check_id: str, missing_key: str, record: dict,
             check_id=check_id, name=_NAMES[check_id], status=Status.ERROR,
             detail=f"Attestation's {date_field}={last_date!r} is not a valid ISO date.",
             control_refs=_CONTROL_REFS[check_id],
+            missing_data=MissingData("attestation", "invalid-value", f"{missing_key}.{date_field}",
+                                     DATE_EXPECTED),
         )
     if today is None:
         today = clock.reference_date(None)
@@ -124,9 +149,10 @@ def _check_scheduled_activity(check_id: str, missing_key: str, record: dict,
 
 
 def _check_asm01(attestation: dict | None, *, today: datetime.date | None = None,
-                 as_of_label: str | None = None) -> CheckResult:
+                 as_of_label: str | None = None, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "vulnerability_scanning" not in attestation:
-        return _not_applicable("ASM-01", "vulnerability_scanning")
+        return _not_applicable("ASM-01", "vulnerability_scanning",
+                               _attestation_supplied(attestation, attestation_given))
     return _check_scheduled_activity(
         "ASM-01", "vulnerability_scanning", attestation["vulnerability_scanning"] or {},
         "last_scan", "Vulnerability scanning", today=today, as_of_label=as_of_label,
@@ -134,18 +160,20 @@ def _check_asm01(attestation: dict | None, *, today: datetime.date | None = None
 
 
 def _check_asm02(attestation: dict | None, *, today: datetime.date | None = None,
-                 as_of_label: str | None = None) -> CheckResult:
+                 as_of_label: str | None = None, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "compliance_assessment" not in attestation:
-        return _not_applicable("ASM-02", "compliance_assessment")
+        return _not_applicable("ASM-02", "compliance_assessment",
+                               _attestation_supplied(attestation, attestation_given))
     return _check_scheduled_activity(
         "ASM-02", "compliance_assessment", attestation["compliance_assessment"] or {},
         "last_assessment", "Compliance assessment", today=today, as_of_label=as_of_label,
     )
 
 
-def _check_asm03(attestation: dict | None) -> CheckResult:
+def _check_asm03(attestation: dict | None, *, attestation_given: bool | None = None) -> CheckResult:
     if attestation is None or "finding_remediation_sla" not in attestation:
-        return _not_applicable("ASM-03", "finding_remediation_sla")
+        return _not_applicable("ASM-03", "finding_remediation_sla",
+                               _attestation_supplied(attestation, attestation_given))
     sla = attestation["finding_remediation_sla"] or {}
     if sla.get("tracked"):
         sla_days = sla.get("sla_days")
@@ -166,12 +194,13 @@ def _run_checks(target: str, context: dict) -> list[CheckResult]:
         return _stub_checks()
 
     attestation = context.get("attestation")
+    supplied = "attestation" in context
     today = clock.reference_date(context)
     label = clock.as_of_label(context)
     return [
-        _check_asm01(attestation, today=today, as_of_label=label),
-        _check_asm02(attestation, today=today, as_of_label=label),
-        _check_asm03(attestation),
+        _check_asm01(attestation, today=today, as_of_label=label, attestation_given=supplied),
+        _check_asm02(attestation, today=today, as_of_label=label, attestation_given=supplied),
+        _check_asm03(attestation, attestation_given=supplied),
     ]
 
 

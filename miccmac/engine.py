@@ -1,7 +1,17 @@
-"""Assessment engine: runs property checks, scores them, builds the Assessment."""
+"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+Assessment engine: runs property checks, scores them, builds the Assessment.
+
+In this module, AI assistance covers score_statuses (the scoring rule as a
+function of statuses alone, which the risk register's next-level hints use
+to score a property as if checks were fixed) and the handling of the
+missing-data marker (CheckResult.missing_data): it is cleared on excluded
+checks and on any status other than NOT_APPLICABLE or ERROR, and a custom
+check that sets something other than a MissingData is refused.
+"""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from miccmac import metadata
 from miccmac import methodology as methodology_mod
@@ -10,7 +20,7 @@ from miccmac.checks import (
     minimized, assessed, current,
 )
 from miccmac.config import Config, ConfigError
-from miccmac.model import PROPERTY_KEYS, Assessment, PropertyResult, SCORE_MAP, Status
+from miccmac.model import PROPERTY_KEYS, Assessment, MissingData, PropertyResult, SCORE_MAP, Status
 
 # MICCMAC property order is meaningful: it spells the framework name.
 PROPERTY_MODULES = [
@@ -32,6 +42,16 @@ READINESS_TIERS = [
 ]
 
 
+def score_statuses(statuses: Iterable[Status]) -> Optional[float]:
+    """Average SCORE_MAP weight of the *scorable* statuses
+    (PASS/PARTIAL/FAIL/ERROR), rounded to one decimal; None when nothing is
+    scorable. score_property applies it to a property's checks."""
+    scorable = [status for status in statuses if status in SCORE_MAP]
+    if not scorable:
+        return None
+    return round(sum(SCORE_MAP[status] for status in scorable) / len(scorable), 1)
+
+
 def score_property(prop: PropertyResult) -> Optional[float]:
     """Average score of all *scorable* checks (PASS/PARTIAL/FAIL/ERROR).
 
@@ -39,10 +59,7 @@ def score_property(prop: PropertyResult) -> Optional[float]:
     incomplete scaffold does not produce a misleadingly low score.
     Returns None when nothing is scorable.
     """
-    scorable = [c for c in prop.checks if c.status in SCORE_MAP]
-    if not scorable:
-        return None
-    return round(sum(SCORE_MAP[c.status] for c in scorable) / len(scorable), 1)
+    return score_statuses(c.status for c in prop.checks)
 
 
 def overall_score(properties: List[PropertyResult]) -> Optional[float]:
@@ -117,7 +134,9 @@ def run_assessment(
     supply connection details, collected device facts, API clients, etc.
 
     With config=None and methodology_name=None (the defaults), this
-    reproduces the original scaffold behavior exactly.
+    reproduces the original scaffold behavior exactly. (The CLI passes
+    "cmmi" unless --methodology names another lens or none; this function's
+    own default stays None.)
 
     ``config`` (miccmac.config.Config) adds check exclusion and custom-check
     merging. ``methodology_name`` (e.g. "cmmi", "cisa-ztmm") additionally
@@ -145,16 +164,28 @@ def run_assessment(
                     f"CHECK_IDS={plugin.check_ids} but run_checks() returned "
                     f"{sorted(returned_ids)}"
                 )
+            for check in plugin_checks:
+                marker = getattr(check, "missing_data", None)
+                if marker is not None and not isinstance(marker, MissingData):
+                    raise ConfigError(
+                        f"custom check plugin {plugin.module_name!r}: {check.check_id} sets missing_data "
+                        f"to a {type(marker).__name__}; it must be a miccmac.model.MissingData or None"
+                    )
             prop.checks.extend(plugin_checks)
 
         # Excluded checks are never silently dropped: they stay in the
         # report as NOT_APPLICABLE with the recorded reason, and are removed
         # from the scoring denominator via the same NOT_APPLICABLE exclusion
         # score_property() already applies -- not counted as a pass or fail.
+        # An excluded check has no missing data: it was not meant to run.
         for check in prop.checks:
             if check.check_id in excluded:
                 check.status = Status.NOT_APPLICABLE
                 check.detail = f"Excluded: {excluded[check.check_id]}"
+                check.missing_data = None
+            elif check.missing_data is not None and check.status not in (Status.NOT_APPLICABLE, Status.ERROR):
+                # Only a check that could not be evaluated carries the marker.
+                check.missing_data = None
 
         prop.score = score_property(prop)
         assessment.properties.append(prop)
