@@ -1,0 +1,73 @@
+# MICCMAC Zero Trust Device Readiness Assessment
+
+- **Target:** test-device
+- **Overall score:** n/a
+- **Readiness tier:** Unassessed
+
+## M &mdash; Monitored (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| MON-01 | Endpoint security logging enabled | NOT_IMPLEMENTED | Check not yet implemented. |
+| MON-02 | Logs forwarded to a centralized SIEM / log platform | NOT_IMPLEMENTED | Check not yet implemented. |
+| MON-03 | EDR / endpoint telemetry agent installed and healthy | NOT_IMPLEMENTED | Check not yet implemented. |
+| MON-04 | Audit policy covers authentication, privilege, and process events | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## I &mdash; Inventoried (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| INV-01 | Device present in the authoritative asset inventory | NOT_IMPLEMENTED | Check not yet implemented. |
+| INV-02 | Hardware attributes recorded (make, model, serial) | NOT_IMPLEMENTED | Check not yet implemented. |
+| INV-03 | Installed-software inventory maintained for the device | NOT_IMPLEMENTED | Check not yet implemented. |
+| INV-04 | Inventory record reviewed within the policy interval | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## C &mdash; Controlled (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| CTL-01 | Device enrolled in central configuration management / MDM | NOT_IMPLEMENTED | Check not yet implemented. |
+| CTL-02 | Administrative privileges restricted (least privilege) | NOT_IMPLEMENTED | Check not yet implemented. |
+| CTL-03 | Access governed by identity-aware / conditional-access policy | NOT_IMPLEMENTED | Check not yet implemented. |
+| CTL-04 | Configuration baseline enforced and drift-monitored | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## C &mdash; Claimed (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| CLM-01 | Accountable business owner assigned and recorded | NOT_IMPLEMENTED | Check not yet implemented. |
+| CLM-02 | Responsible system administrator identified | NOT_IMPLEMENTED | Check not yet implemented. |
+| CLM-03 | Business purpose and data classification documented | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## M &mdash; Minimized (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| MIN-01 | Unnecessary services and daemons disabled | NOT_IMPLEMENTED | Check not yet implemented. |
+| MIN-02 | Unused or unauthorized software removed | NOT_IMPLEMENTED | Check not yet implemented. |
+| MIN-03 | Host firewall enabled; unused network ports closed | NOT_IMPLEMENTED | Check not yet implemented. |
+| MIN-04 | Recognized hardening baseline (e.g. CIS Benchmark) applied | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## A &mdash; Assessed (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| ASM-01 | Authenticated vulnerability scanning performed on schedule | NOT_IMPLEMENTED | Check not yet implemented. |
+| ASM-02 | Configuration / compliance assessment performed on schedule | NOT_IMPLEMENTED | Check not yet implemented. |
+| ASM-03 | Findings tracked to remediation against defined SLAs | NOT_IMPLEMENTED | Check not yet implemented. |
+
+## C &mdash; Current (n/a)
+
+| Check | Name | Status | Detail |
+|---|---|---|---|
+| CUR-01 | Operating-system patch level within policy | NOT_IMPLEMENTED | Check not yet implemented. |
+| CUR-02 | Third-party software updated within policy | NOT_IMPLEMENTED | Check not yet implemented. |
+| CUR-03 | Firmware / BIOS current | NOT_IMPLEMENTED | Check not yet implemented. |
+| CUR-04 | Certificates and cryptographic material valid and unexpired | NOT_IMPLEMENTED | Check not yet implemented. |
+
+**Legend**
+
+- **MICCMAC properties** (framework name spelled out by the property order): **M** Monitored, **I** Inventoried, **C** Controlled, **C** Claimed, **M** Minimized, **A** Assessed, **C** Current.
+- **Check status:** `[PASS]` control fully satisfied; `[PART]` control partially satisfied; `[FAIL]` control not satisfied; `[TODO]` check logic not yet implemented; `[ N/A]` excluded by config, or not applicable to this device; `[ ERR]` check could not be evaluated (e.g. data source unreachable).
+- **Overall score -> readiness tier** (always computed; thresholds are tunable): `90-100` Zero Trust Ready; `70-89` Defensible; `40-69` Developing; `0-39` Not Ready.
+
