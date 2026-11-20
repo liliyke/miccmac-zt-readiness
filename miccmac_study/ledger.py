@@ -108,6 +108,8 @@ from miccmac_study.formats import (
     StudyError,
     ledger_relpath,
     load_study_config,
+    methodology_in_name,
+    methodology_name_problem,
     parse_utc_timestamp,
     plain_path,
     read_ledger,
@@ -1449,7 +1451,12 @@ def _kind_mismatch(path: Path, kind: str) -> str:
     """Why `kind` does not fit the file at `path` (in outputs/ or register/),
     or '' when it does: a saved facts file (its first 64 KiB name the
     miccmac-facts/1 format) is kind facts and only that; a register sheet's
-    kind follows its name (<H>-register-review.csv, <H>-missed-gaps.csv)."""
+    kind follows its name (<H>-register-review.csv, <H>-missed-gaps.csv); and
+    a tool output named <H>-<methodology>.json must hold that methodology
+    (formats.methodology_name_problem: CMMI is the tool's default lens, so a
+    command that lost its --methodology writes CMMI levels under another
+    name). The last check was drafted with AI assistance (Claude Code,
+    Anthropic) for the researcher's review, with the default lens."""
     if kind in (FACTS_KIND, TOOL_OUTPUT_KIND):
         try:
             with open(path, "rb") as fh:
@@ -1461,6 +1468,13 @@ def _kind_mismatch(path: Path, kind: str) -> str:
             return "is not a saved facts file (miccmac-facts/1), so it is not --kind facts"
         if kind == TOOL_OUTPUT_KIND and is_facts:
             return "is a saved facts file (miccmac-facts/1): record it with --kind facts"
+        if kind == TOOL_OUTPUT_KIND:
+            wrong = methodology_name_problem(path)
+            if wrong:
+                named = methodology_in_name(path)
+                return (f"{wrong}. Do not open it: move it, unopened, out of {OUTPUTS_DIR}/ (it was never hashed), "
+                        f"write this line in the session log, and score the saved facts again with step 6's "
+                        f"command and --methodology {named}")
     suffix = _REGISTER_SUFFIXES.get(kind)
     if suffix and not PureWindowsPath(str(path)).name.lower().endswith(suffix):
         return f"is not named <H>{suffix}, so it is not --kind {kind}"

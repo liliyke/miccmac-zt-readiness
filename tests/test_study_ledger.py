@@ -1732,3 +1732,51 @@ def test_parse_host_list():
         ledger.parse_host_list("H1,H1")
     with pytest.raises(StudyError):
         ledger.parse_host_list(" , ")
+
+
+# ---------- a tool output must hold the methodology its name names ----------
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+# CMMI is the tool's default lens: a step-6 line that lost --methodology cisa-ztmm writes CMMI levels to
+# <H>-cisa-ztmm.json. `ledger record --kind tool-output` refuses it before it is hashed (step 7, before
+# health in step 8), so the unhashed file can still be moved aside and the replay run again.
+
+def _tool_output_json(methodology, provenance_methodology=None):
+    from miccmac.engine import run_assessment
+
+    data = run_assessment("192.0.2.10", methodology_name=methodology).to_dict()
+    data["provenance"] = {"methodology": provenance_methodology if provenance_methodology is not None
+                          else methodology}
+    return json.dumps({"assessment": data, "risk_register": []})
+
+
+@pytest.mark.parametrize("held, recorded, why", [
+    ("cmmi", None, "holds cmmi levels, but its name says cisa-ztmm (was --methodology cisa-ztmm left out of the "
+                   "command, or another one typed?)"),
+    (None, None, "holds no methodology levels, but its name says cisa-ztmm (was --methodology cisa-ztmm left out "
+                 "of the command, or another one typed?)"),
+    ("cisa-ztmm", "cmmi", "holds cisa-ztmm levels, but its provenance names 'cmmi', not cisa-ztmm"),
+])
+def test_record_refuses_a_tool_output_whose_methodology_is_not_its_names(tmp_path, capsys, held, recorded, why):
+    study = _study(tmp_path)
+    ledger_file = study / "ledger.csv"
+    wrong = study / "outputs" / "H1-cisa-ztmm.json"
+    wrong.write_text(_tool_output_json(held, recorded), encoding="utf-8")
+    good = study / "outputs" / "H1-cmmi.json"
+    good.write_text(_tool_output_json("cmmi"), encoding="utf-8")
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "tool-output",
+                 str(good), str(wrong)]) == 2
+    err = capsys.readouterr().err
+    assert f"{why}. Do not open it: move it, unopened, out of outputs/" in err
+    assert err.rstrip().endswith("--methodology cisa-ztmm; nothing was recorded")
+    assert not ledger_file.exists()             # nothing recorded, not even the good file
+    assert not (study / ledger.ARCHIVE_DIR).exists()
+
+
+def test_record_accepts_tool_outputs_named_after_their_methodology(tmp_path, capsys):
+    study = _study(tmp_path)
+    ledger_file = study / "ledger.csv"
+    for methodology in ("cmmi", "cisa-ztmm"):
+        (study / "outputs" / f"H1-{methodology}.json").write_text(_tool_output_json(methodology), encoding="utf-8")
+    assert main(["ledger", "record", "--ledger", str(ledger_file), "--host", "H1", "--kind", "tool-output",
+                 str(study / "outputs" / "H1-cmmi.json"), str(study / "outputs" / "H1-cisa-ztmm.json")]) == 0
+    assert [row.kind for row in read_ledger(ledger_file)] == ["tool-output", "tool-output"]

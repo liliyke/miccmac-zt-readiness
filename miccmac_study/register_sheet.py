@@ -26,14 +26,32 @@ For each host of the configuration that is not withdrawn it reads
 DIR/outputs/<H>-<primary methodology>.json and writes
 
     DIR/register/<H>-register-review.csv  one row per register entry, in the
-                                          tool's order, with accurate,
-                                          actionable, prioritized and reason
-                                          left blank for the researcher
+                                          tool's order: findings (FAIL,
+                                          PARTIAL) and missing-data entries
+                                          (ERROR, or an input not supplied),
+                                          with the judgment columns
+                                          (REVIEW_JUDGMENT_COLUMNS) left blank
+                                          for the researcher
     DIR/register/<H>-missed-gaps.csv      gap rows 1-5, blank apart from the
                                           host code and gap number
 
+A review row carries the entry as the tool wrote it (formats.
+REGISTER_REVIEW_COLUMNS): its rating and what it applies to (rating_basis),
+the finding or what is missing and how to supply it, the action to take
+(recommended_fix: the fix, or for missing data how to supply it and then the
+fix), the primary methodology's next-level hint and the drafted SP 800-30
+threat fields. A tool output written before these fields existed still gives
+a sheet: its rows have the entry type its status gives and blank new cells.
+A sheet forced before the seal opened (--force-before-unseal) leaves every
+next_level cell blank, since the hints name the tool's maturity levels, and
+the ledger row of the override says so.
+
 It prints only the paths written, and never replaces a sheet in which any
 judgment cell has been filled in.
+
+In this module, AI assistance covers, besides the rest, the columns added
+with missing-data entries, next-level hints and the SP 800-30 fields, and
+the blank next_level cells of a forced sheet.
 """
 from __future__ import annotations
 
@@ -44,6 +62,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Union
 
 from miccmac_study.formats import (
     CONFIG_FILE,
+    ENTRY_FINDING,
+    ENTRY_MISSING_DATA,
     LEDGER_FILE,
     MISSED_GAPS_COLUMNS,
     OUTPUTS_DIR,
@@ -53,6 +73,7 @@ from miccmac_study.formats import (
     load_tool_output,
     missed_gaps_name,
     read_csv,
+    register_entry_type,
     register_review_name,
     tool_output_name,
     write_csv,
@@ -73,9 +94,16 @@ from miccmac_study.ledger import (  # FORCE_NOTE_PREFIX is re-exported for exist
 PathLike = Union[str, Path]
 
 MISSED_GAP_ROWS = 5
-# Cells only the researcher fills in.
-REVIEW_JUDGMENT_COLUMNS = ("accurate", "actionable", "prioritized", "reason")
+# Cells only the researcher fills in. next_level_accurate and threat_plausible
+# are optional and descriptive (never part of H2's k); they are judgment cells
+# all the same, so a sheet with any of them filled in is never replaced.
+REVIEW_JUDGMENT_COLUMNS = ("accurate", "actionable", "prioritized", "next_level_accurate", "threat_plausible",
+                           "reason")
 MISSED_GAP_ENTRY_COLUMNS = ("check_id", "description", "evidence")
+# rating_basis: what an entry's cis_ig, FAIR bands and risk_rating apply to.
+RATING_BASIS = {ENTRY_FINDING: "finding", ENTRY_MISSING_DATA: "if the control is absent"}
+# The ledger note of a forced run says that its sheets show no hint.
+FORCED_NEXT_LEVEL_NOTE = " (next_level cells left blank: the seal was closed)"
 
 
 class SealedError(StudyError):
@@ -93,9 +121,29 @@ class HostSheets:
 
 
 # ------------------------------------------------------------------ rows
-def review_row(host: str, entry_no: int, entry: dict) -> Dict[str, object]:
+class _MalformedEntry(StudyError):
+    """A register entry's nested field is neither an object nor null."""
+
+
+def _nested(entry: dict, key: str) -> dict:
+    """entry[key] as a mapping: {} when absent or null; anything else is
+    malformed."""
+    value = entry.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _MalformedEntry(f"its {key} is a {type(value).__name__}, not an object or null")
+    return value
+
+
+def review_row(host: str, entry_no: int, entry: dict, blank_next_level: bool = False) -> Dict[str, object]:
     """One review-sheet row: the register entry as the tool wrote it, with the
-    judgment columns blank."""
+    judgment columns blank. Every nested field is read with a fallback, so an
+    output written before those fields existed still gives a row.
+    ``blank_next_level`` leaves the next-level hint out (a forced sheet).
+    Raises _MalformedEntry when a nested field is not an object or null."""
+    missing, hint, sp800_30 = (_nested(entry, key) for key in ("missing_data", "next_level", "sp800_30"))
+    kind = register_entry_type(entry)
     return {
         "host_code": host,
         "entry_no": entry_no,
@@ -108,20 +156,32 @@ def review_row(host: str, entry_no: int, entry: dict) -> Dict[str, object]:
         "fair_magnitude": entry.get("fair_magnitude"),
         "risk_rating": entry.get("risk_rating"),
         "detail": entry.get("detail"),
-        "recommended_fix": entry.get("remediation"),
+        "recommended_fix": sp800_30.get("response") or entry.get("remediation"),
+        "entry_type": kind,
+        "rating_basis": RATING_BASIS[kind],
+        "missing_data": missing.get("what"),
+        "how_to_supply": missing.get("how_to_supply"),
+        "next_level": "" if blank_next_level else hint.get("text"),
+        "threat_source_type": sp800_30.get("threat_source_type"),
+        "threat_event": sp800_30.get("threat_event"),
+        "sp800_30_review": sp800_30.get("review"),
         "accurate": "",
         "actionable": "",
         "prioritized": "",
+        "next_level_accurate": "",
+        "threat_plausible": "",
         "reason": "",
     }
 
 
 def missed_gap_rows(host: str, count: int = MISSED_GAP_ROWS) -> List[Dict[str, object]]:
-    """Numbered blank rows for gaps found manually that have no register entry."""
+    """Numbered blank rows for missed gaps: checks the manual pass found FAIL
+    or PARTIAL that have no finding in the register (no entry at all, or only
+    a missing-data entry, which reports no gap), and gaps outside the checks."""
     return [{"host_code": host, "gap_no": number} for number in range(1, count + 1)]
 
 
-def host_sheets(study_dir: Path, host: str, methodology: str) -> HostSheets:
+def host_sheets(study_dir: Path, host: str, methodology: str, blank_next_level: bool = False) -> HostSheets:
     """Read one host's tool output and build both sheets (nothing is written)."""
     path = study_dir / OUTPUTS_DIR / tool_output_name(host, methodology)
     output = load_tool_output(path)
@@ -131,7 +191,10 @@ def host_sheets(study_dir: Path, host: str, methodology: str) -> HostSheets:
     for number, entry in enumerate(output.risk_register, start=1):
         if not isinstance(entry, dict) or not entry.get("check_id"):
             raise StudyError(f"{host}: risk register entry {number} in {path} is malformed")
-        rows.append(review_row(host, number, entry))
+        try:
+            rows.append(review_row(host, number, entry, blank_next_level=blank_next_level))
+        except _MalformedEntry as exc:
+            raise StudyError(f"{host}: risk register entry {number} in {path} is malformed: {exc}") from None
     register_dir = study_dir / REGISTER_DIR
     return HostSheets(
         host=host,
@@ -240,7 +303,8 @@ def generate_register_sheets(study_dir: PathLike, config_path: Optional[PathLike
     problems: List[str] = []
     for host in hosts:
         try:
-            sheets.append(host_sheets(study_dir, host, config.primary_methodology))
+            # A forced sheet shows no next-level hint: it names the tool's maturity levels.
+            sheets.append(host_sheets(study_dir, host, config.primary_methodology, blank_next_level=not status.ok))
         except StudyError as exc:
             problems.append(str(exc))
     if problems:
@@ -250,7 +314,7 @@ def generate_register_sheets(study_dir: PathLike, config_path: Optional[PathLike
         _guard_existing(sheet.gaps_path, overwrite, missed_gaps_entry)
 
     if not status.ok:
-        record_forced_unseal(ledger, config_path, force_reason)
+        record_forced_unseal(ledger, config_path, force_reason + FORCED_NEXT_LEVEL_NOTE)
     else:
         record_seal_opened(ledger, "register-sheet", config_path, status)
 

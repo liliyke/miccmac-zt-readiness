@@ -39,8 +39,15 @@ every stage is exercised, including every safeguard a real study meets:
 5. register/: the register-sheet command (the seal, ledger.seal_status,
    must open: there is no synthetic exemption; opening it appends the
    ledger's "seal opened by register-sheet" row), filled with dummy
-   Y/N/UNSURE judgments for every entry and 0-2 dummy missed gaps per host,
-   then hashed.
+   Y/N/UNSURE judgments for every entry (findings and missing-data entries,
+   with the optional next_level_accurate and threat_plausible answers from a
+   generator of their own) and 0-2 dummy missed gaps per host, then hashed.
+
+The missing-owner profile (H3 in the default kit) also leaves
+firmware_currency out of its attestation, after every random draw, so CUR-03
+becomes a missing-data entry in both of its outputs and the register sheets,
+H2 and health --inputs (which then needs --allow-missing firmware_currency)
+see one end to end; every other made-up value stays the same.
 
 The manual side is derived from the tool's own verdicts, so agreement
 figures computed from this folder say nothing about the tool. The approved
@@ -78,6 +85,7 @@ from miccmac import provenance
 from miccmac.cli import main as miccmac_main
 from miccmac.config import Config, ConfigError
 from miccmac.engine import run_assessment
+from miccmac.metadata import MappingsError
 from miccmac.model import PROPERTY_KEYS, Status
 
 from miccmac_study.__main__ import main as study_main
@@ -85,6 +93,8 @@ from miccmac_study.formats import (
     CONFIG_FILE,
     DEFAULT_INPUT_DRIVEN_CHECKS,
     DEFAULT_INPUT_DRIVEN_PROPERTIES,
+    ENTRY_FINDING,
+    ENTRY_MISSING_DATA,
     INPUTS_DIR,
     LEDGER_FILE,
     MISSED_GAPS_COLUMNS,
@@ -108,6 +118,7 @@ from miccmac_study.formats import (
     parse_utc_timestamp,
     read_csv,
     read_ledger,
+    register_entry_type,
     register_review_name,
     tool_output_name,
     validate_host_code,
@@ -151,8 +162,11 @@ PROFILES = ("current", "stale", "missing-owner")
 _PROFILE_TEXT = {
     "current": "scan, assessment, inventory review and last OS update all within their policy limits",
     "stale": "scan, assessment, inventory review and last OS update all past their policy limits",
-    "missing-owner": "no business owner assigned; other dates at random",
+    "missing-owner": ("no business owner assigned; no firmware_currency attestation, so CUR-03 becomes a "
+                      "missing-data register entry; other dates at random"),
 }
+# The attestation entry the missing-owner profile leaves out (after every draw).
+OMITTED_ATTESTATION_ENTRY = "firmware_currency"
 _PLATFORM_TEXT = {
     "linux": "Linux (Ubuntu 26.04) facts",
     "windows-11": "Windows 11 Enterprise facts",
@@ -548,7 +562,7 @@ def make_attestation(rng: random.Random, host: str, session: dt.date, profile: s
              else {"assigned": True, "name": f"Synthetic Owner {host}"})
     scan_age = rng.randrange(40, 120) if stale else rng.randrange(1, 28)
     assessment_age = rng.randrange(100, 200) if stale else rng.randrange(5, 85)
-    return {
+    attestation = {
         "synthetic": True,
         "identity_aware_access": {"enabled": _chance(rng, 0.7)},
         "business_owner": owner,
@@ -562,6 +576,10 @@ def make_attestation(rng: random.Random, host: str, session: dt.date, profile: s
         "finding_remediation_sla": {"tracked": _chance(rng, 0.75), "sla_days": 30},
         "firmware_currency": {"current": _chance(rng, 0.7)},
     }
+    if profile == "missing-owner":
+        # Left out after every draw, so the inventory record's draws that follow are unchanged.
+        attestation.pop(OMITTED_ATTESTATION_ENTRY)
+    return attestation
 
 
 def make_inventory_record(rng: random.Random, host: str, session: dt.date, profile: str) -> dict:
@@ -674,14 +692,22 @@ def fill_worksheet(path: Path, plan: HostPlan, levels: Dict[str, str]) -> None:
     write_csv(path, WORKSHEET_COLUMNS, rows, overwrite=True)
 
 
-def dummy_review(manual_verdict: Optional[str], rng: random.Random) -> Dict[str, str]:
-    """Dummy judgments for one register entry. An entry for a check the dummy
-    manual pass found in place (PASS) is judged not accurate."""
-    accurate = "N" if manual_verdict == "PASS" else ("Y" if _chance(rng, 0.9) else "N")
+def dummy_review(manual_verdict: Optional[str], rng: random.Random,
+                 entry_type: str = ENTRY_FINDING) -> Dict[str, str]:
+    """Dummy judgments for one register entry. A finding for a check the
+    dummy manual pass found in place (PASS) is judged not accurate; a
+    missing-data entry is judged on whether its input was missing (always
+    true here) and on its how-to-supply text."""
+    missing = entry_type == ENTRY_MISSING_DATA
+    accurate = "N" if manual_verdict == "PASS" and not missing else ("Y" if _chance(rng, 0.9) else "N")
     actionable = "Y" if _chance(rng, 0.8) else "N"
     draw = rng.random()
     prioritized = "Y" if draw < 0.7 else ("N" if draw < 0.85 else "UNSURE")
-    if manual_verdict == "PASS":
+    if missing:
+        reason = ("synthetic: the manual pass found the input this entry names" if accurate == "N"
+                  else "synthetic: the input is missing, but how to supply it is unclear" if actionable == "N"
+                  else "synthetic: the input is missing and the entry says how to supply it")
+    elif manual_verdict == "PASS":
         reason = "synthetic: the manual pass found this control in place"
     elif accurate == "N":
         reason = "synthetic: the manual pass did not confirm this finding"
@@ -694,22 +720,35 @@ def dummy_review(manual_verdict: Optional[str], rng: random.Random) -> Dict[str,
     return {"accurate": accurate, "actionable": actionable, "prioritized": prioritized, "reason": reason}
 
 
-def fill_register_review(path: Path, plan: HostPlan, rng: random.Random) -> None:
+def dummy_optional_review(rng: random.Random) -> Dict[str, str]:
+    """Dummy answers for the optional, descriptive columns (sometimes blank,
+    as a reviewer may leave them)."""
+    def answer(probability: float) -> str:
+        draw = rng.random()
+        return "" if draw < 0.2 else ("Y" if draw < 0.2 + 0.8 * probability else "N")
+    return {"next_level_accurate": answer(0.9), "threat_plausible": answer(0.8)}
+
+
+def fill_register_review(path: Path, plan: HostPlan, rng: random.Random,
+                         optional_rng: Optional[random.Random] = None) -> None:
     rows = read_csv(path, REGISTER_REVIEW_COLUMNS)
     for row in rows:
-        row.update(dummy_review(plan.verdicts.get(row["check_id"]), rng))
+        row.update(dummy_review(plan.verdicts.get(row["check_id"]), rng, row.get("entry_type") or ENTRY_FINDING))
+        if optional_rng is not None:
+            row.update(dummy_optional_review(optional_rng))
     write_csv(path, REGISTER_REVIEW_COLUMNS, rows, overwrite=True)
 
 
-def fill_missed_gaps(path: Path, plan: HostPlan, register_ids: Sequence[str], rng: random.Random) -> None:
+def fill_missed_gaps(path: Path, plan: HostPlan, finding_ids: Sequence[str], rng: random.Random) -> None:
     """0-2 dummy missed gaps: checks the dummy manual pass judged FAIL or
-    PARTIAL that have no register entry, or a gap outside the checks."""
-    candidates = [c for c, v in plan.verdicts.items() if v in ("FAIL", "PARTIAL") and c not in register_ids]
+    PARTIAL that have no finding in the register (no entry, or only a
+    missing-data entry, which reports no gap), or a gap outside the checks."""
+    candidates = [c for c, v in plan.verdicts.items() if v in ("FAIL", "PARTIAL") and c not in finding_ids]
     rows = read_csv(path, MISSED_GAPS_COLUMNS)
     for row in rows[:rng.randrange(3)]:
         if candidates:
             row["check_id"] = candidates.pop(rng.randrange(len(candidates)))
-            row["description"] = "synthetic: the manual pass found a gap here that has no register entry"
+            row["description"] = "synthetic: the manual pass found a gap here that has no finding in the register"
         else:
             row["description"] = "synthetic: a gap outside the enabled checks"
         row["evidence"] = "synthetic evidence note"
@@ -797,7 +836,8 @@ def readme_text(plans: Sequence[HostPlan], seed: int, session: dt.date) -> str:
         "  (overall levels pooled over every scorable check). Each passed the pre-hash lint.",
         "- blank-worksheets/: the same sheets before the dummy entries (a real study has no such folder).",
         "- register/: sheets from the register-sheet command, with dummy Y/N/UNSURE judgments",
-        "  for every entry and 0-2 dummy missed gaps per host.",
+        "  for every entry (findings and missing-data entries, and dummy answers in the optional",
+        "  next_level_accurate and threat_plausible columns) and 0-2 dummy missed gaps per host.",
         "- ledger.csv: real SHA-256 hashes of the files above, in the protocol's order. register-sheet",
         "  and agreement record each seal opening there too: a \"seal opened by ...\" row (host STUDY,",
         "  kind protocol) each time they open the seal, so there is one from register-sheet already,",
@@ -865,7 +905,7 @@ def build_synthetic_study(out_dir: PathLike, hosts: int = DEFAULT_HOSTS, seed: i
     root = _prepare_folder(out_dir)
     try:
         _build(root, codes, seed, session)
-    except (StudyError, ConfigError, OSError) as exc:  # ConfigError: a facts file that cannot be written
+    except (StudyError, ConfigError, MappingsError, OSError) as exc:  # ConfigError: a facts file that cannot be written
         raise SyntheticError(f"{exc} (the folder {root} is incomplete; delete it before running again)") from exc
     return root
 
@@ -974,10 +1014,12 @@ def _fill_register(root: Path, plans: Sequence[HostPlan], seed: int) -> None:
     folder = root / REGISTER_DIR
     for plan in plans:
         rng = _rng(seed, "register", plan.host)
-        fill_register_review(folder / register_review_name(plan.host), plan, rng)
+        fill_register_review(folder / register_review_name(plan.host), plan, rng,
+                             optional_rng=_rng(seed, "register-optional", plan.host))
         output = load_tool_output(root / OUTPUTS_DIR / tool_output_name(plan.host, METHODOLOGIES[0]))
-        register_ids = [str(entry.get("check_id")) for entry in output.risk_register or []]
-        fill_missed_gaps(folder / missed_gaps_name(plan.host), plan, register_ids, rng)
+        finding_ids = [str(entry.get("check_id")) for entry in output.risk_register or []
+                       if register_entry_type(entry) == ENTRY_FINDING]
+        fill_missed_gaps(folder / missed_gaps_name(plan.host), plan, finding_ids, rng)
 
 
 # ------------------------------------------------------------------ command line

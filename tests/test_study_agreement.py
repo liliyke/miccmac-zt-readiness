@@ -18,6 +18,11 @@ the commands append themselves (agreement's seal-opening row, ledger
 record, ledger withdraw) get a pinned ledger time after every hand-written
 row (the ledger_clock fixture). No network, no real hosts; only synthetic
 values. Level-rule expectations are worked out by hand in the comments.
+
+In this file, AI assistance also covers the H2 tests added with the
+register's missing-data entries: the split by entry type, study.yaml's
+h2_unit, a judged ERROR entry counting in n, and the optional descriptive
+judgment columns (StudyBuilder.optional_reviews).
 """
 from __future__ import annotations
 
@@ -206,6 +211,8 @@ class StudyBuilder:
         self.ledger_register = False                   # record the register sheets once filled
         self.hashed_at = {h: "T18:00:00Z" for h in self.hosts}
         self.reviews: Dict[str, Dict[str, tuple]] = {}  # host -> check -> (accurate, actionable, prioritized)
+        # host -> check -> {optional judgment column: value} (next_level_accurate, threat_plausible)
+        self.optional_reviews: Dict[str, Dict[str, Dict[str, str]]] = {}
         self.gaps: Dict[str, List[str]] = {}           # host -> descriptions
         self.skip_outputs: List[tuple] = []            # (host, method) not written
         self.absent: List[str] = []                    # hosts in study.yaml with no file at all
@@ -404,11 +411,13 @@ class StudyBuilder:
         rows = []
         for number, entry in enumerate(register, start=1):
             accurate, actionable, prioritized = answers.get(entry.check_id, ("", "", ""))
-            rows.append({"host_code": host, "entry_no": number, "check_id": entry.check_id,
-                         "property": entry.property_key, "name": entry.name, "tool_status": entry.status.value,
-                         "cis_ig": entry.cis_ig, "risk_rating": entry.risk_rating, "detail": entry.detail,
-                         "recommended_fix": entry.remediation, "accurate": accurate, "actionable": actionable,
-                         "prioritized": prioritized, "reason": "synthetic reason" if accurate else ""})
+            rows.append(dict({"host_code": host, "entry_no": number, "check_id": entry.check_id,
+                              "property": entry.property_key, "name": entry.name, "tool_status": entry.status.value,
+                              "cis_ig": entry.cis_ig, "risk_rating": entry.risk_rating, "detail": entry.detail,
+                              "recommended_fix": entry.remediation, "entry_type": entry.entry_type,
+                              "accurate": accurate, "actionable": actionable,
+                              "prioritized": prioritized, "reason": "synthetic reason" if accurate else ""},
+                             **self.optional_reviews.get(host, {}).get(entry.check_id, {})))
         folder = self.root / formats.REGISTER_DIR
         formats.write_csv(folder / formats.register_review_name(host), formats.REGISTER_REVIEW_COLUMNS, rows)
         gaps = [{"host_code": host, "gap_no": i, "check_id": "", "description": text, "evidence": ""}
@@ -2865,3 +2874,104 @@ def test_a_study_yaml_that_cannot_be_decoded_asks_for_utf8(tmp_path, capsys, dat
     (root / formats.CONFIG_FILE).write_bytes(data)
     assert run_agreement(root) == 2                        # an error message, not a traceback
     assert "save study.yaml as UTF-8" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ H2 by entry type (missing-data entries)
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+def _register(root: Path) -> Dict[str, Dict[str, str]]:
+    return {r["host"]: r for r in csv_rows(out_file(root, "register_h2.csv"))}
+
+
+def test_h2_counts_missing_data_entries_and_reports_them_apart(tmp_path):
+    """H1 has no inventory record (its file holds null): INV-01 and INV-04
+    become missing-data entries; an ERROR (MON-01, forced) is one too. Every
+    entry counts in H2's n; the split adds up."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2"))
+    builder.inventory["H1"] = None
+    builder.forced_statuses["H1"] = {"MON-01": "ERROR"}
+    builder.judge_all("H1", {"INV-01": ("Y", "Y", "Y"), "INV-04": ("Y", "N", "N"), "MON-01": ("N", "Y", "Y")})
+    builder.judge_all("H2")
+    root = builder.build()
+    kinds = {e.check_id: e.entry_type for e in build_risk_register(builder.assessment("H1", "cmmi"))}
+    assert {c for c, k in kinds.items() if k == "missing-data"} == {"INV-01", "INV-04", "MON-01"}
+    assert run_agreement(root) == 0
+    rows = _register(root)
+    h1, total = rows["H1"], rows["TOTAL"]
+    assert (h1["entries"], h1["judged"], h1["k"]) == (str(len(kinds)), str(len(kinds)), str(len(kinds) - 2))
+    assert (h1["missing_data_entries"], h1["missing_data_judged"], h1["missing_data_k"]) == ("3", "3", "1")
+    assert (h1["finding_entries"], h1["finding_judged"], h1["finding_k"]) == (
+        str(len(kinds) - 3), str(len(kinds) - 3), str(len(kinds) - 3))
+    for row in rows.values():
+        assert int(row["finding_k"]) + int(row["missing_data_k"]) == int(row["k"])
+        assert int(row["finding_judged"]) + int(row["missing_data_judged"]) == int(row["n"])
+    assert total["h2_unit"] == "all-entries" and h1["h2_unit"] == ""
+    assert total["meets_threshold"] in ("yes", "no") and total["finding_meets_threshold"] in ("yes", "no")
+    assert h1["finding_meets_threshold"] == ""                    # per-host rows carry no threshold
+    text = " ".join(out_file(root, "summary.md").read_text(encoding="utf-8").split())
+    assert "### 4.1 By entry type" in text
+    assert ("Unit pre-registered for the threshold (study.yaml h2_unit): all-entries. The threshold result above "
+            "(TOTAL, all entries) is the H2 test; the findings row below is descriptive.") in text
+    assert f"Of the {total['entries']} entries, 3 are missing-data entries (k = 1 of 3 judged)." in text
+    h2 = summary(root)["h2"]
+    assert h2["h2_unit"] == "all-entries" and h2["total"]["missing_data_entries"] == 3
+
+
+def test_h2_unit_findings_puts_the_threshold_on_the_findings_row(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",), h2_unit="findings")
+    builder.inventory["H1"] = None
+    builder.judge_all("H1", default=("Y", "Y", "Y"))
+    root = builder.build()
+    assert run_agreement(root) == 0
+    total = _register(root)["TOTAL"]
+    assert total["h2_unit"] == "findings"
+    assert total["finding_meets_threshold"] == "yes" and total["finding_k"] == total["finding_judged"]
+    text = " ".join(out_file(root, "summary.md").read_text(encoding="utf-8").split())
+    assert "The findings row below is the H2 test; the TOTAL row above (all entries) is descriptive." in text
+    assert "Findings only (the pre-registered H2 test): k/n = " in text
+    assert summary(root)["config"]["h2_unit"] == "findings"
+
+
+def test_findings_only_studies_give_the_same_counts_in_both_units(tmp_path):
+    """The StudyBuilder's own register has findings only (every input
+    given): the split changes nothing in the old columns."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1", "H2"))
+    builder.judge_all("H1", {"MON-02": ("N", "Y", "Y")})
+    builder.judge_all("H2")
+    root = builder.build()
+    assert run_agreement(root) == 0
+    for row in _register(root).values():
+        assert (row["finding_k"], row["finding_judged"]) == (row["k"], row["n"])
+        assert row["missing_data_entries"] == "0"
+    total = _register(root)["TOTAL"]
+    assert (total["finding_rate"], total["finding_wilson_low"]) == (total["rate"], total["wilson_low"])
+    assert (total["finding_boot_low"], total["finding_boot_high"]) == (total["boot_low"], total["boot_high"])
+
+
+def test_the_optional_judgments_are_counted_and_never_enter_k(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.judge_all("H1")
+    builder.optional_reviews["H1"] = {"MON-02": {"next_level_accurate": "Y", "threat_plausible": "N"},
+                                      "INV-04": {"next_level_accurate": "no", "threat_plausible": ""},
+                                      "CLM-03": {"next_level_accurate": "maybe"}}
+    root = builder.build()
+    assert run_agreement(root) == 0                    # an unreadable optional answer is only a WARNING
+    total = _register(root)["TOTAL"]
+    assert (total["next_level_accurate_y"], total["next_level_accurate_n"]) == ("1", "1")
+    assert (total["threat_plausible_y"], total["threat_plausible_n"]) == ("0", "1")
+    assert total["k"] == total["n"] == total["entries"]
+    warnings = [f["detail"] for f in findings(root, "WARNING") if f["check"] == "register"]
+    assert any(d.startswith("CLM-03 next_level_accurate: unrecognized answer 'maybe'") for d in warnings)
+
+
+def test_h2_unit_is_a_study_setting(tmp_path):
+    assert formats.study_config_from_dict({"hosts": ["H1"]}).h2_unit == "all-entries"
+    assert formats.study_config_from_dict({"hosts": ["H1"], "h2_unit": " Findings "}).h2_unit == "findings"
+    with pytest.raises(formats.StudyError, match="h2_unit must be one of all-entries, findings"):
+        formats.study_config_from_dict({"hosts": ["H1"], "h2_unit": "everything"})
+    text = formats.config_template(["H1"])
+    assert "h2_unit: all-entries" in text and formats.study_config_from_dict(yaml.safe_load(text)).h2_unit == (
+        "all-entries")
+    reference = formats.study_config_from_dict({"hosts": ["H1"]})
+    used = formats.study_config_from_dict({"hosts": ["H1"], "h2_unit": "findings"})
+    assert agreement._config_differences(reference, used) == ["h2_unit all-entries -> findings"]

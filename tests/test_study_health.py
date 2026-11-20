@@ -9,7 +9,13 @@ Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts (in the style of tests/test_windows_checks.py), with a
 provenance block per the miccmac-provenance/1 spec and the register from
 miccmac.risk_register.build_risk_register. Everything is synthetic and lives
-under tmp_path; nothing connects anywhere."""
+under tmp_path; nothing connects anywhere.
+
+In this file, AI assistance also covers the tests added with CMMI as the
+tool's default lens and the register's missing-data entries: the
+methodology and file-name test, --pair's methodology test, --inputs' entry
+check with --allow-missing, and the new register texts in the blinding test.
+Two existing tests were updated for the new lines (each says so)."""
 from __future__ import annotations
 
 import csv
@@ -21,7 +27,7 @@ import pytest
 
 from miccmac.config import Config, ConfigError
 from miccmac.engine import enabled_check_ids, run_assessment
-from miccmac.metadata import load_check_metadata
+from miccmac.metadata import MappingsError, load_check_metadata, load_register_metadata
 from miccmac.methodology import REGISTRY
 from miccmac.risk_register import build_risk_register
 from miccmac_study import health
@@ -178,12 +184,16 @@ def test_good_facts_and_outputs_are_all_ok(study, capsys):
     assert "ok      outputs/H1-cmmi.json: facts file hash matches" in lines
     assert "ok      outputs/H1-cmmi.json: enabled check ids fingerprint matches the checks" in lines
     assert "ok      outputs/H1-cmmi.json: risk register present: yes" in lines
-    assert lines[-5:] == [
+    assert "ok      outputs/H1-cmmi.json: methodology matches the file name (cmmi)" in lines
+    assert "ok      outputs/H1-cisa-ztmm.json: methodology matches the file name (cisa-ztmm)" in lines
+    # Deliberately changed: --pair also tests that the outputs hold different methodologies.
+    assert lines[-6:] == [
         "ok      pair: same target",
         "ok      pair: per-check statuses identical: yes",
         "ok      pair: facts_file.sha256 identical: yes",
         "ok      pair: input hashes identical: yes",
         "ok      pair: as_of identical: yes",
+        "ok      pair: methodologies differ: yes",
     ]
 
 
@@ -218,6 +228,10 @@ def _known_content(study):
                 texts.update(s for s in (check["detail"], check["evidence"]) if s)
         for entry in data["risk_register"]:
             texts.update(s for s in (entry["detail"], entry["remediation"]) if s)
+            # The register texts added with missing-data entries, hints and the SP 800-30 fields.
+            missing, hint, sp800_30 = (entry.get(k) or {} for k in ("missing_data", "next_level", "sp800_30"))
+            texts.update(s for s in (missing.get("what"), missing.get("how_to_supply"), hint.get("text"),
+                                     sp800_30.get("threat_event"), sp800_30.get("response")) if s)
         for value in assessment["methodology"]["properties"].values():
             scores.add(str(value["percentage"]))
     return statuses, scores, names, texts
@@ -247,6 +261,10 @@ def test_output_never_reveals_results(study, capsys):
     assert [t for t in texts if t in output] == []
     for value in ("CRITICAL", "HIGH", "MODERATE", "LOW", "UNRATED", "MEDIUM", "IG1", "IG2"):
         assert value not in output
+    for word in ("adversarial", "accidental", "structural", "environmental", "drafted", "missing-data"):
+        assert word not in output
+    threat_events = {m.threat_event for m in load_register_metadata().values()}
+    assert [e for e in threat_events if e in output] == []
     remediations = {m.remediation for m in load_check_metadata().values()}
     assert [r for r in remediations if r in output] == []
     assert "entr" not in output.lower()  # no register entries or entry counts
@@ -450,12 +468,14 @@ def test_pair_disagreement_reports_no_without_details(study, capsys):
                   attestation=dict(ATTESTATION, business_owner={"assigned": False}))
     rc, lines = _health(capsys, "--pair", "outputs/H1-cmmi.json", "outputs/H2-cmmi.json")
     assert rc == 1
-    assert lines[-5:] == [
+    # Deliberately changed: two CMMI outputs also fail the new methodology test.
+    assert lines[-6:] == [
         "PROBLEM pair: same target: the outputs are not all for the same target",
         "PROBLEM pair: per-check statuses identical: no",
         "PROBLEM pair: facts_file.sha256 identical: no",
         "PROBLEM pair: input hashes identical: no",
         "PROBLEM pair: as_of identical: no",
+        "PROBLEM pair: methodologies differ: no: two outputs hold the same methodology",
     ]
     assert "192.0.2.11" not in "\n".join(lines)
 
@@ -922,3 +942,111 @@ def test_inputs_library_function(tmp_path):
     assert [(r.ok, r.line()) for r in results] == [(True, f"ok      {att}: every date the checks read is readable")]
     with pytest.raises(health.StudyError, match="YYYY-MM-DD"):
         health.check_input_files([att], as_of="23/11/2026")
+
+
+# ---------- the methodology and the file name (CMMI is the tool's default lens) ----------
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+def test_a_cmmi_output_saved_under_the_cisa_ztmm_name_is_a_problem(study, capsys):
+    """Critique: step 6 without --methodology now gives CMMI levels (the
+    default); under the CISA ZTMM name every other test passes, so the
+    name test and --pair must catch it."""
+    facts = _win_facts()
+    _write_output(study, "H1", facts, "cmmi")
+    wrong = study / "outputs" / "H1-cisa-ztmm.json"
+    wrong.write_text((study / "outputs" / "H1-cmmi.json").read_text(encoding="utf-8"), encoding="utf-8")
+    rc, lines = _health(capsys, *ALL_OPTIONS, "--pair", "outputs/H1-facts.json", "outputs/H1-cmmi.json",
+                        "outputs/H1-cisa-ztmm.json")
+    assert rc == 1
+    assert _problems(lines) == [
+        "PROBLEM outputs/H1-cisa-ztmm.json: methodology matches the file name (cisa-ztmm): the output holds cmmi "
+        "levels; was --methodology cisa-ztmm left out of the command, or another one typed?",
+        "PROBLEM pair: methodologies differ: no: two outputs hold the same methodology",
+    ]
+
+
+def test_a_file_not_named_as_the_study_names_outputs_gets_no_name_test(study, capsys):
+    (study / "outputs" / "retest.json").write_text((study / "outputs" / "H1-cmmi.json").read_text(encoding="utf-8"),
+                                                   encoding="utf-8")
+    rc, lines = _health(capsys, "outputs/retest.json")
+    assert rc == 0 and not any("file name" in line for line in lines)
+
+
+def test_pair_with_an_output_without_a_methodology_block(study, capsys):
+    _edit(study / "outputs" / "H1-cisa-ztmm.json", lambda d: d["assessment"].pop("methodology"))
+    rc, lines = _health(capsys, "--pair", "outputs/H1-cmmi.json", "outputs/H1-cisa-ztmm.json")
+    assert rc == 1
+    assert lines[-1] == "PROBLEM pair: methodologies differ: an output holds no methodology levels"
+    assert not any("matches the file name (cisa-ztmm)" in line for line in lines)   # reported once, above
+
+
+# ---------- --inputs: every entry the checks read ----------
+
+def test_inputs_named_by_role_report_every_entry_given(tmp_path, capsys):
+    att = _input_file(tmp_path, "H1-attestation.json", dict(ATTESTATION, firmware_currency={"current": True}))
+    inv = _input_file(tmp_path, "H1-inventory-record.json", INVENTORY)
+    rc, lines = _health(capsys, "--inputs", "--as-of", AS_OF, att, inv)
+    assert rc == 0
+    assert lines == [
+        f"ok      {att}: every date the checks read is readable",
+        f"ok      {att}: every entry the checks read from an attestation is given",
+        f"ok      {inv}: every date the checks read is readable",
+        f"ok      {inv}: every entry the checks read from an inventory record is given",
+    ]
+
+
+def test_an_absent_attestation_entry_is_a_problem_unless_allowed(tmp_path, capsys):
+    """The fixture's attestation has no firmware_currency (and the role-less
+    att.json of the older tests gets no entry line at all)."""
+    att = _input_file(tmp_path, "H3-attestation.json", ATTESTATION)
+    rc, lines = _health(capsys, "--inputs", att)
+    assert rc == 1
+    assert _problems(lines) == [
+        f"PROBLEM {att}: every entry the checks read from an attestation is given: no, absent: firmware_currency "
+        "(each leaves its check not evaluated, as missing data; add each one, or name one left out on purpose with "
+        "--allow-missing NAME)"]
+    rc, lines = _health(capsys, "--inputs", "--allow-missing", "firmware_currency", att)
+    assert rc == 0
+    assert lines[-1] == (f"ok      {att}: every entry the checks read from an attestation is given, apart from "
+                         "firmware_currency (--allow-missing)")
+    plain = _input_file(tmp_path, "att.json", ATTESTATION)
+    rc, lines = _health(capsys, "--inputs", plain)
+    assert rc == 0 and len(lines) == 1
+
+
+def test_an_empty_attestation_names_every_entry(tmp_path, capsys):
+    att = _input_file(tmp_path, "H1-attestation.json", {})
+    rc, lines = _health(capsys, "--inputs", att)
+    assert rc == 1
+    assert ("absent: identity_aware_access, business_owner, system_administrator, business_purpose, "
+            "vulnerability_scanning, compliance_assessment, finding_remediation_sla, firmware_currency") in lines[-1]
+
+
+def test_an_absent_inventory_entry_is_a_problem_too(tmp_path, capsys):
+    inv = _input_file(tmp_path, "H1-inventory-record.json", {"device_id": "H1"})
+    rc, lines = _health(capsys, "--inputs", inv)
+    assert rc == 1
+    assert _problems(lines) == [
+        f"PROBLEM {inv}: every entry the checks read from an inventory record is given: no, absent: tracked, "
+        "last_reviewed (the inventory checks count an absent entry against the device, not as missing data; add "
+        "each one, or name one left out on purpose with --allow-missing NAME)"]
+
+
+def test_allow_missing_is_only_for_inputs_and_takes_an_entry_name(study, tmp_path, capsys):
+    assert main(["health", "--allow-missing", "firmware_currency", "outputs/H1-cmmi.json"]) == 2
+    assert "--allow-missing is only used with --inputs" in capsys.readouterr().err
+    att = _input_file(tmp_path, "H1-attestation.json", ATTESTATION)
+    assert main(["health", "--inputs", "--allow-missing", "two words", str(att)]) == 2
+    assert "is not an entry name" in capsys.readouterr().err
+
+
+def test_inputs_report_a_broken_mappings_file_as_an_error(tmp_path, capsys, monkeypatch):
+    """Critique: health --inputs ran miccmac outside its error handling, so a
+    broken mappings file gave a traceback."""
+    def broken(*args, **kwargs):
+        raise MappingsError("data/control-mappings.yaml: CUR-04 missing a non-empty remediation string")
+
+    monkeypatch.setattr("miccmac.engine.metadata.all_builtin_check_ids", broken)
+    att = _input_file(tmp_path, "H1-attestation.json", ATTESTATION)
+    assert main(["health", "--inputs", str(att)]) == 2
+    assert capsys.readouterr().err.startswith("error: miccmac cannot run its checks here: data/control-mappings.yaml")

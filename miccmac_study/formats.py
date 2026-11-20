@@ -190,13 +190,52 @@ def parse_level(raw: Optional[str], max_level: int) -> Union[int, str, None]:
 
 
 # ------------------------------------------------------------------ register review format
+# One row per register entry, in the tool's order. The tool's columns first:
+#   recommended_fix     the action to take now: the fix for a finding; for a
+#                       missing-data entry, how to supply the data, then the fix
+#                       (the entry's sp800_30.response; its remediation in an
+#                       output that predates it)
+#   entry_type          finding (FAIL, PARTIAL) or missing-data (ERROR, or an
+#                       input not supplied)
+#   rating_basis        what cis_ig, the FAIR bands and risk_rating apply to:
+#                       "finding", or "if the control is absent" for missing data
+#   missing_data, how_to_supply   what is missing and how to supply it
+#                       (missing-data entries only)
+#   next_level          the next-level hint of the primary methodology (blank in
+#                       sheets forced before the seal opened)
+#   threat_source_type, threat_event, sp800_30_review   the SP 800-30 fields
+#                       drafted per check, and their review state
+# Then the judgment columns, which only the researcher fills in:
+#   accurate, actionable        Y or N (H2)
+#   prioritized                 Y, N or UNSURE (secondary)
+#   next_level_accurate         Y or N, optional and descriptive: is the hint right?
+#   threat_plausible            Y or N, optional and descriptive: do the drafted
+#                               threat source type and event fit the entry?
+#   reason                      one line
 REGISTER_REVIEW_COLUMNS = (
     "host_code", "entry_no", "check_id", "property", "name", "tool_status",
     "cis_ig", "fair_frequency", "fair_magnitude", "risk_rating", "detail",
-    "recommended_fix", "accurate", "actionable", "prioritized", "reason",
+    "recommended_fix", "entry_type", "rating_basis", "missing_data", "how_to_supply",
+    "next_level", "threat_source_type", "threat_event", "sp800_30_review",
+    "accurate", "actionable", "prioritized", "next_level_accurate", "threat_plausible", "reason",
 )
-# accurate / actionable: Y or N. prioritized: Y, N or UNSURE.
 MISSED_GAPS_COLUMNS = ("host_code", "gap_no", "check_id", "description", "evidence")
+
+# Register entry types (miccmac.risk_register): a finding is a FAIL or PARTIAL
+# check, a missing-data entry a check the tool could not evaluate.
+ENTRY_FINDING = "finding"
+ENTRY_MISSING_DATA = "missing-data"
+ENTRY_TYPES = (ENTRY_FINDING, ENTRY_MISSING_DATA)
+
+
+def register_entry_type(entry: Mapping[str, object]) -> str:
+    """A register entry's type: its entry_type, or, in an output written
+    before entry types existed (FAIL and PARTIAL entries only), the one its
+    status gives."""
+    kind = entry.get("entry_type")
+    if kind in ENTRY_TYPES:
+        return str(kind)
+    return ENTRY_FINDING if entry.get("status") in ("FAIL", "PARTIAL") else ENTRY_MISSING_DATA
 
 
 def normalize_yes_no(raw: Optional[str], allow_unsure: bool = False) -> Optional[str]:
@@ -404,8 +443,15 @@ def write_json(path: Union[str, Path], payload: object, overwrite: bool = False)
 _CONFIG_KEYS = {
     "hosts", "threshold", "primary_methodology", "secondary_methodologies",
     "manual_max_level", "input_driven_checks", "input_driven_properties",
-    "bootstrap", "weighted_kappa", "synthetic", "level_rule",
+    "bootstrap", "weighted_kappa", "synthetic", "level_rule", "h2_unit",
 }
+# study.yaml h2_unit: which register entries the H2 threshold is tested on.
+# all-entries (the default): every entry, findings and missing-data entries
+# alike, as every entry is judged; findings: the findings only. agreement
+# reports both either way; this names the pre-registered test.
+H2_ALL_ENTRIES = "all-entries"
+H2_FINDINGS = "findings"
+H2_UNITS = (H2_ALL_ENTRIES, H2_FINDINGS)
 _BOOTSTRAP_KEYS = {"iterations", "seed", "exact_limit"}
 
 # study.yaml `level_rule` (protocol decision 4): how levels are derived on
@@ -486,6 +532,8 @@ class StudyConfig:
     manual_level_rule: Optional[str] = None
     tool_side_rule: str = LEVEL_RULE_TOOL_CUTOFFS
     overall_rule: Optional[str] = None
+    # study.yaml h2_unit (H2_UNITS): the entries the H2 threshold applies to.
+    h2_unit: str = H2_ALL_ENTRIES
 
     @property
     def methodologies(self) -> List[str]:
@@ -589,6 +637,13 @@ def study_config_from_dict(data: Mapping[str, object]) -> StudyConfig:
             if not isinstance(data[key], bool):
                 raise StudyError(f"'{key}' must be true or false")
             setattr(config, key, data[key])
+
+    if "h2_unit" in data:
+        unit = data["h2_unit"]
+        text = unit.strip().lower() if isinstance(unit, str) else unit
+        if text not in H2_UNITS:
+            raise StudyError(f"h2_unit must be one of {', '.join(H2_UNITS)}, not {unit!r}")
+        config.h2_unit = text
 
     rule = data.get("level_rule")
     if rule is not None:
@@ -709,6 +764,10 @@ def config_template(hosts: Sequence[str], synthetic: bool = False) -> str:
         "bootstrap: {iterations: 10000, seed: 20261122, exact_limit: 1000000}\n"
         "# Linear-weighted kappa is optional in the protocol.\n"
         "weighted_kappa: false\n"
+        "# DECISION (protocol section 7): the register entries the H2 threshold is tested on.\n"
+        "#   all-entries = every entry, findings and missing-data entries (the default)\n"
+        "#   findings    = findings (FAIL, PARTIAL) only; agreement reports both either way\n"
+        "h2_unit: all-entries\n"
         f"synthetic: {'true' if synthetic else 'false'}\n"
     )
 
@@ -753,6 +812,43 @@ class ToolOutput:
         if methodology:
             levels[OVERALL] = (methodology.get("overall") or {}).get("level")
         return levels
+
+
+def methodology_in_name(path: Union[str, Path]) -> Optional[str]:
+    """The methodology a tool output's file name names, as the study names
+    them (tool_output_name: <H>-<methodology>.json, any letter case), or None
+    for any other name."""
+    name = Path(path).name
+    for methodology in sorted(METHODOLOGY_REGISTRY, key=len, reverse=True):
+        suffix = f"-{methodology}.json"
+        if name.lower().endswith(suffix) and _HOST_RE.match(name[:-len(suffix)]):
+            return methodology
+    return None
+
+
+def methodology_name_problem(path: Union[str, Path]) -> str:
+    """Why the tool output at `path` does not hold the methodology its name
+    names ('' when it does, when the name names none, or when the file is not
+    a readable miccmac assessment). The methodology block and the provenance
+    must both name it. CMMI is the tool's default lens, so a command that lost
+    its --methodology gives CMMI levels under another methodology's name."""
+    named = methodology_in_name(path)
+    if named is None:
+        return ""
+    try:
+        output = load_tool_output(path)
+    except StudyError:
+        return ""
+    found = output.methodology_name
+    provenance = output.provenance if isinstance(output.provenance, dict) else {}
+    recorded = provenance.get("methodology", found) if provenance else found
+    if found != named:
+        held = f"{found} levels" if isinstance(found, str) and found in METHODOLOGY_REGISTRY else "no methodology levels"
+        return (f"holds {held}, but its name says {named} (was --methodology {named} left out of the command, or "
+                f"another one typed?)")
+    if recorded != named:
+        return f"holds {named} levels, but its provenance names {recorded!r}, not {named}"
+    return ""
 
 
 def load_tool_output(path: Union[str, Path]) -> ToolOutput:

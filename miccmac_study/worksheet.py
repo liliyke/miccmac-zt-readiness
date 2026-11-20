@@ -12,8 +12,9 @@ check in list-checks order, and one level row per methodology and scope. A
 check row shows only what the assessor may see before the blind manual pass:
 the check id, its property, its intent (the check's name) and its control
 references. The sheet never carries a tool status, score, detail or evidence
-string, query, policy threshold, level cutoff, CIS IG or FAIR value, or
-remediation text. Its own instructions (the worksheet_format meta row) name
+string, query, policy threshold, level cutoff, CIS IG or FAIR value,
+remediation text, or any other risk-register field (missing-data texts,
+next-level hints, the SP 800-30 threat-source types and threat events). Its own instructions (the worksheet_format meta row) name
 the protocol's verdict values, PASS, PARTIAL, FAIL, N/A and UNASSESSED, and
 say how to fill each column.
 
@@ -49,6 +50,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 from miccmac.config import Config, ConfigError
 from miccmac.engine import enabled_check_ids, run_assessment
 from miccmac.metadata import MappingsError, load_raw_mappings
+from miccmac.methodology import LEVEL_WORDS as METHODOLOGY_LEVEL_WORDS
 from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
 from miccmac.model import PROPERTY_KEYS, Status
 
@@ -114,7 +116,7 @@ ENTRY_COLUMNS = ("value", "pass_criterion", "evidence_procedure", "procedure_sou
                  "evidence_notes", "unassessed_reason")
 
 # How each methodology's ordinal positions are named in the level-row text.
-_METHODOLOGY_WORDS = {"cmmi": ("CMMI", "level"), "cisa-ztmm": ("CISA ZTMM", "stage")}
+_METHODOLOGY_WORDS = METHODOLOGY_LEVEL_WORDS   # shared with the risk register's next-level hints
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 

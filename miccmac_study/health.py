@@ -4,7 +4,7 @@ Health check for sealed tool outputs and saved facts files (protocol section 5).
 
     python -m miccmac_study health [--expect-as-of YYYY-MM-DD] [--expect-commit SHA]
         [--list-checks FILE] [--pair] [--ledger FILE --host H] PATH [PATH ...]
-    python -m miccmac_study health --inputs [--as-of YYYY-MM-DD] FILE [FILE ...]
+    python -m miccmac_study health --inputs [--as-of YYYY-MM-DD] [--allow-missing NAME ...] FILE [FILE ...]
 
 After each sealed tool run the operator needs to know that the run worked,
 without seeing any result. This command reads each file, works out whether
@@ -16,6 +16,12 @@ assessment JSON), and prints one line per test:
 
 It exits 0 only when every test is ok.
 
+A tool output named as the study names it, <H>-<methodology>.json, must hold
+that methodology's levels: since CMMI became the tool's default lens, a step-6
+line that lost its --methodology would otherwise give a CMMI output under the
+CISA ZTMM name that every other test passes. --pair also requires the paired
+outputs to hold different methodologies.
+
 With --ledger FILE --host H, each tool output is also compared with H's rows
 in the ledger, reporting yes/no only: its input files are the versions the
 assessor had, each in its own role (ledger.assessor_inputs and
@@ -25,10 +31,17 @@ times and hash prefixes only.
 
 With --inputs, the files are the researcher's attestation and inventory-record
 files, checked before the study: miccmac's own checks run in-process on each
-file alone (no facts) and the only thing reported is whether every date they
-read from it is readable; a date the tool would report as ERROR is named with
-its field and value (INV-04, ASM-01 and ASM-02 write nothing else into such a
-detail). No other status, score or detail is ever printed.
+file alone (no facts) and the only things reported are whether every date they
+read from it is readable, and, for a file whose name gives its role
+(<H>-attestation.json, <H>-inventory-record.json), whether it gives every entry
+the checks read from such a file. A date the tool would report as ERROR is
+named with its field and value (INV-04, ASM-01 and ASM-02 write nothing else
+into such a detail). An absent attestation entry makes its check a
+missing-data entry of the register, so it is a PROBLEM unless it is left out on
+purpose and named with --allow-missing; an absent inventory-record entry is
+scored as a finding by INV-01 or INV-04, and is a PROBLEM the same way. Names
+are the checks' fixed entry names. No other status, score or detail is ever
+printed.
 
 It never prints a status value, score, level, level label, readiness tier,
 check name, detail string, register entry, or a count of statuses or
@@ -36,8 +49,14 @@ entries. Every printed value is fixed text, a yes/no, a file path, a
 ledger time or the first characters of an input file's SHA-256, or
 something the operator chose before the run (dates, commit, methodology
 name, check ids, extended-fact item names, host codes, the input files'
-own date fields), and values read from a tool output or facts file are
-printed only after they match a strict pattern.
+own date fields, the names of the entries the checks read from them), and
+values read from a tool output or facts file are printed only after they
+match a strict pattern.
+
+In this module, AI assistance covers, besides the rest, the methodology and
+file-name test, the --pair methodology test, and --inputs' entry check with
+--allow-missing (added with CMMI as the default lens and the register's
+missing-data entries).
 """
 from __future__ import annotations
 
@@ -49,8 +68,9 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
+from miccmac.metadata import MappingsError
 from miccmac.methodology import REGISTRY as METHODOLOGY_REGISTRY
-from miccmac.model import PROPERTY_KEYS
+from miccmac.model import PROPERTY_KEYS, MissingData
 
 from miccmac_study.formats import (
     FACTS_FORMAT,
@@ -61,6 +81,7 @@ from miccmac_study.formats import (
     ToolOutput,
     check_ids_fingerprint,
     load_tool_output,
+    methodology_in_name,
     parse_utc_timestamp,
     read_ledger,
     sha256_file,
@@ -68,12 +89,15 @@ from miccmac_study.formats import (
     worksheet_name,
 )
 from miccmac_study.ledger import (
+    ATTESTATION_ROLE,
     FACTS_KIND,
     INPUT_KIND,
     INPUT_MISSING,
     INPUT_ROLE_UNKNOWN,
+    INVENTORY_ROLE,
     assessor_inputs,
     check_run_inputs,
+    input_role,
     is_study_code,
     row_kind,
     worksheet_rows,
@@ -299,6 +323,22 @@ def _methodology_result(label: str, assessment: dict, provenance: Optional[dict]
     return _result(label, test, True)
 
 
+def _name_result(label: str, output: ToolOutput) -> Optional[HealthResult]:
+    """Whether the methodology the file name names is the one the output
+    holds; None for a file not named <H>-<methodology>.json, and for an
+    output without a known methodology block (the methodology-present test
+    reports that already)."""
+    named = methodology_in_name(output.path)
+    found = output.methodology_name
+    if named is None or not (isinstance(found, str) and found in METHODOLOGY_REGISTRY):
+        return None
+    test = f"methodology matches the file name ({named})"
+    if found == named:
+        return _result(label, test, True)
+    return _result(label, test, False, f"the output holds {_token(found)} levels; was --methodology {named} left out "
+                                       "of the command, or another one typed?")
+
+
 def _fingerprint_result(label: str, assessment: dict, checks: List[dict], provenance: dict) -> HealthResult:
     """The provenance's enabled-check fingerprint must match this output's own
     checks: its enabled ids in list-checks or report order, or (literally)
@@ -390,6 +430,9 @@ def check_tool_output(label: str, output: ToolOutput, expect_as_of: Optional[str
         results.append(_commit_result(label, provenance.get("tool_commit"), expect_commit))
         results.append(_tree_clean_result(label, provenance))
     results.append(_methodology_result(label, assessment, provenance))
+    named = _name_result(label, output)
+    if named is not None:
+        results.append(named)
     if provenance is not None:
         if checks is not None:
             results.append(_fingerprint_result(label, assessment, checks, provenance))
@@ -444,6 +487,13 @@ def check_pair(outputs: Sequence[Tuple[str, ToolOutput]]) -> List[HealthResult]:
     status_maps = [_status_map(output) for _, output in outputs]
     facts_hashes = [(p.get("facts_file").get("sha256") or None) if isinstance(p.get("facts_file"), dict) else None
                     for p in provenances]
+    methodologies = [output.methodology_name for _, output in outputs]
+    if any(not isinstance(name, str) for name in methodologies):
+        distinct = HealthResult("pair: methodologies differ", False, "an output holds no methodology levels")
+    elif len(set(methodologies)) == len(methodologies):
+        distinct = HealthResult("pair: methodologies differ: yes", True)
+    else:
+        distinct = HealthResult("pair: methodologies differ", False, "no: two outputs hold the same methodology")
     return [
         HealthResult("pair: same target", None not in targets and _all_equal(targets),
                      "the outputs are not all for the same target"),
@@ -451,6 +501,7 @@ def check_pair(outputs: Sequence[Tuple[str, ToolOutput]]) -> List[HealthResult]:
         _same("pair: facts_file.sha256 identical", facts_hashes),
         _same("pair: input hashes identical", [_input_hashes(p) for p in provenances]),
         _same("pair: as_of identical", [p.get("as_of") or None for p in provenances]),
+        distinct,
     ]
 
 
@@ -589,6 +640,11 @@ def check_against_ledger(label: str, output: ToolOutput, host: str, ledger: Path
 # field and the researcher's own value, nothing about a host.
 _DATE_DETAIL_CHECKS = ("INV-04", "ASM-01", "ASM-02")
 _STUB_TARGET = "input-check"
+# The entries INV-01 and INV-04 read from an inventory record. They score an
+# absent one as a finding (a FAIL), not as missing data, so this list says
+# which entries the check of an -inventory-record.json file looks for.
+INVENTORY_ENTRIES = ("device_id", "tracked", "last_reviewed")
+_ROLE_WORDS = {ATTESTATION_ROLE: "an attestation", INVENTORY_ROLE: "an inventory record"}
 
 
 def _error_checks(assessment) -> List[Tuple[str, str]]:
@@ -599,13 +655,50 @@ def _error_checks(assessment) -> List[Tuple[str, str]]:
             if check.status == Status.ERROR]
 
 
-def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None) -> List[HealthResult]:
+def _absent_entries(role: str, value: object, assessment) -> List[str]:
+    """The entries the checks read from a file of this role that it does not
+    give: for an attestation, the field of every missing-field marker the
+    run's checks set (each such check becomes a missing-data entry); for an
+    inventory record, the INVENTORY_ENTRIES it lacks."""
+    if role == INVENTORY_ROLE:
+        record = value if isinstance(value, dict) else {}
+        return [name for name in INVENTORY_ENTRIES if name not in record]
+    absent = []
+    for prop in assessment.properties:
+        for check in prop.checks:
+            marker = check.missing_data
+            if (isinstance(marker, MissingData) and marker.source == role and marker.problem == "missing-field"
+                    and marker.field and marker.field not in absent):
+                absent.append(marker.field)
+    return absent
+
+
+def _entries_result(label: str, role: str, absent: Sequence[str], allowed: Sequence[str]) -> HealthResult:
+    test = f"{label}: every entry the checks read from {_ROLE_WORDS[role]} is given"
+    unexpected = [name for name in absent if name not in allowed]
+    left_out = [name for name in absent if name in allowed]
+    if unexpected:
+        how = ("the inventory checks count an absent entry against the device, not as missing data"
+               if role == INVENTORY_ROLE else "each leaves its check not evaluated, as missing data")
+        return HealthResult(test, False, f"no, absent: {', '.join(_token(n) for n in unexpected)} ({how}; add each "
+                                         "one, or name one left out on purpose with --allow-missing NAME)")
+    if left_out:
+        return HealthResult(f"{test}, apart from {', '.join(_token(n) for n in left_out)} (--allow-missing)", True)
+    return HealthResult(test, True)
+
+
+def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None,
+                      allow_missing: Sequence[str] = ()) -> List[HealthResult]:
     """For each attestation or inventory-record file: run miccmac's checks
     in-process with that file as both inputs and no facts (an empty facts
     mapping, so the inventory checks run too), and report either that every
     date the checks read from it is readable, or each check that reports
-    ERROR. The file is read the way miccmac reads --attestation and
-    --inventory-record. Nothing else of the run is reported."""
+    ERROR. For a file whose name gives its role (ledger.input_role), also
+    report whether it gives every entry the checks read from such a file
+    (_absent_entries); an absent entry named in ``allow_missing`` is reported
+    on the ok line instead of as a PROBLEM. The file is read the way miccmac
+    reads --attestation and --inventory-record. Nothing else of the run is
+    reported."""
     from miccmac.cli import _load_json_file  # the tool's own reader: accept exactly what the tool accepts
     from miccmac.config import Config, ConfigError
     from miccmac.engine import run_assessment
@@ -615,8 +708,14 @@ def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None) ->
         if not _is_iso_date(as_of):
             raise StudyError(f"--as-of {as_of!r} must be a YYYY-MM-DD date")
         base["as_of"] = dt.date.fromisoformat(as_of)
-    baseline: Set[str] = {check_id for check_id, _ in
-                          _error_checks(run_assessment(_STUB_TARGET, context=dict(base), config=Config()))}
+    for name in allow_missing:
+        if not _TOKEN_RE.fullmatch(name):
+            raise StudyError(f"--allow-missing {name!r} is not an entry name")
+    try:
+        baseline: Set[str] = {check_id for check_id, _ in
+                              _error_checks(run_assessment(_STUB_TARGET, context=dict(base), config=Config()))}
+    except (MappingsError, ConfigError) as exc:
+        raise StudyError(f"miccmac cannot run its checks here: {exc}") from None
     results: List[HealthResult] = []
     for raw in paths:
         label = str(raw)
@@ -638,6 +737,9 @@ def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None) ->
         for check_id, detail in errors:
             reason = detail if check_id in _DATE_DETAIL_CHECKS else "it cannot be evaluated with this file"
             results.append(HealthResult(f"{label}: {_token(check_id)} cannot read a date", False, reason))
+        role = input_role(str(raw))
+        if role in _ROLE_WORDS:
+            results.append(_entries_result(label, role, _absent_entries(role, value, assessment), allow_missing))
     return results
 
 
@@ -754,6 +856,10 @@ def configure(parser: argparse.ArgumentParser) -> None:
                              "report only whether every date the checks read from them is readable.")
     parser.add_argument("--as-of", default=None, metavar="YYYY-MM-DD",
                         help="With --inputs: the reference date to run the checks with (the session date).")
+    parser.add_argument("--allow-missing", action="append", default=[], metavar="NAME",
+                        help="With --inputs: an entry the checks read that an input file leaves out on purpose "
+                             "(for example firmware_currency); it is reported on an ok line instead of as a "
+                             "PROBLEM. Repeat for more than one.")
     parser.add_argument("paths", nargs="+", metavar="PATH",
                         help="Facts files and tool outputs to check (with --inputs: input files).")
 
@@ -766,10 +872,12 @@ def run(args: argparse.Namespace) -> int:
                                            ("--ledger", args.ledger), ("--host", args.host)) if value]
         if others:
             raise StudyError(f"--inputs checks input files only; it cannot be combined with {', '.join(others)}")
-        results = check_input_files(args.paths, as_of=args.as_of)
+        results = check_input_files(args.paths, as_of=args.as_of, allow_missing=args.allow_missing)
     else:
         if args.as_of is not None:
             raise StudyError("--as-of is only used with --inputs (for tool outputs and facts use --expect-as-of)")
+        if args.allow_missing:
+            raise StudyError("--allow-missing is only used with --inputs")
         results = run_health(args.paths, expect_as_of=args.expect_as_of, expect_commit=args.expect_commit,
                              list_checks=args.list_checks, pair=args.pair, ledger=args.ledger, host=args.host)
     for result in results:
