@@ -294,37 +294,42 @@ def test_the_review_table_lists_every_check_with_the_drafted_fields():
 
 def _confirmed_copies(tmp_path, corrections=True):
     """A copy of the review table with every reviewer cell filled in and
-    signed, and a copy of the mappings file with review: confirmed on every
-    row, as docs/sp800-30-review.md's steps leave them; with
-    ``corrections``, CUR-04's type and event and CLM-01's response text
-    are corrected in both."""
+    signed, and a copy of the mappings file as docs/sp800-30-review.md's
+    steps leave it: every `threats:` row `review: confirmed`. Both are built
+    from the table's drafted columns and its response texts, so they hold
+    whatever state the shipped review is in (drafted, part-way or already
+    confirmed with corrections). With ``corrections``, CUR-04's type and
+    event and CLM-01's response text are corrected in both."""
+    if not REVIEW_TABLE.exists():
+        pytest.skip("docs/sp800-30-review.md is not there")
     table = REVIEW_TABLE.read_text(encoding="utf-8")
     mappings = DEFAULT_MAPPINGS_PATH.read_text(encoding="utf-8")
     if "\nthreats:" not in mappings:
         pytest.skip(_DROPPED)
-    metadata = load_register_metadata()
-    lines = []
+    fixes = {check_id: meta.remediation for check_id, meta in load_check_metadata().items()}
+    lines, threat_rows = [], []
     for line in table.splitlines():
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) == REVIEW_COLUMNS and re.fullmatch(r"[A-Z]{3}-\d\d", cells[0]):
+            check_id, source_type, event, fix = cells[0], cells[3], cells[4], cells[8]
             answers = ["Y", "Y", "Y", "Y", "reviewed"]
-            if corrections and cells[0] == "CUR-04":
-                answers[0:2] = ["environmental", "A corrected event."]
-            if corrections and cells[0] == "CLM-01":
-                answers[3] = "Record the owner in the CMDB."
+            if corrections and check_id == "CUR-04":
+                source_type = "environmental" if cells[3] != "environmental" else "accidental"
+                event = "A corrected event."
+                answers[0:2] = [source_type, event]
+            if corrections and check_id == "CLM-01":
+                fix = answers[3] = "Record the owner in the CMDB."
+            threat_rows.append(f"  - {{ check_id: {check_id}, threat_source_type: {source_type}, review: confirmed, "
+                               f'threat_event: "{event}" }}')
+            old = f'remediation: "{fixes[check_id]}"'
+            assert mappings.count(old) == 1, check_id
+            mappings = mappings.replace(old, f'remediation: "{fix}"')
             line = "| " + " | ".join(cells[:9] + answers) + " |"
         elif line.startswith("Reviewer:"):
             line = "Reviewer: I. Ojeh   Date: 2026-11-21"
         lines.append(line)
-    mappings = re.sub(r"(threat_source_type: [a-z]+, review: )drafted", r"\1confirmed", mappings)
-    if corrections:
-        cur04 = metadata["CUR-04"]
-        mappings = mappings.replace(
-            f"check_id: CUR-04, threat_source_type: {cur04.threat_source_type}, review: confirmed, "
-            f'threat_event: "{cur04.threat_event}"',
-            'check_id: CUR-04, threat_source_type: environmental, review: confirmed, threat_event: "A corrected event."')
-        mappings = mappings.replace(f'remediation: "{metadata["CLM-01"].remediation}"',
-                                    'remediation: "Record the owner in the CMDB."')
+    # threats: is the file's last section: replace it with the rows built from the table.
+    mappings = mappings[:mappings.index("\nthreats:")] + "\nthreats:\n" + "\n".join(threat_rows) + "\n"
     table_path, mappings_path = tmp_path / "review.md", tmp_path / "mappings.yaml"
     table_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     mappings_path.write_text(mappings, encoding="utf-8")
@@ -336,9 +341,9 @@ def test_a_recorded_confirmation_keeps_the_table_and_the_file_in_step(tmp_path, 
     table_path, mappings_path = _confirmed_copies(tmp_path, corrections)
     threats = load_threat_metadata(mappings_path)
     assert {fields["review"] for fields in threats.values()} == {"confirmed"}
-    if corrections:
-        assert threats["CUR-04"]["threat_source_type"] == "environmental"
     table = table_path.read_text(encoding="utf-8")
+    drafted = _review_rows(table)["CUR-04"][3]
+    assert (threats["CUR-04"]["threat_source_type"] != drafted) is corrections
     assert _review_problems(table, mappings_path) == []
     assert _remediation_review_recorded(table)
     entries = build_risk_register(run_assessment("x", context={"facts": {}}), metadata_path=mappings_path)
@@ -351,14 +356,15 @@ def test_the_table_and_the_file_must_not_drift_apart(tmp_path):
     in the file that is neither the draft nor the reviewer's correction,
     is reported."""
     table_path, mappings_path = _confirmed_copies(tmp_path, corrections=False)
-    blank = re.sub(r"\| CTL-01 \|(.*)\| Y \| Y \| Y \| Y \| reviewed \|", r"| CTL-01 |\1|  |  |  |  |  |",
-                   table_path.read_text(encoding="utf-8"))
+    table = table_path.read_text(encoding="utf-8")
+    blank = re.sub(r"\| CTL-01 \|(.*)\| Y \| Y \| Y \| Y \| reviewed \|", r"| CTL-01 |\1|  |  |  |  |  |", table)
     assert any(p.startswith("CTL-01: review: confirmed in the file") for p in _review_problems(blank, mappings_path))
+    other = "structural" if _review_rows(table)["MON-01"][3] != "structural" else "accidental"
     text = mappings_path.read_text(encoding="utf-8")
-    mappings_path.write_text(re.sub(r"(check_id: MON-01, threat_source_type: )[a-z]+", r"\1structural", text),
+    mappings_path.write_text(re.sub(r"(check_id: MON-01, threat_source_type: )[a-z]+", r"\g<1>" + other, text),
                              encoding="utf-8")
-    problems = _review_problems(table_path.read_text(encoding="utf-8"), mappings_path)
-    assert any(p.startswith("MON-01: threat_source_type in the file is 'structural'") for p in problems)
+    problems = _review_problems(table, mappings_path)
+    assert any(p.startswith(f"MON-01: threat_source_type in the file is '{other}'") for p in problems)
 
 
 def test_the_docs_never_claim_the_remediation_text_was_confirmed():

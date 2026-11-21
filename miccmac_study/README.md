@@ -161,8 +161,10 @@ step 8 checks (`$commit`). The study venv uses Python 3.12; any supported
 Python (3.9 or later) gives the same verdicts, including Windows CUR-01,
 whose timestamps the tool normalizes, as long as the input files pass
 `health --inputs`: its YYYY-MM-DD test covers every date the checks read
-from them. CI runs the test suite on Python 3.9, 3.11 and 3.12 when the tool
-repository is pushed: check that the run for the frozen commit passed.
+from them. CI runs the test suite on Python 3.9, 3.11 and 3.12 for every
+push to `main` and every pull request against it (`.github\workflows\ci.yml`),
+not for a push of another branch: check that the run for the frozen commit
+passed.
 
 The tool changed on 20 November 2026 (version 0.2.0): CMMI became its
 default maturity lens, and the risk register gained missing-data entries,
