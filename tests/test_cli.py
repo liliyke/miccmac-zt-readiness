@@ -132,7 +132,7 @@ def test_assess_with_ssh_osquery_connector_uses_collected_facts(capsys):
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
         rc = main([
             "assess", "10.0.0.5", "--format", "json",
-            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--connector", "ssh-osquery", "--stdout", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
         ])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
@@ -152,7 +152,7 @@ def test_assess_with_inventory_record_feeds_inv01_and_inv04(tmp_path, capsys):
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
         rc = main([
             "assess", "10.0.0.5", "--format", "json",
-            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--connector", "ssh-osquery", "--stdout", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
             "--inventory-record", str(record_path),
         ])
     assert rc == 0
@@ -176,7 +176,7 @@ def test_assess_connector_error_surfaces_as_exit_2(capsys):
                side_effect=ConnectorError("could not SSH to 10.0.0.5: timed out")):
         rc = main([
             "assess", "10.0.0.5",
-            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--connector", "ssh-osquery", "--stdout", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
         ])
     assert rc == 2
     assert "could not SSH" in capsys.readouterr().err
@@ -200,7 +200,7 @@ def test_assess_with_attestation_feeds_ctl03(tmp_path, capsys):
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
         rc = main([
             "assess", "10.0.0.5", "--format", "json",
-            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--connector", "ssh-osquery", "--stdout", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
             "--attestation", str(attestation_path),
         ])
     assert rc == 0
@@ -216,7 +216,7 @@ def test_assess_without_attestation_ctl03_not_applicable(capsys):
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
         rc = main([
             "assess", "10.0.0.5", "--format", "json",
-            "--connector", "ssh-osquery", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
+            "--connector", "ssh-osquery", "--stdout", "--ssh-user", "miccmac", "--ssh-key", "/fake/key",
         ])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
@@ -247,11 +247,11 @@ def test_assess_connector_json_gains_provenance_text_unchanged(capsys):
                   "system_info": {}, "deb_packages": []}
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts",
                return_value=fake_facts) as collect:
-        rc = main(["assess", "192.0.2.10", "--format", "json", "--connector", "ssh-osquery",
+        rc = main(["assess", "192.0.2.10", "--format", "json", "--connector", "ssh-osquery", "--stdout",
                    "--ssh-user", "assessor", "--ssh-key", "keys/id_ed25519"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
-        assert main(["assess", "192.0.2.10", "--connector", "ssh-osquery",
+        assert main(["assess", "192.0.2.10", "--connector", "ssh-osquery", "--stdout",
                      "--ssh-user", "assessor", "--ssh-key", "keys/id_ed25519"]) == 0
         text = capsys.readouterr().out
     collect.assert_called_with("192.0.2.10")  # no extended facts without --save-facts
@@ -331,7 +331,7 @@ def test_an_inventory_record_with_a_bom_loads(tmp_path, capsys):
     path.write_bytes(json.dumps({"device_id": "dev-1", "tracked": True}).encode("utf-8-sig"))
     fake_facts = {"os": {}, "system_info": {}, "deb_packages": []}
     with patch("miccmac.connectors.ssh_osquery.SSHOsqueryConnector.collect_facts", return_value=fake_facts):
-        assert main(["assess", "10.0.0.5", "--format", "json", "--connector", "ssh-osquery",
+        assert main(["assess", "10.0.0.5", "--format", "json", "--connector", "ssh-osquery", "--stdout",
                      "--ssh-user", "miccmac", "--ssh-key", "/fake/key", "--inventory-record", str(path)]) == 0
     inventoried = next(p for p in json.loads(capsys.readouterr().out)["properties"] if p["key"] == "inventoried")
     assert next(c for c in inventoried["checks"] if c["check_id"] == "INV-01")["status"] == "PASS"

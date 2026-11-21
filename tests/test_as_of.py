@@ -539,7 +539,7 @@ def test_cli_as_of_end_to_end_same_output_under_two_real_clocks(lab, real_clock,
 
 def test_cli_without_as_of_uses_the_real_clock_and_adds_no_label(lab, real_clock, capsys):
     real_clock(dt.datetime(2026, 11, 23, 12, 0, tzinfo=UTC))
-    assert main(LIVE_ARGS) == 0
+    assert main(LIVE_ARGS + ["--stdout"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert (data["provenance"]["as_of"], data["provenance"]["as_of_source"]) == (None, None)
     details = _details(data)

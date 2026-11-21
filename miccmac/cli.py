@@ -85,14 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
                                "saved facts file. A study run (--connector, --facts, "
                                "--save-facts or --as-of) refuses an existing file unless "
                                "--overwrite is given; a plain run replaces it, as before. A run "
-                               "with --facts or --save-facts, or with --connector and --as-of, "
-                               "needs --output or --stdout.")
+                               "with --connector, --facts or --save-facts needs --output or "
+                               "--stdout.")
     p_assess.add_argument("--stdout", action="store_true",
-                          help="Print the report on stdout. A run with --facts or --save-facts, "
-                               "or with --connector and --as-of, holds study results, so it "
-                               "prints its report only with --stdout and otherwise needs "
-                               "--output; every other run prints without it. Not allowed with "
-                               "--output.")
+                          help="Print the report on stdout. A run with --connector, --facts or "
+                               "--save-facts holds a host's results, so it prints its report only "
+                               "with --stdout and otherwise needs --output; every other run "
+                               "prints without it. Not allowed with --output.")
     p_assess.add_argument("--overwrite", action="store_true",
                           help="Let a study run replace an existing --output file. A plain run "
                                "does not need it. It never lets --output replace one of the "
@@ -304,17 +303,18 @@ def _check_fact_options(args) -> None:
 
 
 def _report_holds_study_results(args) -> bool:
-    """A replay of saved facts (--facts), a live run that saves its facts
-    (--save-facts) and a live run with a reference date (--connector with
-    --as-of): the protocol's tool runs. Such a report goes to --output, or
-    to stdout only on request (--stdout), because printed by accident it
-    would show a host's results before the later hosts' blind passes."""
-    return bool(args.facts or args.save_facts or (args.connector and args.as_of is not None))
+    """A replay of saved facts (--facts) and every live run (--connector,
+    with or without --save-facts or --as-of): each reports a host's results.
+    Such a report goes to --output, or to stdout only on request (--stdout),
+    because printed by accident it would show a host's results before the
+    later hosts' blind passes. A plain run (no --connector, no --facts)
+    collects nothing and prints as before."""
+    return bool(args.facts or args.save_facts or args.connector)
 
 
 def _check_report_destination(args) -> None:
-    """--stdout and --output exclude each other, and a report that holds
-    study results needs one of them. Every other run prints as before."""
+    """--stdout and --output exclude each other, and a report that holds a
+    host's results needs one of them. Every other run prints as before."""
     to_stdout = getattr(args, "stdout", False)
     if to_stdout and args.output is not None:
         raise ConfigError("--stdout cannot be combined with --output: the report goes either "

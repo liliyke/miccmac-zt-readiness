@@ -253,13 +253,14 @@ there.
 Every built-in check is tagged, in `data/control-mappings.yaml`'s `checks:`
 section, with:
 
-- **`cis_ig`** -- the lowest CIS Controls v8 Implementation Group (IG1/IG2)
-  at which its closest Safeguard first appears. IG1 checks are basic cyber
-  hygiene expected of every organization; IG2 checks require more
+- **`cis_ig`** -- the lowest CIS Controls v8 Implementation Group
+  (IG1/IG2/IG3) at which its closest Safeguard first appears. IG1 checks are
+  basic cyber hygiene expected of every organization; IG2 checks require more
   organizational maturity to operate (centralized tooling, scheduled
-  processes, identity integration). No built-in check is IG3 in this
-  release -- IG3 is reserved for checks a custom plugin might add for
-  organizations facing sophisticated/targeted threats.
+  processes, identity integration); IG3 controls are for organizations facing
+  sophisticated/targeted threats. MON-03 is the one built-in IG3 check: the
+  Safeguard it cites, 13.7 (host-based intrusion prevention), first appears
+  in IG3. A custom plugin may tag its checks with any of the three.
 - **`fair_frequency`** / **`fair_magnitude`** -- a simplified, *qualitative*
   LOW/MEDIUM/HIGH rating inspired by FAIR (Factor Analysis of Information
   Risk), not quantitative FAIR/Monte Carlo, which is out of scope. Frequency
@@ -323,9 +324,10 @@ have if the control turned out to be absent (`sp800_30.risk_basis`
 `if-control-absent`). The register lists findings first, then missing-data
 entries, so an unconfirmed gap never outranks a confirmed finding. Within
 each group it sorts by risk rating (fix CRITICALs before HIGHs regardless of
-IG), then by CIS IG as the tiebreaker within a rating band (an IG1 failure is
-more foundational, expected of every organization, than an IG2 failure at the
-same risk level, so it is remediated first), then by check id. A check with no
+IG), then by CIS IG (IG1, then IG2, then IG3, then none) as the tiebreaker
+within a rating band (an IG1 failure is more foundational, expected of every
+organization, than an IG2 failure at the same risk level, so it is remediated
+first), then by check id. A check with no
 metadata entry (e.g. an unrated custom check) sorts last in its group as
 `UNRATED` rather than being dropped. The order depends only on the assessment
 and the metadata, never on the methodology, so the CMMI and CISA ZTMM outputs
@@ -470,12 +472,20 @@ Implementation: `miccmac/risk_register.py`, `miccmac/metadata.py`.
 **Provenance:** the `cis_ig`/`fair_frequency`/`fair_magnitude` values for all
 26 built-in checks were assigned by the researcher (Isaac Ojeh) and reviewed
 against a per-check rationale table on 2026-08-29; all 26 ratings were
-confirmed as-is with no adjustments. These are qualitative judgment calls,
-not derived from an external framework or SME panel beyond the researcher's
-own analysis. The remediation text was not part of that review. The
-`threat_source_type` and `threat_event` values were drafted
-on 2026-11-20; their review (with the remediation text) is
-pending, in docs/sp800-30-review.md.
+confirmed as-is with no adjustments. The FAIR bands are qualitative
+judgment calls, not derived from an external framework or SME panel beyond
+the researcher's own analysis; each `cis_ig` is the Implementation Group
+that CIS Controls v8 assigns to the Safeguard the check cites, and the
+choice of that Safeguard is the researcher's judgment. The remediation text
+was not part of that review. On
+2026-11-21, before the baseline freeze, six `cis_ig` values were corrected
+to the Implementation Group of the CIS Controls v8 Safeguard each check
+cites, as the rule above defines it: INV-04, CTL-04, CLM-03, MIN-04 and
+CUR-03 from IG2 to IG1, and MON-03 from IG2 to IG3; no other value changed.
+The `threat_source_type` and `threat_event` values were drafted on
+2026-11-20, and the baseline study runs with them marked `drafted`; their
+review (with the remediation text) is pending, in docs/sp800-30-review.md,
+and comes after the study.
 
 ## 10. Target connectors and real detection logic
 
@@ -496,7 +506,7 @@ assessor's machine and SSHes out to run `osqueryi --json` against the
 target, which is the realistic pattern for assessing a fleet device (vs.
 requiring miccmac to be installed on every target). Enable it with
 `miccmac assess <host> --connector ssh-osquery --ssh-user <user> --ssh-key
-<path>`.
+<path> -o <report file>` (or `--stdout` in place of `-o`, section 11).
 
 **Windows targets.** `miccmac/connectors/ssh_osquery_windows.py` implements
 the same `Connector` protocol for Windows (OpenSSH Server + `osqueryi.exe`
@@ -854,9 +864,10 @@ anything:
   live run refuses a blank target (bash passes one for an unset `"$IP"`,
   and it resolves to the machine's own addresses) and one holding a line
   break (a wrapped paste), before it connects.
-- A run whose report holds study results, one with `--facts` or
-  `--save-facts`, or with `--connector` and `--as-of` (the protocol's tool
-  runs), needs `-o FILE` or `--stdout`. With neither it stops with `error:
+- A run whose report holds a host's results, any run with `--connector`,
+  `--facts` or `--save-facts` (the protocol's tool runs, and also a live
+  run with neither `--save-facts` nor `--as-of`), needs `-o FILE` or
+  `--stdout`. With neither it stops, before it connects, with `error:
   this run's report holds results, so it goes to a file: give -o FILE, or
   --stdout to print it here`. The study guide's step-5 command starts with
   `--save-facts` and `--as-of` and ends with `-o`, and its step-6 command
@@ -868,9 +879,8 @@ anything:
   target, or `assess <target> --`) print only the stub report, with no
   result and no connection. `--stdout` prints the report on
   purpose, for example in a rehearsal on synthetic data, and `--stdout`
-  with `-o` is an error. Every other run (a plain run, `--connector`
-  without `--as-of`, `--as-of` alone) prints as before, with or without
-  `--stdout`.
+  with `-o` is an error. Every other run (a plain run, `--as-of` alone)
+  collects nothing and prints as before, with or without `--stdout`.
 - FILE's folder must exist, and FILE must not be a folder.
 - FILE can never be one of the run's input files (`--attestation`,
   `--inventory-record`, `--config`, `--facts`), whatever the spelling and

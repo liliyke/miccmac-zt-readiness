@@ -251,7 +251,7 @@ def test_output_never_reveals_results(study, capsys):
     assert [s for s in scores if s != "None" and s in output] == []
     assert [n for n in names if n in output] == []
     assert [t for t in texts if t in output] == []
-    for value in ("CRITICAL", "HIGH", "MODERATE", "LOW", "UNRATED", "MEDIUM", "IG1", "IG2"):
+    for value in ("CRITICAL", "HIGH", "MODERATE", "LOW", "UNRATED", "MEDIUM", "IG1", "IG2", "IG3"):
         assert value not in output
     for word in ("adversarial", "accidental", "structural", "environmental", "drafted", "missing-data"):
         assert word not in output

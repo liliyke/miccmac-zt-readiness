@@ -100,7 +100,7 @@ def test_not_implemented_checks_get_no_entry_and_are_counted_in_the_note():
 
 # ------------------------------------------------------------------ rating and order
 def test_sort_order_highest_risk_lowest_ig_first():
-    # MON-03 is IG2/HIGH-HIGH (CRITICAL), MON-01 is IG1/HIGH-MEDIUM (HIGH)
+    # MON-03 is IG3/HIGH-HIGH (CRITICAL), MON-01 is IG1/HIGH-MEDIUM (HIGH)
     checks = [
         CheckResult("MON-01", "a", Status.FAIL),
         CheckResult("MON-03", "c", Status.FAIL),
@@ -117,9 +117,9 @@ def test_findings_come_first_and_keep_their_old_order():
     checks = [
         CheckResult("CLM-01", "owner", Status.FAIL),                  # LOW IG1 finding
         CheckResult("CTL-01", "mdm", Status.ERROR, "Unreadable."),    # CRITICAL missing data
-        CheckResult("MON-03", "edr", Status.PARTIAL),                 # CRITICAL IG2 finding
+        CheckResult("MON-03", "edr", Status.PARTIAL),                 # CRITICAL IG3 finding
         CheckResult("MIN-03", "fw", Status.FAIL),                     # CRITICAL IG1 finding
-        CheckResult("CUR-03", "fw", Status.NOT_APPLICABLE, missing_data=_marker()),   # LOW IG2 missing data
+        CheckResult("CUR-03", "fw", Status.NOT_APPLICABLE, missing_data=_marker()),   # LOW IG1 missing data
     ]
     entries = build_risk_register(_assessment(checks))
     assert [(e.check_id, e.entry_type) for e in entries] == [
@@ -127,7 +127,8 @@ def test_findings_come_first_and_keep_their_old_order():
         ("CTL-01", MISSING_DATA), ("CUR-03", MISSING_DATA)]
     rank = {"CRITICAL": 4, "HIGH": 3, "MODERATE": 2, "LOW": 1, "UNRATED": 0}
     findings = [e for e in entries if e.entry_type == FINDING]
-    assert findings == sorted(findings, key=lambda e: (-rank[e.risk_rating], {"IG1": 1, "IG2": 2}.get(e.cis_ig, 99),
+    assert findings == sorted(findings, key=lambda e: (-rank[e.risk_rating],
+                                                       {"IG1": 1, "IG2": 2, "IG3": 3}.get(e.cis_ig, 99),
                                                        e.check_id))
 
 

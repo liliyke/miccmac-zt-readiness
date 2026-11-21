@@ -107,8 +107,8 @@ your review and are still drafts:
 
 ## Timing and the baseline freeze
 
-- Confirm before the baseline freeze (Sunday 22 November 2026), then commit
-  and freeze as miccmac_study/README.md describes.
+- Decided on 21 November 2026, before the baseline freeze: the baseline runs
+  with these fields marked `drafted`, and the review follows the next bullet.
 - If the review cannot finish before the freeze, record your confirmations in
   this file only, which is outside `miccmac/` and `data/`, until the last
   host's tool run. Apply them to `data/control-mappings.yaml` afterwards, as a
@@ -127,8 +127,9 @@ your review and are still drafts:
     threat-source types and threat events it shows are drafts ...");
   - docs/methodology.md section 9: the `threats:`
     paragraphs under "Metadata", the two "drafted, pending review" notes in
-    the SP 800-30 table, and the last sentence of "Provenance" (the one
-    before it, on the 2026-08-29 review, stays);
+    the SP 800-30 table, and the last sentence of "Provenance" (the
+    sentences before it, on the 2026-08-29 review and the 2026-11-21
+    cis_ig correction, stay);
   - miccmac_study/README.md: the paragraph after the freeze commands, the
     "threat-source types and threat events are drafts" item of "Analysis
     defaults to confirm before the freeze", and the notes on

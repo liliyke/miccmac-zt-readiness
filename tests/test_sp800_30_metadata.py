@@ -370,7 +370,7 @@ def test_the_docs_never_claim_the_remediation_text_was_confirmed():
     text = " ".join(METHODOLOGY_DOC.read_text(encoding="utf-8").split())
     section = text[text.index("## 9."):text.index("## 10.")].lower()
     assert "the remediation text was not part of that review" in section     # the 2026-08-29 review
-    assert "confirmed CIS IG/FAIR/remediation" not in section
+    assert "confirmed cis ig/fair/remediation" not in section
     table = REVIEW_TABLE.read_text(encoding="utf-8") if REVIEW_TABLE.exists() else ""
     if not _remediation_review_recorded(table):
         assert not re.search(r"remediation[^.]{0,40}(were|was) confirmed", section)

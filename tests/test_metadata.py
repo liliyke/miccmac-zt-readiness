@@ -103,3 +103,29 @@ def test_rejects_malformed_yaml(tmp_path):
     p.write_text("checks: [this is not: valid: yaml: at all", encoding="utf-8")
     with pytest.raises(MappingsError):
         load_check_metadata(p)
+
+
+# The lowest CIS Controls v8 Implementation Group of every Safeguard a
+# built-in check cites, from CIS's Controls v8 Navigator (v8.1 changed no IG).
+CIS_V8_SAFEGUARD_IG = {
+    "1.1": "IG1", "2.1": "IG1", "2.3": "IG1", "3.2": "IG1", "3.10": "IG2", "4.1": "IG1",
+    "4.2": "IG1", "4.5": "IG1", "4.8": "IG2", "5.4": "IG1", "6.7": "IG2", "7.1": "IG1",
+    "7.3": "IG1", "7.4": "IG1", "7.5": "IG2", "7.6": "IG2", "8.2": "IG1", "8.5": "IG2",
+    "8.9": "IG2", "13.7": "IG3",
+}
+
+
+def test_each_builtin_cis_ig_is_the_ig_of_the_safeguard_it_cites():
+    """The cis_ig rule in data/control-mappings.yaml: the lowest IG at which
+    the check's CIS v8 Safeguard first appears. Every built-in check cites
+    exactly one Safeguard."""
+    meta = load_check_metadata()
+    seen = set()
+    for module in PROPERTY_MODULES:
+        for check in module.evaluate("test-device", {}).checks:
+            cited = [ref.split()[-1] for ref in check.control_refs if ref.startswith("CIS v8 ")]
+            assert len(cited) == 1, (check.check_id, check.control_refs)
+            assert meta[check.check_id].cis_ig == CIS_V8_SAFEGUARD_IG[cited[0]], (check.check_id, cited[0])
+            seen.add(check.check_id)
+    assert len(seen) == 26
+    assert [cid for cid, m in meta.items() if m.cis_ig == "IG3"] == ["MON-03"]

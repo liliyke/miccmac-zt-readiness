@@ -149,7 +149,7 @@ If decision 3 is "exclude the 10 input-driven checks" instead:
 Freeze the tool and these instruments before the first session (protocol
 section 2). New files count, so add them before you commit:
 
-    git -C $repo add miccmac miccmac_study data tests docs README.md pyproject.toml .gitignore
+    git -C $repo add miccmac miccmac_study data tests docs examples README.md pyproject.toml .gitignore
     git -C $repo commit -m "Freeze miccmac and miccmac_study for the baseline"
     git -C $repo tag "<tag name>"
     git -C $repo status --porcelain -- miccmac data miccmac_study
@@ -170,11 +170,20 @@ default maturity lens, and the risk register gained missing-data entries,
 next-level hints and fields arranged after NIST SP 800-30 Rev. 1, whose
 drafted threat-source types and events await your review in
 `docs\sp800-30-review.md` (it lists five events redrafted after a
-verification pass: review those first). Confirm or correct them before
-this freeze, then run the test suite and the synthetic kit again (test
-checklist steps 1, 2 and 6); if the review cannot finish in time, that
-file says how to keep `data\` unchanged during the study. Never edit
-`miccmac\` or `data\` between this freeze and the last host's tool run.
+verification pass: review those first). The baseline runs with them
+marked `drafted` (decided 21 November; record it in the protocol log):
+review them in that file only, and apply the review to `data\` after the
+last host's tool run, as a later tool version, as that file describes.
+
+It changed again on 21 November 2026, before the freeze: six `cis_ig`
+values were corrected to the Implementation Group of the Safeguard each
+check cites (docs\methodology.md section 9), which changes the review
+sheet's `cis_ig` column and the order of entries within a rating band;
+the Controlled property's SP 800-207 label now names tenet 3; and every
+`--connector` run now needs `-o` or `--stdout`. After it, run the test
+suite and the synthetic kit again (test checklist steps 1, 2 and 6) and
+record the change in the protocol log. Never edit `miccmac\` or `data\`
+between this freeze and the last host's tool run.
 
 ## Per host
 
@@ -257,9 +266,9 @@ reports it).
   right after `$ip`, or just after the first two dashes of `--save-facts`
   runs, but only prints the tool's stub report (every check `[TODO]`, every
   CMMI level `Unassessed`, the CMMI legend's score bands, no result) and
-  connects nowhere. A
-  `--connector` line without `--save-facts` and `--as-of` is not a study run
-  and would print the host's report. An empty `$key` stops with `error:
+  connects nowhere. Any `--connector` line without `-o` is refused before
+  it connects, even one without `--save-facts` and `--as-of` (not one of
+  the protocol's tool runs). An empty `$key` stops with `error:
   argument --ssh-key: expected one argument`, and an empty `$ip` with `a
   live run with --save-facts or --as-of needs the target's address`. A
   refused line needs no revert: fix it and run it. Never add `--stdout`
@@ -551,7 +560,8 @@ folder, and never share a key. The analysis CSVs contain none of these
 
 Work in scratch folders under `$env:TEMP\miccmac-check`, outside the
 repository and the study folder, in a window started with the Setup line.
-After the tool change of 20 November, repeat at least steps 1, 2 and 6.
+After the tool changes of 20 and 21 November, repeat at least steps 1, 2
+and 6 (and step 9, if you rehearsed it before 21 November).
 The synthetic outputs show the tool's detail strings, which name its policy
 limits; they describe no study host. To repeat the checklist, close Excel,
 remove the old scratch folders from outside them, and start again at

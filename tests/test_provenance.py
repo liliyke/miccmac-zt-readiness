@@ -156,7 +156,7 @@ def test_methodology_none_records_null_and_the_default_records_cmmi(lab, set_clo
 
 def test_a_connector_run_without_save_facts(lab, set_clock, capsys):
     set_clock(dt.datetime(2026, 11, 23, 19, 5, tzinfo=UTC))
-    prov = _provenance_of(["assess", TARGET, "--connector", "ssh-osquery", *SSH,
+    prov = _provenance_of(["assess", TARGET, "--connector", "ssh-osquery", "--stdout", *SSH,
                            "--format", "json", "--methodology", "cisa-ztmm", "--risk-register"], capsys)
     assert lab == [(TARGET, False)]  # no extended facts without --save-facts
     assert (prov["facts_source"], prov["connector"], prov["facts_file"]) == ("connector", "ssh-osquery", None)
@@ -348,7 +348,7 @@ def test_to_dict_includes_provenance_only_when_set():
 @pytest.mark.parametrize("fmt", ["text", "markdown"])
 def test_text_and_markdown_reports_do_not_show_provenance(fmt, lab, set_clock, capsys):
     set_clock(dt.datetime(2026, 11, 23, 19, 5, tzinfo=UTC))
-    assert main(["assess", TARGET, "--connector", "ssh-osquery", *SSH, "--format", fmt]) == 0
+    assert main(["assess", TARGET, "--connector", "ssh-osquery", "--stdout", *SSH, "--format", fmt]) == 0
     cli_output = capsys.readouterr().out
     # The CLI's default lens is CMMI (deliberately changed: it was none).
     plain = render(run_assessment(TARGET, context={"facts": copy.deepcopy(LINUX_FACTS)}, methodology_name="cmmi"),

@@ -10,9 +10,9 @@ missing, round-1 verifier finding V1-N8 and two round-1 open questions):
   --overwrite, checked before the run and again just before the write;
 - a study run (--connector, --facts, --save-facts or --as-of) never replaces
   an existing file unless --overwrite is given; a plain run still does;
-- a run whose report holds study results (--facts, --save-facts, or
-  --connector with --as-of) needs -o FILE or --stdout, and --stdout with -o
-  is an error; every other run prints as before;
+- a run whose report holds a host's results (every --connector, --facts or
+  --save-facts run) needs -o FILE or --stdout, and --stdout with -o is an
+  error; a plain run and --as-of alone print as before;
 - the report is written whole or not at all, and a failed write is a clean
   error that, after a live run with --save-facts, says how to rebuild it;
 - stdout carries only "Report written to <path>", never the report.
@@ -67,8 +67,9 @@ CASE_INSENSITIVE = os.path.normcase("A") == "a"  # Windows
 @pytest.fixture
 def study(tmp_path, monkeypatch):
     """A study-like folder (inputs/, outputs/ holding a saved facts file) as
-    the working directory, and a fake Linux connector in place of the class
-    cli.py imports. Returns the list of (target, extended) collect_facts calls."""
+    the working directory, and one fake connector in place of both classes
+    cli.py imports (Linux and Windows). Returns the list of (target, extended)
+    collect_facts calls."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "inputs").mkdir()
     (tmp_path / "outputs").mkdir()
@@ -87,6 +88,7 @@ def study(tmp_path, monkeypatch):
             return copy.deepcopy(FACTS)
 
     monkeypatch.setattr("miccmac.connectors.ssh_osquery.SSHOsqueryConnector", FakeConnector)
+    monkeypatch.setattr("miccmac.connectors.ssh_osquery_windows.SSHOsqueryWindowsConnector", FakeConnector)
     return calls
 
 
@@ -612,7 +614,8 @@ def _without_output(args):
     return args[:i] + args[i + 2:]
 
 
-# The runs whose report holds study results, each without -o.
+# The runs whose report holds a host's results (every --connector, --facts or
+# --save-facts run), each without -o.
 STUDY_RESULT_RUNS = {
     "replay (step 6)": _without_output(_replay("unused.json")),
     "replay, markdown (Thursday's --as-of demonstration)": [
@@ -622,6 +625,11 @@ STUDY_RESULT_RUNS = {
     "live run with --as-of, no --save-facts": [
         "assess", TARGET, "--connector", "ssh-osquery", *SSH, *INPUTS, "--methodology", "cmmi",
         "--risk-register", "--format", "json", "--as-of", SESSION_DATE],
+    "live run, no --as-of or --save-facts": [
+        "assess", TARGET, "--connector", "ssh-osquery", *SSH, *INPUTS, "--methodology", "cmmi",
+        "--risk-register", "--format", "json"],
+    "live run, text, no other option": ["assess", TARGET, "--connector", "ssh-osquery", *SSH],
+    "live run, Windows connector, no other option": ["assess", TARGET, "--connector", "ssh-osquery-windows", *SSH],
 }
 
 
@@ -697,19 +705,18 @@ def test_stdout_with_output_is_an_error(args, study, capsys):
     assert _snapshot() == before
 
 
-@pytest.mark.parametrize("args, connects", [
-    (["assess", "test-device"], False),                                                  # plain run
-    (["assess", "test-device", "--format", "json", "--methodology", "cmmi", "--risk-register",
-      *INPUTS], False),                                                                  # plain, with inputs
-    (["assess", "test-device", "--format", "markdown", "--as-of", SESSION_DATE], False),  # --as-of alone
-    (["assess", "test-device", "--format", "json", *INPUTS, "--as-of", SESSION_DATE], False),
-    (["assess", TARGET, "--connector", "ssh-osquery", *SSH, *INPUTS, "--methodology", "cmmi",
-      "--risk-register", "--format", "json"], True),                                     # --connector, no --as-of
+@pytest.mark.parametrize("args", [
+    ["assess", "test-device"],                                                           # plain run
+    ["assess", "test-device", "--format", "json", "--methodology", "cmmi", "--risk-register",
+     *INPUTS],                                                                           # plain, with inputs
+    ["assess", "test-device", "--format", "markdown", "--as-of", SESSION_DATE],           # --as-of alone
+    ["assess", "test-device", "--format", "json", *INPUTS, "--as-of", SESSION_DATE],
 ])
-def test_every_other_run_prints_as_before(args, connects, study, fixed_clock, capsys):
-    """A plain run, --as-of alone and --connector without --as-of print as
-    they always did, and exactly what -o would write; --stdout changes
-    nothing for them."""
+def test_every_other_run_prints_as_before(args, study, fixed_clock, capsys):
+    """A plain run and --as-of alone (no --connector, no --facts: nothing is
+    collected) print as they always did, and exactly what -o would write;
+    --stdout changes nothing for them. A --connector run without --as-of is
+    in STUDY_RESULT_RUNS: it needs -o or --stdout like every live run."""
     assert main(args) == 0
     captured = capsys.readouterr()
     assert captured.out.strip() and "Report written to" not in captured.out
@@ -719,7 +726,7 @@ def test_every_other_run_prints_as_before(args, connects, study, fixed_clock, ca
     assert main(args + ["-o", "outputs/report.out"]) == 0
     assert capsys.readouterr().out == "Report written to outputs/report.out\n"
     assert Path("outputs/report.out").read_text(encoding="utf-8") == printed
-    assert study == ([(TARGET, False)] * 3 if connects else [])
+    assert study == []
 
 
 def test_help_documents_stdout(capsys):
@@ -728,8 +735,7 @@ def test_help_documents_stdout(capsys):
     help_text = " ".join(capsys.readouterr().out.split())
     assert "--stdout" in help_text
     assert "Print the report on stdout." in help_text
-    assert ("A run with --facts or --save-facts, or with --connector and --as-of, needs --output or "
-            "--stdout.") in help_text
+    assert "A run with --connector, --facts or --save-facts needs --output or --stdout." in help_text
     assert "Not allowed with --output." in help_text
 
 

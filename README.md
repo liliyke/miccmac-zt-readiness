@@ -145,15 +145,18 @@ file (an existing file whose first 64 KiB hold `"facts_format"` and
 `miccmac-facts/1`), not even with `--overwrite`; the report is written whole
 or not at all, and stdout shows only `Report written to <path>`.
 
-A run with `--facts` or `--save-facts`, or with `--connector` and `--as-of`,
-holds study results, so it never prints its report by accident: it needs
-`-o FILE`, and stops otherwise (`error: this run's report holds results, so
-it goes to a file: give -o FILE, or --stdout to print it here`). `--stdout`
-prints such a report on purpose, for example in a rehearsal on synthetic
-data, and cannot be combined with `-o`. Every other run (a plain run,
-`--connector` without `--as-of`, `--as-of` alone) prints as before, so the
-study guide puts `--save-facts` and `--as-of` before `--connector`: a copy
-of its command cut short anywhere is then refused before it connects. A
+Every run with `--connector`, `--facts` or `--save-facts` holds a host's
+results, so it never prints its report by accident: it needs `-o FILE`, and
+otherwise stops before it connects (`error: this run's report holds
+results, so it goes to a file: give -o FILE, or --stdout to print it
+here`). `--stdout` prints such a report on purpose, for example in a
+rehearsal on synthetic data, and cannot be combined with `-o`. Every other
+run (a plain run, `--as-of` alone) collects nothing and prints as before.
+The study guide's step-5 command puts `--save-facts` and `--as-of` first,
+its step-6 command starts with `--facts`, and both end with `-o`: a copy of
+either cut short anywhere never connects and never prints a host's results
+(it is refused, or, cut right after `assess` or the target, prints only the
+stub report). A
 blank value for `-o`, `--facts`, `--save-facts`, `--attestation`,
 `--inventory-record`, `--config` or `--ssh-key` (as bash passes for an unset
 `"$VAR"`) is an error (`error: <option> needs a file name`), so an input
@@ -297,8 +300,8 @@ run.) Add `--connector
 ssh-osquery --ssh-user <u> --ssh-key <path>` for a Linux target, or
 `--connector ssh-osquery-windows --ssh-user <u> --ssh-key <path>` for a
 Windows target (plus `--inventory-record` and `--attestation` for the
-checks that need external data) to get real, evidence-backed results across
-all seven properties.
+checks that need external data, and `-o FILE` or `--stdout` for the report)
+to get real, evidence-backed results across all seven properties.
 
 ### Architecture (OS-agnostic by design)
 
@@ -389,7 +392,7 @@ INV-02 and MON-04 legitimately FAIL on a stock install).
 miccmac assess 192.168.1.50 --connector ssh-osquery \
     --ssh-user miccmac --ssh-key ~/.ssh/miccmac_vm_key \
     --inventory-record inventory-record.json \
-    --attestation attestation.json --risk-register
+    --attestation attestation.json --risk-register -o report.txt
 ```
 
 All 26 checks now have real detection logic on Linux. Reasonable next

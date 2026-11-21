@@ -692,8 +692,7 @@ def _legend_lines(entries: Sequence[RiskEntry], methodology: Optional[str]) -> L
         "    IG1  basic cyber hygiene, expected of every organization",
         "    IG2  requires more organizational maturity (centralized tooling,",
         "         scheduled processes, identity integration)",
-        "    IG3  reserved for controls facing sophisticated/targeted threats",
-        "         (no built-in check is IG3; a custom check plugin may add one)",
+        "    IG3  controls for organizations facing sophisticated/targeted threats",
         "  FAIR (Factor Analysis of Information Risk, simplified/qualitative here,",
         "  not quantitative FAIR/Monte Carlo):",
         "    frequency  how often this failure mode is actually exploited in the wild",
@@ -733,9 +732,8 @@ def _legend_markdown(entries: Sequence[RiskEntry], methodology: Optional[str]) -
         "- **CIS IG** (CIS Controls v8 Implementation Group -- who is expected to "
         "have this control in place): `IG1` basic cyber hygiene, expected of every "
         "organization; `IG2` requires more organizational maturity (centralized "
-        "tooling, scheduled processes, identity integration); `IG3` reserved for "
-        "controls facing sophisticated/targeted threats (no built-in check is IG3; "
-        "a custom check plugin may add one).",
+        "tooling, scheduled processes, identity integration); `IG3` controls for "
+        "organizations facing sophisticated/targeted threats.",
         "- **FAIR** (Factor Analysis of Information Risk, simplified/qualitative "
         "here, not quantitative FAIR/Monte Carlo): *frequency* = how often this "
         "failure mode is actually exploited in the wild; *magnitude* = the blast "
