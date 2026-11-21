@@ -2,11 +2,13 @@
 
 Tests for the risk register's next-level hints (miccmac.risk_register.
 next_level_hint): the worked examples of the design (A-I, plus two
-with-others cases) with their exact text and fields under CMMI and CISA
-ZTMM; an exhaustive sweep over every status mix of 1- to 5-check properties
-that checks each hint against a brute-force search (the fewest fixes, which
-checks a route needs, the effect); and, on the synthetic kit's five host
-plans, that every hint's current level is the level the assessment reports.
+with-others cases and the one-of cases the verifiers found) with their exact
+text and fields under CMMI and CISA ZTMM; an exhaustive sweep over every
+status mix of 1- to 5-check properties that checks each hint against a
+brute-force search (the fewest fixes, which checks a route needs, the
+effect, and for a check not scored whether its result can change the level
+at all); and, on the synthetic kit's five host plans, that every hint's
+current level is the level the assessment reports.
 
 Properties are built directly from statuses (no target, no network); the
 kit's plans are made-up data."""
@@ -104,11 +106,33 @@ def test_c_the_same_statuses_under_another_lens():
             "Fixing this check alone raises Current from CMMI level 1 (Initial) to level 2 (Managed): score 0.0 -> "
             "33.3 (level 2 needs 20).")
     cur01 = hint("Current", C, "cisa-ztmm", "CUR-01")
-    assert (cur01.effect, cur01.fixes_needed, cur01.fewest_fixes) == ("not-needed", 2, 2)
+    # Verifier finding (deliberately changed): any two of the three FAILs reach stage 2, so each is one of
+    # several interchangeable fixes ("one-of"), not a fix stage 2 does not need ("not-needed").
+    assert (cur01.effect, cur01.fixes_needed, cur01.fewest_fixes) == ("one-of", 2, 2)
     assert cur01.text == (
         "Current is at CISA ZTMM stage 1 (Traditional), score 0.0; stage 2 (Initial) needs 40. Fixing this check "
-        "alone gives 33.3. Stage 2 does not need this check: fixing CUR-03 and CUR-04 reaches it (score 66.7). "
-        "Together with CUR-03, this check gives 66.7.")
+        "alone gives 33.3. Stage 2 takes at least 2 fixes, and this check can be one of them: together with CUR-03, "
+        "it takes Current to stage 2 (Initial), score 66.7. Other sets of 2 fixes reach stage 2 without this check, "
+        "for example CUR-03 and CUR-04 (score 66.7).")
+    for check_id in ("CUR-03", "CUR-04"):
+        other = hint("Current", C, "cisa-ztmm", check_id)
+        assert other.effect == "one-of" and "does not need this check" not in other.text
+
+
+def test_one_of_when_every_open_check_is_partial():
+    """Verifier finding: four PARTIALs (50.0, CMMI level 3); level 4 needs any
+    two of them, so every entry is one of the fixes, none is 'not needed'."""
+    statuses = [(f"MON-0{n}", "PARTIAL") for n in range(1, 5)]
+    mon01 = hint("Monitored", statuses, "cmmi", "MON-01")
+    assert mon01.text == (
+        "Monitored is at CMMI level 3 (Defined), score 50.0; level 4 (Quantitatively Managed) needs 70. Fixing this "
+        "check alone gives 62.5. Level 4 takes at least 2 fixes, and this check can be one of them: together with "
+        "MON-02, it takes Monitored to level 4 (Quantitatively Managed), score 75.0. Other sets of 2 fixes reach "
+        "level 4 without this check, for example MON-02 and MON-03 (score 75.0).")
+    assert (mon01.fixes_needed, mon01.fewest_fixes, mon01.with_check_ids, mon01.without_check_ids) == (
+        2, 2, ("MON-02",), ("MON-02", "MON-03"))
+    for check_id in ("MON-02", "MON-03", "MON-04"):
+        assert hint("Monitored", statuses, "cmmi", check_id).effect == "one-of"
 
 
 def test_d_a_jump_of_two_levels_cites_the_level_reached():
@@ -141,6 +165,17 @@ def test_f_a_check_not_scored_gets_no_arithmetic():
     assert hint("Current", F, "cmmi", "CUR-01").text == (
         "Fixing this check alone raises Current from CMMI level 1 (Initial) to level 3 (Defined): score 0.0 -> "
         "50.0 (level 3 needs 40).")
+
+
+def test_f_a_check_whose_result_cannot_change_the_level_says_so():
+    """Verifier finding: under CISA ZTMM, CUR-03 as PASS gives 33.3, below
+    stage 2's 40, so Current stays at stage 1 whatever CUR-03's result (the
+    synthetic kit's H3)."""
+    cur03 = hint("Current", F, "cisa-ztmm", "CUR-03")
+    assert cur03.effect == "not-scored"
+    assert cur03.text == ("Current is at CISA ZTMM stage 1 (Traditional) without this check, which is not scored "
+                          "until its data is supplied; Current stays at stage 1 whatever its result.")
+    assert "can then change" not in cur03.text
 
 
 def test_g_an_unassessed_property():
@@ -247,6 +282,13 @@ def test_every_hint_matches_a_brute_force_search(methodology):
             assert (h.current_level, h.max_level) == (reported.level, len(m.levels))
             if check.status is Status.NOT_APPLICABLE:
                 assert h.effect == "not-scored" and h.target_level is None
+                if reported.level is not None:
+                    # Every result the check can get once its data is supplied.
+                    rest = [st for cid, st in status_of.items() if cid != check.check_id]
+                    outcomes = {m.level_for_score(score_statuses(rest + [result])).level
+                                for result in (Status.PASS, Status.PARTIAL, Status.FAIL, Status.ERROR)}
+                    assert ("its result can then change" in h.text) == (len(outcomes) > 1)
+                    assert ("whatever its result" in h.text) == (len(outcomes) == 1)
                 continue
             if reported.level == len(m.levels):
                 assert h.effect == "top-level" and h.target_level is None
@@ -268,11 +310,23 @@ def test_every_hint_matches_a_brute_force_search(methodology):
             alone = level({check.check_id}) >= target
             assert (h.effect == "alone") == alone == (h.level_if_fixed >= target)
             if not alone:
-                in_every_fewest = all(check.check_id in s for s in routes if len(s) == fewest)
-                assert h.effect == ("with-others" if in_every_fewest else "not-needed")
+                # Verifier finding (deliberately changed): a check in some fewest sets but not all is
+                # "one-of"; "not-needed" is kept for a check in no fewest set.
+                fewest_sets = [s for s in routes if len(s) == fewest]
+                if all(check.check_id in s for s in fewest_sets):
+                    expected = "with-others"
+                elif any(check.check_id in s for s in fewest_sets):
+                    expected = "one-of"
+                else:
+                    expected = "not-needed"
+                assert h.effect == expected
                 assert 2 <= h.fixes_needed <= len(open_ids)
                 assert ("does not need this check" in h.text) == (h.effect == "not-needed")
-                assert "one of" not in h.text
+                assert ("can be one of them" in h.text) == (h.effect == "one-of")
+                if h.effect == "one-of":
+                    assert h.fixes_needed == h.fewest_fixes == len(h.without_check_ids)
+                if h.effect == "not-needed":
+                    assert h.fixes_needed > h.fewest_fixes
     assert seen == set(NEXT_LEVEL_EFFECTS)
 
 

@@ -52,9 +52,16 @@ def _mappings(tmp_path, threats=THREATS):
     return path
 
 
+_DROPPED = "the threats: section was dropped from data/control-mappings.yaml (docs/sp800-30-review.md)"
+
+
 # ------------------------------------------------------------------ the shipped section
 def test_the_shipped_mappings_cover_every_check_with_valid_drafted_fields():
+    """Drafted or confirmed rows alike (the researcher's review sets
+    review: confirmed); skipped when the section is dropped."""
     threats = load_threat_metadata()
+    if not threats:
+        pytest.skip(_DROPPED)
     assert sorted(threats) == all_builtin_check_ids() and len(threats) == 26
     for check_id, fields in threats.items():
         assert fields["threat_source_type"] in VALID_THREAT_SOURCE_TYPES, check_id
@@ -112,21 +119,41 @@ def test_a_broken_section_raises_naming_the_file(tmp_path, threats, message):
 
 def test_the_check_manifest_does_not_read_the_threats_section(tmp_path):
     """Critique: confirming the drafted fields means editing this file, so a
-    typo there must stop only the register, never list-checks, a run without
-    --risk-register or the study's worksheet and input checks (they all go
-    through the manifest functions and load_check_metadata)."""
+    wrong value there must stop only the register, never list-checks, a run
+    without --risk-register or the study's worksheet and input checks (they
+    all go through the manifest functions and load_check_metadata). A YAML
+    syntax error anywhere in the file stops every command (the next test).
+    The CUR-04 row is found whatever its type and review state, and a broken
+    section is added when the section was dropped (verifier finding: a
+    hard-coded 'structural, review: drafted' failed once the row changed)."""
     broken = tmp_path / "mappings.yaml"
     text = DEFAULT_MAPPINGS_PATH.read_text(encoding="utf-8")
-    assert "check_id: CUR-04, threat_source_type: structural, review: drafted" in text
-    broken.write_text(text.replace("check_id: CUR-04, threat_source_type: structural, review: drafted",
-                                   "check_id: CUR-04, threat_source_type: structural, review: confimed"),
-                      encoding="utf-8")
+    row = re.search(r"check_id: CUR-04, threat_source_type: [a-z]+, review: ([a-z]+)", text)
+    if row is not None:
+        text = text[:row.start(1)] + "confimed" + text[row.end(1):]
+    else:
+        assert "\nthreats:" not in text
+        text += ("\nthreats:\n  - { check_id: CUR-04, threat_source_type: structural, review: confimed, "
+                 "threat_event: \"x.\" }\n")
+    broken.write_text(text, encoding="utf-8")
     with pytest.raises(MappingsError, match="confimed"):
         load_register_metadata(broken)
     with pytest.raises(MappingsError, match="confimed"):
         build_risk_register(run_assessment("x"), metadata_path=broken)
     assert all_builtin_check_ids(broken) == all_builtin_check_ids() and len(all_builtin_check_ids(broken)) == 26
     assert load_check_metadata(broken) == load_check_metadata()
+
+
+def test_a_yaml_syntax_error_anywhere_stops_every_command(tmp_path):
+    """Verifier finding: 'a typo there stops only register runs' holds for a
+    wrong value, not for broken YAML, which no command can read."""
+    broken = tmp_path / "mappings.yaml"
+    broken.write_text(DEFAULT_MAPPINGS_PATH.read_text(encoding="utf-8") + '\nthreats_note: "unbalanced\n',
+                      encoding="utf-8")
+    with pytest.raises(MappingsError):
+        all_builtin_check_ids(broken)
+    with pytest.raises(MappingsError):
+        load_check_metadata(broken)
 
 
 # ------------------------------------------------------------------ custom checks
@@ -173,37 +200,174 @@ def test_invalid_custom_threat_fields_are_refused(tmp_path, metadata, message):
 
 
 # ------------------------------------------------------------------ the review table and the docs
-def _review_rows():
+# Verifier findings: following docs/sp800-30-review.md (filling the reviewer's columns, setting review:
+# confirmed, copying in a corrected type or event, recording the review in the Provenance paragraph) made
+# these tests fail. They now hold in every state of the review: drafted, part-way, confirmed with or without
+# corrections, and with the threats: section dropped. The drafted columns stay the record of the AI draft;
+# the file must hold the drafted value or the reviewer's correction.
+REVIEW_COLUMNS = 14       # Check ... Notes
+_YES = ("Y", "YES")
+
+
+def _review_rows(text: str):
     rows = {}
-    for line in REVIEW_TABLE.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) > 5 and re.fullmatch(r"[A-Z]{3}-\d\d", cells[0]):
             rows[cells[0]] = cells
     return rows
 
 
+def _review_problems(table_text: str, mappings_path=DEFAULT_MAPPINGS_PATH):
+    """Every way the review table and the mappings file disagree, as texts
+    (an empty list when they agree):
+
+    - one row per check of `checks:`, in its order, with 14 cells;
+    - the FAIR bands and the matrix rating equal the file's;
+    - the file's remediation is the table's response text, or the corrected
+      text in "Response text confirmed";
+    - with a `threats:` section: each type and event in the file is the
+      drafted column's value when its reviewer cell is blank or Y, else the
+      corrected value in that cell (either one while the row is still
+      `review: drafted`); a row is `review: confirmed` only when both its
+      type and event cells are filled in."""
+    from miccmac.risk_register import risk_rating
+
+    rows = _review_rows(table_text)
+    metadata = load_register_metadata(mappings_path)
+    threats = load_threat_metadata(mappings_path)
+    if list(rows) != list(metadata):
+        return [f"the table's rows {list(rows)} are not one per check of checks:, in its order"]
+    problems = []
+    for check_id, cells in rows.items():
+        if len(cells) != REVIEW_COLUMNS:
+            problems.append(f"{check_id}: {len(cells)} cells, not {REVIEW_COLUMNS}")
+            continue
+        meta = metadata[check_id]
+        if (cells[5], cells[6], cells[7]) != (meta.fair_frequency, meta.fair_magnitude,
+                                              risk_rating(meta.fair_frequency, meta.fair_magnitude)):
+            problems.append(f"{check_id}: the FAIR bands or the matrix rating differ from the file")
+        response_answer = cells[12]
+        allowed = {cells[8]} | ({response_answer} if response_answer and response_answer.upper() not in _YES
+                                else set())
+        if meta.remediation not in allowed:
+            problems.append(f"{check_id}: the file's remediation is neither the table's response text nor a "
+                            "correction written in 'Response text confirmed'")
+        fields = threats.get(check_id)
+        if fields is None:          # the threats: section was dropped: only the mapped columns are compared
+            continue
+        confirmed = fields["review"] == "confirmed"
+        for name, drafted, answer in (("threat_source_type", cells[3], cells[9]), ("threat_event", cells[4], cells[10])):
+            if not answer or answer.upper() in _YES:
+                expected = {drafted}
+            else:
+                expected = {answer} if confirmed else {drafted, answer}
+            if fields[name] not in expected:
+                problems.append(f"{check_id}: {name} in the file is {fields[name]!r}, the table gives "
+                                f"{sorted(expected)}")
+        if confirmed and not (cells[9] and cells[10]):
+            problems.append(f"{check_id}: review: confirmed in the file, but the table records no review of its "
+                            "type and event")
+    return problems
+
+
+def _remediation_review_recorded(table_text: str) -> bool:
+    """Whether the table records a review of every response text, signed
+    with the reviewer and date line."""
+    rows = _review_rows(table_text)
+    signature = next((line for line in table_text.splitlines() if line.startswith("Reviewer:")), "")
+    return (bool(rows) and "Date:" in signature and "___" not in signature
+            and all(len(cells) == REVIEW_COLUMNS and cells[12] for cells in rows.values()))
+
+
 def test_the_review_table_lists_every_check_with_the_drafted_fields():
+    if not REVIEW_TABLE.exists():
+        pytest.skip("docs/sp800-30-review.md is not there")
     text = REVIEW_TABLE.read_text(encoding="utf-8")
     assert text.startswith("Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.")
-    rows = _review_rows()
-    threats = load_threat_metadata()
-    metadata = load_register_metadata()
-    assert list(rows) == list(load_check_metadata())          # one row per check, in the checks: order
-    for check_id, cells in rows.items():
-        assert cells[3] == threats[check_id]["threat_source_type"], check_id
-        assert cells[4] == threats[check_id]["threat_event"], check_id
-        assert cells[5] == metadata[check_id].fair_frequency and cells[6] == metadata[check_id].fair_magnitude
-        assert cells[8] == metadata[check_id].remediation, check_id
-        assert cells[9:] == ["", "", "", "", ""], check_id     # the reviewer's columns start blank
+    assert _review_problems(text) == []
     header = next(line for line in text.splitlines() if line.startswith("| Check |"))
-    for column in ("Type confirmed", "Event confirmed", "FAIR bands fit this threat source (Y/N)",
-                   "Response text confirmed", "Notes"):
+    for column in ("Threat source type (drafted)", "Threat event (drafted)", "Type confirmed", "Event confirmed",
+                   "FAIR bands fit this threat source (Y/N)", "Response text confirmed", "Notes"):
         assert column in header
 
 
+def _confirmed_copies(tmp_path, corrections=True):
+    """A copy of the review table with every reviewer cell filled in and
+    signed, and a copy of the mappings file with review: confirmed on every
+    row, as docs/sp800-30-review.md's steps leave them; with
+    ``corrections``, CUR-04's type and event and CLM-01's response text
+    are corrected in both."""
+    table = REVIEW_TABLE.read_text(encoding="utf-8")
+    mappings = DEFAULT_MAPPINGS_PATH.read_text(encoding="utf-8")
+    if "\nthreats:" not in mappings:
+        pytest.skip(_DROPPED)
+    metadata = load_register_metadata()
+    lines = []
+    for line in table.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == REVIEW_COLUMNS and re.fullmatch(r"[A-Z]{3}-\d\d", cells[0]):
+            answers = ["Y", "Y", "Y", "Y", "reviewed"]
+            if corrections and cells[0] == "CUR-04":
+                answers[0:2] = ["environmental", "A corrected event."]
+            if corrections and cells[0] == "CLM-01":
+                answers[3] = "Record the owner in the CMDB."
+            line = "| " + " | ".join(cells[:9] + answers) + " |"
+        elif line.startswith("Reviewer:"):
+            line = "Reviewer: I. Ojeh   Date: 2026-11-21"
+        lines.append(line)
+    mappings = re.sub(r"(threat_source_type: [a-z]+, review: )drafted", r"\1confirmed", mappings)
+    if corrections:
+        cur04 = metadata["CUR-04"]
+        mappings = mappings.replace(
+            f"check_id: CUR-04, threat_source_type: {cur04.threat_source_type}, review: confirmed, "
+            f'threat_event: "{cur04.threat_event}"',
+            'check_id: CUR-04, threat_source_type: environmental, review: confirmed, threat_event: "A corrected event."')
+        mappings = mappings.replace(f'remediation: "{metadata["CLM-01"].remediation}"',
+                                    'remediation: "Record the owner in the CMDB."')
+    table_path, mappings_path = tmp_path / "review.md", tmp_path / "mappings.yaml"
+    table_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    mappings_path.write_text(mappings, encoding="utf-8")
+    return table_path, mappings_path
+
+
+@pytest.mark.parametrize("corrections", [False, True], ids=["as-drafted", "with-corrections"])
+def test_a_recorded_confirmation_keeps_the_table_and_the_file_in_step(tmp_path, corrections):
+    table_path, mappings_path = _confirmed_copies(tmp_path, corrections)
+    threats = load_threat_metadata(mappings_path)
+    assert {fields["review"] for fields in threats.values()} == {"confirmed"}
+    if corrections:
+        assert threats["CUR-04"]["threat_source_type"] == "environmental"
+    table = table_path.read_text(encoding="utf-8")
+    assert _review_problems(table, mappings_path) == []
+    assert _remediation_review_recorded(table)
+    entries = build_risk_register(run_assessment("x", context={"facts": {}}), metadata_path=mappings_path)
+    assert entries and all(e.sp800_30.review in ("confirmed", None) for e in entries)
+    assert "(drafted) marks" not in render(entries)
+
+
+def test_the_table_and_the_file_must_not_drift_apart(tmp_path):
+    """A row marked confirmed in the file but not in the table, or a value
+    in the file that is neither the draft nor the reviewer's correction,
+    is reported."""
+    table_path, mappings_path = _confirmed_copies(tmp_path, corrections=False)
+    blank = re.sub(r"\| CTL-01 \|(.*)\| Y \| Y \| Y \| Y \| reviewed \|", r"| CTL-01 |\1|  |  |  |  |  |",
+                   table_path.read_text(encoding="utf-8"))
+    assert any(p.startswith("CTL-01: review: confirmed in the file") for p in _review_problems(blank, mappings_path))
+    text = mappings_path.read_text(encoding="utf-8")
+    mappings_path.write_text(re.sub(r"(check_id: MON-01, threat_source_type: )[a-z]+", r"\1structural", text),
+                             encoding="utf-8")
+    problems = _review_problems(table_path.read_text(encoding="utf-8"), mappings_path)
+    assert any(p.startswith("MON-01: threat_source_type in the file is 'structural'") for p in problems)
+
+
 def test_the_docs_never_claim_the_remediation_text_was_confirmed():
+    """Not while the review table records no review of every response text
+    (signed); once it does, docs/methodology.md may say so."""
     text = " ".join(METHODOLOGY_DOC.read_text(encoding="utf-8").split())
     section = text[text.index("## 9."):text.index("## 10.")].lower()
-    assert "the remediation text was not part of that review" in section
+    assert "the remediation text was not part of that review" in section     # the 2026-08-29 review
     assert "confirmed CIS IG/FAIR/remediation" not in section
-    assert not re.search(r"remediation[^.]{0,40}(were|was) confirmed", section)
+    table = REVIEW_TABLE.read_text(encoding="utf-8") if REVIEW_TABLE.exists() else ""
+    if not _remediation_review_recorded(table):
+        assert not re.search(r"remediation[^.]{0,40}(were|was) confirmed", section)

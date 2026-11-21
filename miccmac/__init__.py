@@ -10,5 +10,5 @@ Reference paper:
   https://doi.org/10.34190/eccws.24.1.3531
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Isaac Ojeh"

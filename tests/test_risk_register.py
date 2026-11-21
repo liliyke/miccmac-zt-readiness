@@ -217,12 +217,13 @@ def test_an_error_with_a_marker_gets_exact_texts():
         "how_to_supply": "Correct vulnerability_scanning.last_scan in the --attestation file to a YYYY-MM-DD date, "
                          "and run the assessment again.",
     }
+    # The fix is read from the data file, so that a response text the researcher corrects there
+    # (docs/sp800-30-review.md) keeps this test valid.
+    fix = load_register_metadata()["ASM-01"].remediation
     assert entry.sp800_30.response == (
         "Correct vulnerability_scanning.last_scan in the --attestation file to a YYYY-MM-DD date, and run the "
-        "assessment again. If the check then fails: Enroll the device in the organization's authenticated "
-        "vulnerability-scanning schedule.")
-    assert entry.remediation == ("Enroll the device in the organization's authenticated vulnerability-scanning "
-                                 "schedule.")   # the static fix, unchanged
+        "assessment again. If the check then fails: " + fix)
+    assert entry.remediation == fix   # the static fix, unchanged
 
 
 def test_an_error_without_a_marker_gets_the_generic_texts():
@@ -329,10 +330,15 @@ def test_the_sp800_30_fields_map_the_existing_ones():
                                                CheckResult("CTL-02", "admin", Status.PARTIAL, "")]))
     ctl01, ctl02 = entries
     meta = load_register_metadata()["CTL-01"]
+    # The review state comes from the file: drafted until the researcher confirms the row (or None when the
+    # threats: section is dropped), so the test takes it from there (verifier finding: a hard-coded "drafted"
+    # failed once the review was recorded).
     assert ctl01.sp800_30.to_dict() == {
         "threat_source_type": meta.threat_source_type, "threat_event": meta.threat_event,
         "vulnerability": "No agent.", "likelihood": ctl01.fair_frequency, "impact": ctl01.fair_magnitude,
-        "risk": ctl01.risk_rating, "risk_basis": "finding", "response": ctl01.remediation, "review": "drafted"}
+        "risk": ctl01.risk_rating, "risk_basis": "finding", "response": ctl01.remediation,
+        "review": meta.sp800_30_review}
+    assert meta.sp800_30_review in ("drafted", "confirmed", None)
     assert ctl02.sp800_30.vulnerability == "admin"     # an empty detail falls back to the check's name
 
 
@@ -379,9 +385,9 @@ def test_text_rendering_groups_numbers_and_labels_entries():
         "  MISSING DATA (ratings apply if the control turns out to be absent)") < text.index("  #3 [HIGH    ] CTL-03")
     assert "Status: NOT_APPLICABLE (missing data)" in text
     assert 'Missing: The attestation file has no "identity_aware_access" entry' in text
-    assert "If the check then fails: Place the device behind an identity-aware proxy" in text
+    assert f"If the check then fails: {load_register_metadata()['CTL-03'].remediation}" in text
     assert "Next level: Fixing this check alone raises Controlled" in text
-    assert "SP 800-30: threat source type adversarial (drafted); threat event: " in text
+    assert f"SP 800-30: threat source type {_shown_source('CTL-01')}; threat event: " in text
     assert "vulnerability: not determined (missing data)" in text and "risk HIGH if the control is absent" in text
     assert "Next level (CMMI): the property's level now" in " ".join(text.split())
 
@@ -415,25 +421,66 @@ def test_the_legend_states_the_non_claims():
         assert "reflects one snapshot scoring 90 or more, not sustained improvement" in out
 
 
-def test_the_drafted_note_appears_only_for_drafted_fields():
-    drafted = render(_mixed_entries(), "text")
-    assert "(drafted) marks a threat source type and event drafted with AI assistance" in " ".join(drafted.split())
+def _shown_source(check_id: str) -> str:
+    """How the register shows a built-in check's threat source type, from the
+    shipped file in whatever review state it is."""
+    meta = load_register_metadata()[check_id]
+    if meta.threat_source_type is None:
+        return "n/a (not declared)"
+    return meta.threat_source_type + (" (drafted)" if meta.sp800_30_review == "drafted" else "")
+
+
+# A mappings file of its own, so the legend tests hold whatever the review of the shipped threats: section
+# (verifier findings: confirming a row, correcting its type or dropping the section broke these tests).
+_OWN_MAPPINGS = """version: "0.3.0"
+framework: "test"
+properties: []
+checks:
+  - { check_id: MON-01, property_key: monitored, cis_ig: IG1, fair_frequency: HIGH, fair_magnitude: MEDIUM, remediation: "Log." }
+  - { check_id: MON-02, property_key: monitored, cis_ig: IG1, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Forward." }
+  - { check_id: MON-03, property_key: monitored, cis_ig: IG1, fair_frequency: HIGH, fair_magnitude: HIGH, remediation: "Install." }
+  - { check_id: MON-04, property_key: monitored, cis_ig: IG2, fair_frequency: LOW, fair_magnitude: LOW, remediation: "Audit." }
+threats:
+  - { check_id: MON-01, threat_source_type: adversarial, review: drafted, threat_event: "An intruder hides." }
+  - { check_id: MON-02, threat_source_type: accidental, review: confirmed, threat_event: "A log is lost." }
+  - { check_id: MON-03, threat_source_type: structural, review: confirmed, threat_event: "A disk fills." }
+  - { check_id: MON-04, threat_source_type: environmental, review: confirmed, threat_event: "A flood." }
+"""
+
+
+def _own_entries(tmp_path, *check_ids):
+    path = tmp_path / "mappings.yaml"
+    path.write_text(_OWN_MAPPINGS, encoding="utf-8")
+    return build_risk_register(_assessment([CheckResult(c, c.lower(), Status.FAIL) for c in check_ids]),
+                               metadata_path=path)
+
+
+def test_the_drafted_note_appears_only_for_drafted_fields(tmp_path):
+    note = "(drafted) marks a threat source type and event drafted with AI assistance"
+    drafted = " ".join(render(_own_entries(tmp_path, "MON-01", "MON-02"), "text").split())
+    assert note in drafted and "threat source type adversarial (drafted); threat event: An intruder hides." in drafted
+    assert "threat source type accidental; threat event: A log is lost." in drafted      # confirmed: no mark
+    confirmed = " ".join(render(_own_entries(tmp_path, "MON-02", "MON-03"), "text").split())
+    assert note not in confirmed and "(drafted)" not in confirmed
     custom = build_risk_register(_assessment([CheckResult("CUSTOM-01", "x", Status.FAIL)]))
     plain = " ".join(render(custom, "text").split())
     assert "(drafted) marks" not in plain
     assert "threat source type n/a (not declared); threat event: n/a (not declared)" in plain
 
 
-def test_the_stand_in_sentence_appears_whenever_a_threat_source_is_not_adversarial():
-    stand_in = "on an accidental or structural row they stand in for likelihood and impact"
-    adversarial = build_risk_register(_assessment([CheckResult("MON-01", "a", Status.FAIL)]))
+def test_the_stand_in_sentence_appears_whenever_a_threat_source_is_not_adversarial(tmp_path):
+    """Verifier finding: the sentence also appears for an environmental row,
+    so it names environmental too."""
+    stand_in = "on an accidental, structural or environmental row they stand in for likelihood and impact"
+    adversarial = _own_entries(tmp_path, "MON-01")
     assert adversarial[0].sp800_30.threat_source_type == "adversarial"
-    accidental = build_risk_register(_assessment([CheckResult("CLM-01", "a", Status.FAIL)], key="claimed",
-                                                 title="Claimed"))
-    assert accidental[0].sp800_30.threat_source_type == "accidental"
     for fmt in ("text", "markdown"):
         assert stand_in not in " ".join(render(adversarial, fmt).split())
-        assert stand_in in " ".join(render(accidental, fmt).split())
+    for check_id, source_type in (("MON-02", "accidental"), ("MON-03", "structural"), ("MON-04", "environmental")):
+        entries = _own_entries(tmp_path, check_id)
+        assert entries[0].sp800_30.threat_source_type == source_type
+        for fmt in ("text", "markdown"):
+            assert stand_in in " ".join(render(entries, fmt).split()), (check_id, fmt)
 
 
 def test_a_marker_without_an_expected_value_still_reads_well():

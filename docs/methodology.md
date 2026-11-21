@@ -210,7 +210,8 @@ assessment.
 | `FAIL`, `PARTIAL` | yes | `finding` |
 | `ERROR` (any check, built-in or custom) | yes | `missing-data` |
 | `NOT_APPLICABLE` because an organizational input was not supplied: no `--attestation` or `--inventory-record`, or the file has no entry for the check | yes | `missing-data` |
-| `NOT_APPLICABLE` because the check does not apply (for example CUR-02 with no third-party software), or a custom check's own `NOT_APPLICABLE` | no | - |
+| `NOT_APPLICABLE` without a missing-data marker: the check does not apply (for example CUR-02 with no third-party software), built-in or custom | no | - |
+| A custom check's `NOT_APPLICABLE` with `missing_data=MissingData(...)` (section 8) | yes | `missing-data` |
 | Excluded by the config (`NOT_APPLICABLE`, `Excluded: <reason>`) | no | - |
 | `NOT_IMPLEMENTED` | no | - |
 | `PASS` | no | - |
@@ -234,7 +235,10 @@ as `missing_data`, only when it is set. These checks set it:
 | CUR-01 (Windows) | the last update install time is not a valid timestamp (`ERROR`) | `facts` / `last_update_installed_iso` |
 
 `not-supplied` means the option was not given at all; a file given with no
-entry for the check, or holding JSON null, is `missing-field`. Detail strings
+entry for the check, or holding JSON null, is `missing-field`. INV-01 and
+INV-04 read one record, so each of their entries gives the whole record as
+its example (`device_id`, `tracked` and `last_reviewed`): following one
+entry's example never turns the other check into a finding. Detail strings
 are unchanged. Some incomplete inputs stay findings, as the check logic
 decides them: an attestation entry that is present with a null value, ASM-01
 or ASM-02 "performed" with no date or interval (`PARTIAL`), and an inventory
@@ -275,28 +279,38 @@ section, with:
   this check (e.g. "Enroll the device in the organization's central
   configuration-management/MDM platform" for CTL-01). Required for every
   built-in check and shown as each entry's recommended fix. It is one fixed
-  text per check, so for some `PARTIAL` results it does not match the gap
-  (CTL-02 "no elevation path at all"; ASM-01 and ASM-02 "performed, but no
-  date or interval"): a known limitation.
+  text per check, so for some results it does not match the gap, a known
+  limitation: CTL-02 `PARTIAL` ("no elevation path at all"); CTL-02 `FAIL`
+  (root not locked, or the built-in Administrator enabled), whose fix
+  removes standing administrator rights from routine accounts and neither
+  locks root nor disables the account; MON-01 `PARTIAL` on Linux (journald
+  active, no rsyslog or syslog-ng), whose fix names auditd; MON-04 `PARTIAL`
+  on Windows (Event Log running, Sysmon not), whose audit-policy fix cannot
+  make the check pass, since it needs Sysmon (likely on stock Windows
+  hosts); and ASM-01 and ASM-02 `PARTIAL` ("performed, but no date or
+  interval").
 
 The `threats:` section, added in version 0.3.0 of the file, adds per check
 (drafted with AI assistance and marked `review: drafted`):
 
 - **`threat_source_type`** -- the NIST SP 800-30 Rev. 1 Appendix D type of
-  threat source most likely to exploit a failure of the check: adversarial,
-  accidental, structural or environmental. A judgment per check, not an
-  analysis of any organization's threats.
+  threat source most likely to exploit or trigger a failure of the check:
+  adversarial, accidental, structural or environmental. A judgment per
+  check, not an analysis of any organization's threats.
 - **`threat_event`** -- a short, generic threat event for the check, not
   threat intelligence.
 
 The 26 drafted rows await the researcher's review in
 [`docs/sp800-30-review.md`](sp800-30-review.md), which says how to confirm
 them before the study's baseline freeze, or how to record the review without
-touching the tool during the study. The section is read only for the risk
-register: `list-checks`, an assessment without `--risk-register`, and the
-study's worksheet and input checks read `checks:` alone, so a typo there
-stops only register runs (before anything is collected). When present, the
-section must cover every check of `checks:`.
+touching the tool during the study; five events were redrafted on
+2026-11-20 after a verification pass, and that file lists them. The section
+is read only for the risk register: `list-checks`, an assessment without
+`--risk-register`, and the study's worksheet and input checks read `checks:`
+alone, so a wrong value there stops only register runs (before anything is
+collected). A YAML syntax error anywhere in the file, an unbalanced quote
+for example, stops every command. When present, the section must cover
+every check of `checks:`.
 
 ### Rating and order
 
@@ -360,9 +374,10 @@ The `effect`, and what the text says:
 |---|---|---|
 | `alone` | this fix alone reaches the next level | the level reached and the score change, citing the cutoff of the level reached (a fix can jump two levels) |
 | `with-others` | it does not, and every fewest set of fixes that reaches the next level includes this check | which other fixes reach it with this one (K fixes), and whether the next level can be reached without this check at all |
-| `not-needed` | it does not, and a fewest set of fixes reaches the next level without this check | that the next level does not need it, which fixes reach it, and the score with this check fixed too |
+| `one-of` | it does not; some fewest sets of fixes include this check and others reach the next level without it, so it is one of several interchangeable fixes | that the next level takes at least K fixes and this check can be one of them, with which others, and a set of K that reaches it without this check |
+| `not-needed` | it does not, and no fewest set includes this check: the fewest fixes reach the next level without it | that the next level does not need it, which fixes reach it, and the score with this check fixed too |
 | `top-level` | the property is at the methodology's top level | that there is no next level |
-| `not-scored` | the check is `NOT_APPLICABLE` until its data is supplied | that it is not scored until then and its result can change the level (no arithmetic) |
+| `not-scored` | the check is `NOT_APPLICABLE` until its data is supplied | that it is not scored until then, and whether its result can change the level at all, from the property scored with the check as `PASS` and as `FAIL` (no arithmetic) |
 
 Examples (real cutoffs, CMMI 20/40/70/90 and CISA ZTMM 40/70/90):
 
@@ -376,11 +391,19 @@ Examples (real cutoffs, CMMI 20/40/70/90 and CISA ZTMM 40/70/90):
   gives 100.0."
 - Current with three `FAIL`s and CUR-02 not applying (0.0): under CMMI each
   fix alone reaches level 2; under CISA ZTMM (stage 2 needs 40) each is
-  `not-needed`, since any two of the three reach it.
-- Current with CUR-03 not supplied: "Current is at CMMI level 1 (Initial)
-  without this check, which is not scored until its data is supplied; its
-  result can then change that level." Missing data changes the denominator:
-  with CUR-03 unscored, one fix gives 50.0 instead of 33.3.
+  `one-of`, since any two of the three reach it: CUR-01: "... Stage 2 takes
+  at least 2 fixes, and this check can be one of them: together with CUR-03,
+  it takes Current to stage 2 (Initial), score 66.7. Other sets of 2 fixes
+  reach stage 2 without this check, for example CUR-03 and CUR-04 (score
+  66.7)." Four `PARTIAL`s under CMMI (50.0, level 3) work the same way: level
+  4 needs any two of them.
+- Current with CUR-01 and CUR-04 `FAIL`, CUR-02 not applying and CUR-03 not
+  supplied: "Current is at CMMI level 1 (Initial) without this check, which
+  is not scored until its data is supplied; its result can then change that
+  level" (CUR-03 passing gives 33.3, level 2). Under CISA ZTMM it cannot:
+  "... Current stays at stage 1 whatever its result" (33.3 is below stage
+  2's 40). Missing data changes the denominator: with CUR-03 unscored, one
+  fix gives 50.0 instead of 33.3.
 
 CISA's Zero Trust Maturity Model calls its levels stages, and the hints do
 too. Levels and stages are this tool's score bands under CMMI or CISA ZTMM
@@ -391,7 +414,8 @@ not sustained improvement. With `--methodology none` there is no hint.
 ### NIST SP 800-30 Rev. 1 structure
 
 Each entry's `sp800_30` object arranges the register's own fields as the
-risk factors of SP 800-30 Rev. 1's risk model, plus a recommended response.
+risk factors of SP 800-30 Rev. 1's risk model and the risk they determine,
+plus a recommended response.
 Its direction, from each weakness found to a threat event that could
 exploit it, resembles the vulnerability-oriented analysis approach SP 800-30
 describes (section 2.3.3); it follows that approach in structure only.
@@ -412,8 +436,12 @@ organization-specific threat analysis, no SP 800-30 assessment scale or
 table, and no quantitative estimate (FAIR/Monte Carlo or other); no SP 800-30
 table is reproduced. The FAIR bands were rated for how often adversaries
 exploit the failure in the wild, so on a row whose threat-source type is
-accidental or structural they stand in for likelihood and impact and were
-not rated for that source; the review table asks whether they fit.
+accidental, structural or environmental they stand in for likelihood and
+impact and were not rated for that source; the review table asks whether
+they fit. SP 800-30's definition of a threat source separates the
+intentional exploitation of a vulnerability from a situation that triggers
+one accidentally, so the type is the source "most likely to exploit or
+trigger" a failure.
 
 ### Output
 
@@ -431,7 +459,8 @@ In JSON, `risk_register` is a list of entries. Each keeps the original keys
 in their original order (`check_id`, `property_key`, `name`, `status`,
 `cis_ig`, `fair_frequency`, `fair_magnitude`, `risk_rating`, `detail`,
 `remediation`) and adds four: `entry_type`, `missing_data` (null for
-findings), `next_level` (null without a lens; `methodology`, `effect`,
+findings), `next_level` (null without a lens; `methodology`, `effect` (`alone`,
+`with-others`, `one-of`, `not-needed`, `top-level` or `not-scored`),
 `current_level`, `current_label`, `current_score`, `max_level`,
 `target_level`, `target_label`, `target_min_score`, `score_if_fixed`,
 `level_if_fixed`, `level_if_fixed_label`, `fixes_needed`, `with_check_ids`,
@@ -545,11 +574,12 @@ if `context` has no `"facts"` key at all (the default invocation, with
 neither `--connector` nor `--facts`; `--facts` supplies saved facts without
 a connector), it falls back to the identical `NOT_IMPLEMENTED` stub behavior.
 This is why `miccmac assess <target> --methodology none` stays byte-for-byte
-identical to the original Alpha scaffold's output (the output of a plain
-`miccmac assess <target>` before CMMI became the default lens) -- verified by
-`tests/test_golden_stub.py` against goldens captured at commit 4644c33. The
-default run adds only the CMMI lens, every value of it "Unassessed" in a stub
-run.
+identical to the output of commit 4644c33, the last before CMMI became the
+default lens (a plain `miccmac assess <target>` there) -- verified by
+`tests/test_golden_stub.py` against goldens captured at that commit. That
+output is not the original Alpha scaffold's: the scorecard legend it shows
+was added on 2026-08-28 (commit 89904f9). The default run adds only the CMMI
+lens, every value of it "Unassessed" in a stub run.
 
 **A real finding from live testing:** INV-02 (hardware attributes recorded)
 reliably FAILs against a stock VMware VM, because osquery's `system_info`
@@ -889,7 +919,9 @@ assessment in the JSON output gains a `provenance` block, format
 `miccmac-provenance/1`. Text and markdown reports do not show it, and a run
 without these options has no block. Its fields, in order:
 
-- `provenance_format`, `tool_version`, `tool_commit` (`git rev-parse HEAD` in
+- `provenance_format`, `tool_version` (0.2.0 from the 2026-11-20 change: CMMI
+  as the default lens, missing-data entries, next-level hints and the SP
+  800-30 fields; 0.1.0 before it), `tool_commit` (`git rev-parse HEAD` in
   the repository that holds the miccmac package, or null), `tool_tree_clean`
   (true when `git status --porcelain --untracked-files=normal -- miccmac data`
   shows nothing: no change to a tracked file and no untracked file under
@@ -916,6 +948,10 @@ without these options has no block. Its fields, in order:
 - `os` (`platform`, `name` and `version` from the facts, `build` from the
   extended facts), `osquery_version` (from the extended facts), and
   `extended_facts` (whether the facts include them).
+
+`tool_commit` with `tool_tree_clean` true identifies the exact code that
+produced an output; `tool_version` only says which release line it belongs
+to.
 
 File paths are recorded exactly as given on the command line, never made
 absolute, so local folder names do not end up in a shared result file.

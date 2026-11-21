@@ -57,8 +57,10 @@ ATTESTATION_KEYS = {
     "ASM-03": ("finding_remediation_sla", '{"tracked": true or false, "sla_days": DAYS}'),
     "CUR-03": ("firmware_currency", '{"current": true or false}'),
 }
-INVENTORY_EXPECTED = {"INV-01": '{"device_id": "ASSET ID", "tracked": true or false}',
-                      "INV-04": '{"last_reviewed": "YYYY-MM-DD"}'}
+# Both checks read one record, so each example gives all of it (verifier finding: following
+# INV-01's partial example turned INV-04 into a FAIL finding).
+_WHOLE_RECORD = '{"device_id": "ASSET ID", "tracked": true or false, "last_reviewed": "YYYY-MM-DD"}'
+INVENTORY_EXPECTED = {"INV-01": _WHOLE_RECORD, "INV-04": _WHOLE_RECORD}
 
 
 def _checks(context, config=None):

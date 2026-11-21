@@ -112,10 +112,12 @@ The risk register lists one entry per `FAIL` or `PARTIAL` check (a finding)
 and one per check the tool could not evaluate because data was missing (an
 `ERROR`, or an organizational input that was not supplied), saying what is
 missing and how to supply it. Each entry gives the check's CIS IG and
-FAIR-inspired rating, a hint at what fixing it does toward the property's
-next maturity level, and its fields arranged as the risk factors of NIST SP
-800-30 Rev. 1 plus a recommended response. That arrangement is not an SP
-800-30 risk assessment, and no rating is quantitative. The threat-source
+FAIR-inspired rating; with a maturity lens (CMMI by default, none with
+`--methodology none`), a hint at what fixing it does toward the property's
+next maturity level; and its fields arranged as the risk factors of NIST SP
+800-30 Rev. 1 and the resulting risk, plus a recommended response. That
+arrangement is not an SP 800-30 risk assessment, and no rating is
+quantitative. The threat-source
 types and threat events it shows were drafted with AI assistance and await
 the researcher's review ([`docs/sp800-30-review.md`](docs/sp800-30-review.md)).
 
@@ -185,7 +187,7 @@ Keep the SSH private key outside the study folder, so it can never be
 committed or shared with the study data. To re-test fixed check logic later
 against the same raw facts, run the second command again with the same
 `--as-of` date, writing to a new folder (for example
-`-o retest-v0.2/H1-cisa-ztmm.json`), never over the baseline outputs; the
+`-o retest-v0.3/H1-cisa-ztmm.json`), never over the baseline outputs; the
 tool refuses to replace them anyway. Details, including what `--as-of` does
 not change, are in
 [`docs/methodology.md`](docs/methodology.md#11-reproducibility-reference-date-saved-facts-and-provenance).
@@ -289,9 +291,11 @@ proven end-to-end against real, live VMs — the vertical slice is complete.
 Running `python -m miccmac assess <target>` with no `--connector` or
 `--facts` flag still prints the *structure* of a real assessment without
 inspecting anything. With `--methodology none` it is byte-identical to the
-original scaffold's output (test-verified against goldens captured at
-commit 4644c33, `tests/test_golden_stub.py`); the default run adds the CMMI
-lens, every value of it "Unassessed" in such a run.
+output of commit 4644c33, the last before CMMI became the default lens
+(test-verified against goldens captured there, `tests/test_golden_stub.py`);
+that output already has the scorecard legend added on 2026-08-28 (commit
+89904f9), so it is not the original Alpha scaffold's output. The default
+run adds the CMMI lens, every value of it "Unassessed" in such a run.
 (Adding `--as-of` to such a run changes no result; it only adds the
 provenance block to JSON output. `--facts` scores facts saved by an earlier
 run.) Add `--connector

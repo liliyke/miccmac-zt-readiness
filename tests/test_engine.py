@@ -154,6 +154,28 @@ def run_checks(target, context):
         run_assessment("test-device", config=config)
 
 
+def test_custom_check_returning_two_results_for_one_id_raises_configerror(tmp_path):
+    """Verifier finding (fix round, drafted with AI assistance for the
+    researcher's review): a plugin that returned DD-01 twice passed the id
+    check (a set) and later crashed the register's next-level hint (KeyError)."""
+    plugin_src = '''
+from miccmac.model import CheckResult, Status
+CHECK_IDS = ["DD-01"]
+ATTACH_TO = "controlled"
+RISK_METADATA = {"DD-01": {"cis_ig": "IG2"}}
+def run_checks(target, context):
+    return [CheckResult(check_id="DD-01", name="one", status=Status.FAIL),
+            CheckResult(check_id="DD-01", name="two", status=Status.PASS)]
+'''
+    checks_dir = tmp_path / "custom_checks"
+    checks_dir.mkdir()
+    (checks_dir / "dup.py").write_text(plugin_src, encoding="utf-8")
+
+    config = Config(custom_checks_dir=checks_dir)
+    with pytest.raises(ConfigError, match=r"more than one result for \['DD-01'\]"):
+        run_assessment("test-device", config=config, methodology_name="cmmi")
+
+
 def test_methodology_flag_attaches_methodology_without_altering_flat_score():
     plain = run_assessment("test-device")
     with_methodology = run_assessment("test-device", methodology_name="cmmi")

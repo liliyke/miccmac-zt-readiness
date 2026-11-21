@@ -51,9 +51,10 @@ Each entry also carries:
   (next_level_hint). None without a lens.
 - sp800_30: the entry's own fields arranged as NIST SP 800-30 Rev. 1 risk
   factors (threat source type, threat event, vulnerability, likelihood,
-  impact, risk) plus a recommended response (Sp80030). This is not an SP
-  800-30 risk assessment: there is no organization-specific threat analysis,
-  no SP 800-30 assessment scale or table, and no quantitative estimate.
+  impact) and the resulting risk, plus a recommended response (Sp80030).
+  This is not an SP 800-30 risk assessment: there is no
+  organization-specific threat analysis, no SP 800-30 assessment scale or
+  table, and no quantitative estimate.
 
 In this module, AI assistance covers the whole module as it now stands: the
 missing-data entries, the next-level hints, the SP 800-30 fields, the order
@@ -89,10 +90,12 @@ _OPEN_SCORED = (Status.FAIL, Status.PARTIAL, Status.ERROR)
 # next_level effects (NextLevelHint.effect).
 EFFECT_ALONE = "alone"              # this fix alone reaches the next level
 EFFECT_WITH_OTHERS = "with-others"  # every fewest set of fixes that reaches it includes this one
-EFFECT_NOT_NEEDED = "not-needed"    # a fewest set of fixes reaches it without this one
+EFFECT_ONE_OF = "one-of"            # some fewest sets include this one; others reach it without it
+EFFECT_NOT_NEEDED = "not-needed"    # no fewest set includes this one
 EFFECT_TOP_LEVEL = "top-level"      # the property is at the methodology's top level
 EFFECT_NOT_SCORED = "not-scored"    # this check is not scored until its data is supplied
-NEXT_LEVEL_EFFECTS = (EFFECT_ALONE, EFFECT_WITH_OTHERS, EFFECT_NOT_NEEDED, EFFECT_TOP_LEVEL, EFFECT_NOT_SCORED)
+NEXT_LEVEL_EFFECTS = (EFFECT_ALONE, EFFECT_WITH_OTHERS, EFFECT_ONE_OF, EFFECT_NOT_NEEDED, EFFECT_TOP_LEVEL,
+                      EFFECT_NOT_SCORED)
 
 # sp800_30.risk_basis: what the risk rating applies to.
 RISK_BASIS_FINDING = "finding"
@@ -165,9 +168,10 @@ class NextLevelHint:
 
 @dataclass(frozen=True)
 class Sp80030:
-    """The entry's fields as NIST SP 800-30 Rev. 1 risk factors, plus a
-    recommended response (the risk response itself is the organization's
-    decision, as in NIST SP 800-39). Mapped only where faithful:
+    """The entry's fields as NIST SP 800-30 Rev. 1 risk factors and the
+    resulting risk, plus a recommended response (the risk response itself
+    is the organization's decision, as in NIST SP 800-39). Mapped only where
+    faithful:
     vulnerability = the finding (None for missing data: not determined);
     likelihood = the FAIR frequency band; impact = the FAIR magnitude band;
     risk = the register's own matrix rating. The threat source type and
@@ -471,10 +475,14 @@ def next_level_hint(assessment: Assessment, prop: PropertyResult, check: CheckRe
 
     Effects: alone (this fix alone reaches the next level); with-others (it
     does not, and every fewest set of fixes that reaches the next level
-    includes this check); not-needed (it does not, and a fewest set reaches
-    the next level without it); top-level (the property is already at the
-    methodology's top level); not-scored (this check is NOT_APPLICABLE until
-    its data is supplied, so no arithmetic is shown)."""
+    includes this check); one-of (it does not, some fewest sets include this
+    check and others reach the next level without it, so it is one of
+    several interchangeable fixes); not-needed (no fewest set includes it:
+    the fewest fixes reach the next level without it); top-level (the
+    property is already at the methodology's top level); not-scored (this
+    check is NOT_APPLICABLE until its data is supplied, so no arithmetic is
+    shown; the text says whether its result can change the level at all,
+    from the property scored with the check as PASS and as FAIL)."""
     result = assessment.methodology
     if result is None:
         return None
@@ -491,8 +499,15 @@ def next_level_hint(assessment: Assessment, prop: PropertyResult, check: CheckRe
             text = (f"{title} has no {display} {word} yet: none of its checks could be scored. "
                     f"Supplying this data lets the tool score it.")
         else:
+            others = [c.status for c in prop.checks if c is not check]
+            if_pass, if_fail = (methodology.level_for_score(score_statuses(others + [status])).level
+                                for status in (Status.PASS, Status.FAIL))
             text = (f"{title} is at {display} {word} {current.level} ({current.level_label}) without this check, "
-                    f"which is not scored until its data is supplied; its result can then change that {word}.")
+                    f"which is not scored until its data is supplied; ")
+            if if_pass == if_fail:
+                text += f"{title} stays at {word} {current.level} whatever its result."
+            else:
+                text += f"its result can then change that {word}."
         return NextLevelHint(effect=EFFECT_NOT_SCORED, text=text, **base)
 
     level_now = current.level if current.level is not None else methodology.level_for_score(prop.score).level
@@ -537,8 +552,13 @@ def next_level_hint(assessment: Assessment, prop: PropertyResult, check: CheckRe
         raise RuntimeError(f"internal: {check.check_id} cannot reach {methodology.name} level {target}")
     labels = methodology.levels
     reached_alone = level_alone >= target
+    # with_set is the fewest fixes that include this check, all_set the fewest of all, and
+    # without_set the fewest without it (None when none reaches the target).
+    in_a_fewest_set = len(with_set) == len(all_set)
+    a_fewest_set_without = without_set is not None and len(without_set) == len(all_set)
     effect = (EFFECT_ALONE if reached_alone
-              else EFFECT_NOT_NEEDED if without_set is not None and len(without_set) == len(all_set)
+              else EFFECT_NOT_NEEDED if not in_a_fewest_set
+              else EFFECT_ONE_OF if a_fewest_set_without
               else EFFECT_WITH_OTHERS)
     hint = dict(base, effect=effect, target_level=target, target_label=labels[target - 1], target_min_score=need,
                 score_if_fixed=score_alone, level_if_fixed=level_alone, level_if_fixed_label=labels[level_alone - 1],
@@ -571,6 +591,12 @@ def next_level_hint(assessment: Assessment, prop: PropertyResult, check: CheckRe
         else:
             text += (f"every way to reach {word} {target} with {len(with_set)} fixes includes this check, and "
                      f"without it {word} {target} takes {len(without_set)} fixes ({_id_list(without_set)}).")
+    elif effect == EFFECT_ONE_OF:
+        text = (f"{intro} {own} {word.capitalize()} {target} takes at least {len(with_set)} fixes, and this check "
+                f"can be one of them: together with {together}, it takes {title} to {word} {level_with} "
+                f"({labels[level_with - 1]}), score {_score_text(score_with)}. Other sets of {len(with_set)} fixes "
+                f"reach {word} {target} without this check, for example {_id_list(without_set)} (score "
+                f"{_score_text(score_without)}).")
     else:
         text = (f"{intro} {own} {word.capitalize()} {target} does not need this check: fixing "
                 f"{_id_list(without_set)} reaches it (score {_score_text(score_without)}). Together with "
@@ -601,12 +627,12 @@ _ENTRY_TYPE_LINES = [
 ]
 _NO_ENTRY_TEXT = ("Checks that do not apply, checks excluded by the config and NOT_IMPLEMENTED checks get no "
                   "entry; a check whose control is missing is a FAIL finding.")
-_SP800_30_TITLE = ("NIST SP 800-30 Rev. 1 risk factors, plus a recommended response: this register's own fields "
-                   "arranged in SP 800-30's terms; not an SP 800-30 risk assessment.")
+_SP800_30_TITLE = ("NIST SP 800-30 Rev. 1 risk factors and the resulting risk, plus a recommended response: this "
+                   "register's own fields arranged in SP 800-30's terms; not an SP 800-30 risk assessment.")
 _SP800_30_LINES = [
-    ("threat source type", "the SP 800-30 Appendix D type of source most likely to exploit a failure of the "
-                           "check (adversarial, accidental, structural or environmental); a judgment per check, "
-                           "not an analysis of this organization's threats"),
+    ("threat source type", "the SP 800-30 Appendix D type of source most likely to exploit or trigger a failure "
+                           "of the check (adversarial, accidental, structural or environmental); a judgment per "
+                           "check, not an analysis of this organization's threats"),
     ("threat event", "a short, generic event per check, not threat intelligence"),
     ("vulnerability", "the finding (for missing data: not determined)"),
     ("likelihood", "the FAIR frequency band (3 levels, not SP 800-30's 5-level scale; not derived through SP "
@@ -620,8 +646,8 @@ _SP800_30_LINES = [
 ]
 _QUALITATIVE_TEXT = "Qualitative throughout: no quantitative (FAIR/Monte Carlo) estimate."
 _STAND_IN_TEXT = ("The FAIR bands were rated for how often adversaries exploit the failure in the wild; on an "
-                  "accidental or structural row they stand in for likelihood and impact and were not rated for "
-                  "that threat source.")
+                  "accidental, structural or environmental row they stand in for likelihood and impact and were "
+                  "not rated for that threat source.")
 _DRAFTED_TEXT = ("(drafted) marks a threat source type and event drafted with AI assistance for the researcher's "
                  "review and not yet confirmed (docs/sp800-30-review.md).")
 _LEVELS_CAVEAT = ("Levels and stages are this tool's score bands under CMMI or CISA ZTMM names "
@@ -636,9 +662,10 @@ def _next_level_legend(methodology: Optional[str]) -> str:
     display, word = _words(methodology)
     return (f"Next level ({display}): the property's {word} now and what fixing this check does toward the next "
             f"{word}: on its own, or together with the fewest other open entries in the property (largest score "
-            f"gain first), and whether that next {word} needs this check at all. A fix means the check re-tests as "
-            f"PASS and nothing else changes. A check that is not scored (missing input) gets no estimate, and the "
-            f"overall {word} gets no hint. " + _LEVELS_CAVEAT)
+            f"gain first), and whether every fewest set of fixes includes this check, only some do (it is one of "
+            f"several interchangeable fixes), or none does. A fix means the check re-tests as PASS and nothing "
+            f"else changes. A check that is not scored (missing input) gets no estimate, only whether its result "
+            f"can change the {word}, and the overall {word} gets no hint. " + _LEVELS_CAVEAT)
 
 
 def _wrap(text: str, width: int, indent: str) -> List[str]:

@@ -2,8 +2,10 @@
 
 Golden outputs of a stub run (`miccmac assess test-device`, no facts and no
 input files) in text, markdown and JSON. tests/golden/ holds what commit
-4644c33 printed for these runs, captured before any later change to the
-tool, so the files show the original scaffold output byte for byte.
+4644c33, the last before CMMI became the default lens, printed for these
+runs, captured before any later change to the tool. That is not the original
+Alpha scaffold's output byte for byte: the scorecard legend in it was added on
+2026-08-28 (commit 89904f9).
 
 Since CMMI became the default lens, `--methodology none` reproduces that
 output exactly; the default run differs from it only by the CMMI lens (every

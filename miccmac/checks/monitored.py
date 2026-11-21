@@ -17,8 +17,9 @@ auditd for rich auth/privilege/process audit coverage.
 
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
-NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
-unchanged from the Alpha scaffold.
+NOT_IMPLEMENTED stub behavior, so the check results of `miccmac assess
+<target>` with no flags are unchanged from the Alpha scaffold (the report
+itself now adds the default CMMI lens, every level Unassessed).
 """
 from __future__ import annotations
 
