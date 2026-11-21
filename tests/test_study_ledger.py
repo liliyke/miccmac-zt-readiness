@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.ledger: record (with its archive copies, the rule
+"""Tests for miccmac_study.ledger: record (with its archive copies, the rule
 that a sealed file is hashed once, the study.yaml check and, for worksheets,
 the pre-hash lint) / verify (OK, CHANGED, MISSING, SUPERSEDED, OUT OF ORDER)
 / status / withdraw (also after a seal opening) through the command
@@ -1735,7 +1733,6 @@ def test_parse_host_list():
 
 
 # ---------- a tool output must hold the methodology its name names ----------
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 # CMMI is the tool's default lens: a step-6 line that lost --methodology cisa-ztmm writes CMMI levels to
 # <H>-cisa-ztmm.json. `ledger record --kind tool-output` refuses it before it is hashed (step 7, before
 # health in step 8), so the unhashed file can still be moved aside and the replay run again.

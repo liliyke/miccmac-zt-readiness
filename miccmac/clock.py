@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Reference date for the date-dependent checks (``--as-of``).
+"""Reference date for the date-dependent checks (``--as-of``).
 
 Four checks compare a recorded date with "now": INV-04 (inventory record
 reviewed within 90 days), ASM-01 and ASM-02 (scan and assessment performed

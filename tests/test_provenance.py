@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for the provenance block (miccmac/provenance.py) and for when the
+"""Tests for the provenance block (miccmac/provenance.py) and for when the
 CLI adds it. git is replaced by a fake wherever a test needs a particular
 answer. Synthetic values only; no network."""
 from __future__ import annotations
@@ -144,8 +142,7 @@ def test_an_as_of_only_run_records_that_no_facts_were_used(lab, set_clock, capsy
 
 
 def test_methodology_none_records_null_and_the_default_records_cmmi(lab, set_clock, capsys):
-    """Drafted with AI assistance (Claude Code, Anthropic): provenance names
-    the lens actually applied; --methodology none applies none."""
+    """Provenance names the lens actually applied; --methodology none applies none."""
     set_clock(dt.datetime(2027, 1, 15, 10, 0, tzinfo=UTC))
     none = _provenance_of(["assess", "test-device", "--format", "json", "--as-of", "2026-11-23",
                            "--methodology", "none"], capsys)

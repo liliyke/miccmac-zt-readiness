@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for the risk register's next-level hints (miccmac.risk_register.
+"""Tests for the risk register's next-level hints (miccmac.risk_register.
 next_level_hint): the worked examples of the design (A-I, plus two
 with-others cases and the one-of cases the verifiers found) with their exact
 text and fields under CMMI and CISA ZTMM; an exhaustive sweep over every

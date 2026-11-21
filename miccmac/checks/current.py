@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-MICCMAC property: Current (C).
+"""MICCMAC property: Current (C).
 
 Intent: The device is kept in its most secure state: patched, updated, and free of expired cryptographic material.
 
@@ -44,12 +42,10 @@ Python 3.9 and 3.10, whose datetime.fromisoformat accepts only 3 or 6
 digits and no "Z"; on 3.11 and later the result is what fromisoformat alone
 gives. The saved facts keep the timestamp exactly as collected.
 
-In this module, AI assistance covers the --as-of reference time, the
-timestamp parse helper, and the missing-data markers
-(CheckResult.missing_data): CUR-03's attestation entry not supplied
-(NOT_APPLICABLE), and the Windows CUR-01 install timestamp that cannot be
-read (ERROR). CUR-02's NOT_APPLICABLE (no third-party software) has no
-marker: that check does not apply. Detail strings are unchanged.
+The missing-data markers (CheckResult.missing_data) cover CUR-03's
+attestation entry not supplied (NOT_APPLICABLE), and the Windows CUR-01
+install timestamp that cannot be read (ERROR). CUR-02's NOT_APPLICABLE (no
+third-party software) has no marker: that check does not apply.
 """
 from __future__ import annotations
 

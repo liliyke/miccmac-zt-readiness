@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for the assess command's --output safeguards (review findings BI-08,
+"""Tests for the assess command's --output safeguards (review findings BI-08,
 CC-02, CC-09, RD-02, the two --output items the core-CLI review found
 missing, round-1 verifier finding V1-N8 and two round-1 open questions):
 

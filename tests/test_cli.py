@@ -1,17 +1,11 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac.cli: new --methodology/--config/--risk-register flags
+"""Tests for miccmac.cli: new --methodology/--config/--risk-register flags
 and the list-checks subcommand. Run entirely in-process via cli.main();
 no target/network dependency (target is always the label 'test-device').
 
-In this file, AI assistance covers the input-file encoding tests at the end,
-the two tests added with the reproducible-run options
-(test_assess_without_target_still_defaults_to_localhost and
-test_assess_connector_json_gains_provenance_text_unchanged), and the tests of
-CMMI as the default lens and --methodology none (the first two tests were
-rewritten for it: a default run now shows CMMI, and --methodology none gives
+The first two tests were rewritten for CMMI as the default lens and
+--methodology none: a default run now shows CMMI, and --methodology none gives
 the original output, which tests/test_golden_stub.py compares byte for
-byte). The --output safeguards are tested in tests/test_output_safety.py."""
+byte. The --output safeguards are tested in tests/test_output_safety.py."""
 from __future__ import annotations
 
 import codecs
@@ -291,7 +285,6 @@ def run_checks(target, context):
 
 
 # ---------------------------------------------------------------- input-file encodings (RD-07)
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 # Windows PowerShell 5.1 saves text as UTF-8 with a byte-order mark
 # (Out-File -Encoding utf8) or as UTF-16 LE with one ('>' and Out-File's
 # default). Such input files load; the recorded SHA-256 is still that of the

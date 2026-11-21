@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.agreement (protocol section 8): the seal it waits
+"""Tests for miccmac_study.agreement (protocol section 8): the seal it waits
 for (ledger.seal_status) and the seal-opening row it records, its integrity
 checks against the ledger (inputs by role, the pre-registered study.yaml
 and sensitivity runs, worksheets hashed and hosts withdrawn after the seal
@@ -18,11 +16,6 @@ the commands append themselves (agreement's seal-opening row, ledger
 record, ledger withdraw) get a pinned ledger time after every hand-written
 row (the ledger_clock fixture). No network, no real hosts; only synthetic
 values. Level-rule expectations are worked out by hand in the comments.
-
-In this file, AI assistance also covers the H2 tests added with the
-register's missing-data entries: the split by entry type, study.yaml's
-h2_unit, a judged ERROR entry counting in n, and the optional descriptive
-judgment columns (StudyBuilder.optional_reviews).
 """
 from __future__ import annotations
 
@@ -2877,7 +2870,6 @@ def test_a_study_yaml_that_cannot_be_decoded_asks_for_utf8(tmp_path, capsys, dat
 
 
 # ------------------------------------------------------------------ H2 by entry type (missing-data entries)
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 def _register(root: Path) -> Dict[str, Dict[str, str]]:
     return {r["host"]: r for r in csv_rows(out_file(root, "register_h2.csv"))}

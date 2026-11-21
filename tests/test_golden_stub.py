@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Golden outputs of a stub run (`miccmac assess test-device`, no facts and no
+"""Golden outputs of a stub run (`miccmac assess test-device`, no facts and no
 input files) in text, markdown and JSON. tests/golden/ holds what commit
 9f1d101, the last before CMMI became the default lens, printed for these
 runs, captured before any later change to the tool. That is not the original

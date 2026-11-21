@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for extended facts: collect_facts(target, extended=True) on both SSH
+"""Tests for extended facts: collect_facts(target, extended=True) on both SSH
 connectors. paramiko is faked as in tests/test_ssh_osquery_connector.py and
 tests/test_ssh_osquery_windows_connector.py: no real SSH connection or
 network. Synthetic values only (IP 192.0.2.10, user "assessor", key

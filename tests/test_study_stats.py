@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.stats. Expected values are computed by hand
+"""Tests for miccmac_study.stats. Expected values are computed by hand
 (shown in the comments) so each can be re-derived without software."""
 from __future__ import annotations
 

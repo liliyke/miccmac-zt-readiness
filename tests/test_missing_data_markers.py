@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for the missing-data marker (miccmac.model.MissingData,
+"""Tests for the missing-data marker (miccmac.model.MissingData,
 CheckResult.missing_data): which check branches set it and with what
 source, problem, field and expected value; that every other result carries
 none and every detail string is unchanged; how CheckResult.to_dict shows it;

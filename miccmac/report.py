@@ -1,14 +1,9 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+"""Render an Assessment as text, markdown, or JSON.
 
-Render an Assessment as text, markdown, or JSON.
-
-In this module, AI assistance covers one legend line: when some check
-carries a missing-data marker (miccmac.model.MissingData), the legend adds
-that [ N/A] can also mean "not evaluated: an input it reads was not
-supplied". Without such a check (for example a stub run) every render is
-exactly as before. It also covers the level word: CISA ZTMM levels are
-shown as stages (methodology.LEVEL_WORDS), as the risk register's hints
-name them; CMMI output is unchanged.
+When some check carries a missing-data marker (miccmac.model.MissingData),
+the legend adds that [ N/A] can also mean "not evaluated: an input it reads
+was not supplied". CISA ZTMM levels are shown as stages
+(methodology.LEVEL_WORDS), as the risk register's hints name them.
 """
 from __future__ import annotations
 

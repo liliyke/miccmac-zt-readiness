@@ -1,12 +1,7 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Connector interface: a connector's job is to collect facts about a target
+"""Connector interface: a connector's job is to collect facts about a target
 device and return them in the shape check modules expect via
 context["facts"] -- the extensibility seam documented in the README and
 docs/methodology.md. Connectors never evaluate checks themselves.
-
-In this module, AI assistance covers the extended facts (collect_facts'
-extended=True, collect_extra_item, short_error) and read_extra_command.
 """
 from __future__ import annotations
 

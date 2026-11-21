@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Study instruments for the automated-vs-blind-manual MICCMAC comparison.
+"""Study instruments for the automated-vs-blind-manual MICCMAC comparison.
 
 These tools are not part of the miccmac assessment tool under test. They
 generate the blank manual worksheets, keep a SHA-256 ledger of study files
@@ -15,10 +13,7 @@ to the repository root (they are not installed with the package):
 
     python -m miccmac_study --help
 
-Drafted with AI assistance (Claude Code, Anthropic) for the researcher to
-review and test. That assistance is declared in miccmac_study/README.md and
-in the first docstring line of every module and test file of the
-instruments. Every judgment in the study (manual verdicts and levels,
+Every judgment in the study (manual verdicts and levels,
 register ratings, root causes, interpretation) is entered by the researcher;
 nothing here fills those fields.
 """

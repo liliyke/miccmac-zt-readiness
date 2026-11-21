@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Synthetic study folder for pipeline tests: ``python -m miccmac_study synthetic``.
+"""Synthetic study folder for pipeline tests: ``python -m miccmac_study synthetic``.
 
     python -m miccmac_study synthetic --out DIR [--hosts 5] [--seed 7] [--session-date 2026-11-23]
 

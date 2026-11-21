@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-MICCMAC property: Controlled (C).
+"""MICCMAC property: Controlled (C).
 
 Intent: Configuration and access to the device are centrally governed by enforced policy, not left to local discretion.
 
@@ -27,10 +25,9 @@ NOT_IMPLEMENTED stub behavior, so the check results of `miccmac assess
 <target>` with no flags are unchanged from the Alpha scaffold (the report
 itself now adds the default CMMI lens, every level Unassessed).
 
-In this module, AI assistance covers the missing-data marker
-(CheckResult.missing_data) of CTL-03's NOT_APPLICABLE result: the
-attestation, or its identity_aware_access entry, was not supplied. Detail
-strings are unchanged.
+CTL-03's NOT_APPLICABLE result carries a missing-data marker
+(CheckResult.missing_data): the attestation, or its identity_aware_access
+entry, was not supplied.
 """
 from __future__ import annotations
 

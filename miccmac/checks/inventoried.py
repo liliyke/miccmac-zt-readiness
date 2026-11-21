@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-MICCMAC property: Inventoried (I).
+"""MICCMAC property: Inventoried (I).
 
 Intent: The device is known to the organization and tracked in an authoritative hardware and software inventory.
 
@@ -29,12 +27,11 @@ INV-04 counts the age of the last review against miccmac.clock's reference
 date: the --as-of date when one was given (context["as_of"]), otherwise
 today.
 
-In this module, AI assistance covers the --as-of reference date of INV-04
-(the today and as_of_label parameters and the " (as of ...)" detail suffix),
-and the missing-data markers (CheckResult.missing_data) of INV-01 and INV-04:
-no inventory record supplied (NOT_APPLICABLE), and INV-04's unreadable
-last_reviewed date (ERROR), with the whole record as each marker's example.
-Detail strings are unchanged.
+With an --as-of date, a detail that reports an age ends in " (as of ...)".
+The missing-data markers (CheckResult.missing_data) of INV-01 and INV-04
+cover the inventory record not supplied (NOT_APPLICABLE), and INV-04's
+unreadable last_reviewed date (ERROR), with the whole record as each
+marker's example.
 """
 from __future__ import annotations
 

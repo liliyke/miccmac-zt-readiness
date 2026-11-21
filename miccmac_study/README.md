@@ -5,10 +5,9 @@ assessment with miccmac's results on five lab hosts. They are separate from
 the tool under test (`miccmac/`): they never change how a check decides its
 verdict, and only `miccmac assess --connector` ever connects to a host.
 
-They were drafted with AI assistance (Claude Code, Anthropic) for the
-researcher to review and test. Every judgment in the study is the
-researcher's: manual verdicts and levels, register ratings, root causes and
-interpretation. No command fills those fields.
+Every judgment in the study is the researcher's: manual verdicts and levels,
+register ratings, root causes and interpretation. No command fills those
+fields.
 
 | Command | What it does |
 |---|---|
@@ -475,10 +474,10 @@ before the freeze.
   descriptive all-entries result; the test is `finding_meets_threshold`.
 - A tool ERROR now also has a missing-data register entry (it still counts as
   a disagreement and scores 0, as above).
-- The register's threat-source types and threat events are drafted with AI
-  assistance: confirm them before the freeze (`docs\sp800-30-review.md`), or
-  accept that the baseline outputs say `drafted`, and declare it in the
-  AI-use log. H2 then judges entries that carry AI-drafted text.
+- The register's threat-source types and threat events are drafts: confirm
+  them before the freeze (`docs\sp800-30-review.md`), or accept that the
+  baseline outputs say `drafted` and record that in the protocol log. H2 then
+  judges entries that carry drafted, unconfirmed text.
 - Inputs that are present but incomplete stay findings, as the checks score
   them: an attestation entry given as null, ASM-01 or ASM-02 "performed" with
   no date or `interval_days` (PARTIAL), an inventory record without

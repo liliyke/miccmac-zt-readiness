@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for --as-of and miccmac.clock.
+"""Tests for --as-of and miccmac.clock.
 
 The four date-dependent checks (ASM-01, ASM-02, INV-04, and CUR-01 on Linux
 and on Windows) must give the same verdict and detail for a fixed as_of

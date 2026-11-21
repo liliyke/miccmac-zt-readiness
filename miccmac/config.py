@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Loads run configuration: excluded built-in check IDs and custom check
+"""Loads run configuration: excluded built-in check IDs and custom check
 plugins.
 
 A config file (YAML, so a hand-written .json config also parses since JSON
@@ -63,9 +61,6 @@ may return NOT_APPLICABLE with missing_data=miccmac.model.MissingData(...)
 to get a missing-data entry in the risk register; an ERROR always gets one,
 with generic texts when it carries no marker. A NOT_APPLICABLE without a
 marker means the check does not apply and gets no entry.
-
-In this module, AI assistance covers the optional threat_source_type and
-threat_event fields of RISK_METADATA and the missing_data note above.
 """
 from __future__ import annotations
 

@@ -1,15 +1,11 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+"""Assessment engine: runs property checks, scores them, builds the Assessment.
 
-Assessment engine: runs property checks, scores them, builds the Assessment.
-
-In this module, AI assistance covers score_statuses (the scoring rule as a
-function of statuses alone, which the risk register's next-level hints use
-to score a property as if checks were fixed) and the handling of the
-missing-data marker (CheckResult.missing_data): it is cleared on excluded
-checks and on any status other than NOT_APPLICABLE or ERROR, and a custom
-check that sets something other than a MissingData is refused. It also
-covers the refusal of a plugin whose run_checks() returns more than one
-result for a check id.
+score_statuses is the scoring rule as a function of statuses alone, which
+the risk register's next-level hints use to score a property as if checks
+were fixed. The missing-data marker (CheckResult.missing_data) is cleared on
+excluded checks and on any status other than NOT_APPLICABLE or ERROR, and a
+custom check that sets something other than a MissingData is refused, as is
+a plugin whose run_checks() returns more than one result for a check id.
 """
 from __future__ import annotations
 

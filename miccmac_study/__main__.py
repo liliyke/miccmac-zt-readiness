@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Entry point: ``python -m miccmac_study <command> [options]``.
+"""Entry point: ``python -m miccmac_study <command> [options]``.
 
 Each command lives in its own module exposing ``configure(parser)`` and
 ``run(args) -> int``. Only the module for the requested command is

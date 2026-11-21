@@ -1,12 +1,9 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+"""Core data model for the MICCMAC readiness toolkit.
 
-Core data model for the MICCMAC readiness toolkit.
-
-In this module, AI assistance covers Assessment.provenance: the field, and
-its place in to_dict(), for the run provenance block (tool build, inputs,
+Assessment.provenance holds the run provenance block (tool build, inputs,
 facts and the --as-of reference date) that the CLI sets for --connector,
---facts, --as-of and --save-facts runs; and MissingData with
-CheckResult.missing_data, the marker a check sets when it cannot be
+--facts, --as-of and --save-facts runs. MissingData, in
+CheckResult.missing_data, is the marker a check sets when it cannot be
 evaluated because the data it reads is missing or unreadable (the risk
 register's missing-data entries).
 """

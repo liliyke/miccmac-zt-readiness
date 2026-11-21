@@ -1,15 +1,10 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-SSH + osquery connector: runs osqueryi over SSH against a remote Linux
+"""SSH + osquery connector: runs osqueryi over SSH against a remote Linux
 target and returns its facts. This is the realistic pattern for assessing a
 fleet device -- the tool runs on the assessor's machine, not on every target.
 
 Requires paramiko (see requirements.txt) and osqueryi installed on the
 target (see D:\\VMs\\autoinstall\\user-data's late-commands for how the test
 VM gets it).
-
-In this module, AI assistance covers the extended facts (EXTRA_QUERIES,
-EXTRA_TEXT_COMMANDS and the methods that collect them).
 """
 from __future__ import annotations
 

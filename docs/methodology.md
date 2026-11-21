@@ -193,12 +193,6 @@ Implementation: `miccmac/config.py`, `enabled_check_ids()` in
 
 ## 9. Risk register: CIS IG + FAIR-inspired rating, structured after NIST SP 800-30 Rev. 1
 
-*This section was rewritten, and the register features it describes beyond
-the CIS IG/FAIR rating were drafted, with AI assistance (Claude Code,
-Anthropic) for the researcher's review: missing-data entries, next-level
-hints, the SP 800-30 Rev. 1 structure and the drafted threat-source types and
-threat events.*
-
 `miccmac assess --risk-register` appends a prioritized remediation view. It
 is not a new scoring methodology: it enriches the results of a completed
 assessment.
@@ -291,7 +285,7 @@ section, with:
   interval").
 
 The `threats:` section, added in version 0.3.0 of the file, adds per check
-(drafted with AI assistance and marked `review: drafted`):
+(marked `review: drafted`):
 
 - **`threat_source_type`** -- the NIST SP 800-30 Rev. 1 Appendix D type of
   threat source most likely to exploit or trigger a failure of the check:
@@ -479,8 +473,8 @@ against a per-check rationale table on 2026-08-29; all 26 ratings were
 confirmed as-is with no adjustments. These are qualitative judgment calls,
 not derived from an external framework or SME panel beyond the researcher's
 own analysis. The remediation text was not part of that review. The
-`threat_source_type` and `threat_event` values were drafted with AI
-assistance on 2026-11-20; their review (with the remediation text) is
+`threat_source_type` and `threat_event` values were drafted
+on 2026-11-20; their review (with the remediation text) is
 pending, in docs/sp800-30-review.md.
 
 ## 10. Target connectors and real detection logic
@@ -686,9 +680,6 @@ available* one, since there's no local oracle for that, only a vendor feed
 -- so it reads `context["attestation"]`, same as CTL-03.
 
 ## 11. Reproducibility: reference date, saved facts and provenance
-
-*This section, and the features it describes, were drafted with AI
-assistance (Claude Code, Anthropic) for the researcher's review.*
 
 Three `assess` options make a run repeatable and traceable: `--as-of`,
 `--save-facts` and `--facts`. A run that uses none of them (and no

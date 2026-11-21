@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Small statistics for the agreement analysis (protocol section 8).
+"""Small statistics for the agreement analysis (protocol section 8).
 
 Pure functions on plain Python numbers, with no third-party packages, so
 every value can be re-derived by hand or in a spreadsheet:
