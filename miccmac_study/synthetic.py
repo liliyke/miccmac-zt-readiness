@@ -46,7 +46,7 @@ every stage is exercised, including every safeguard a real study meets:
 The missing-owner profile (H3 in the default kit) also leaves
 firmware_currency out of its attestation, after every random draw, so CUR-03
 becomes a missing-data entry in both of its outputs and the register sheets,
-H2 and health --inputs (which then needs --allow-missing firmware_currency)
+H2 and health --inputs (which then needs --allow-missing H3:firmware_currency)
 see one end to end; every other made-up value stays the same.
 
 The manual side is derived from the tool's own verdicts, so agreement

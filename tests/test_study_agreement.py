@@ -2932,6 +2932,72 @@ def test_h2_unit_findings_puts_the_threshold_on_the_findings_row(tmp_path):
     assert summary(root)["config"]["h2_unit"] == "findings"
 
 
+def test_h2_unit_findings_labels_every_statement_of_the_threshold_result(tmp_path):
+    """Verifier findings: with h2_unit findings, section 4 still said that the
+    threshold applies to the TOTAL row and printed its result as the test,
+    summary.json named no test, section 1 did not show the unit, and the
+    hand-check pointed at the TOTAL k/n."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",), h2_unit="findings")
+    builder.inventory["H1"] = None                                   # INV-01, INV-04: missing-data entries
+    builder.judge_all("H1", {"INV-01": ("N", "Y", "Y")})
+    root = builder.build()
+    assert run_agreement(root) == 0
+    text = " ".join(out_file(root, "summary.md").read_text(encoding="utf-8").split())
+    assert "the threshold applies to the TOTAL row" not in text
+    assert ("Per-host rows are descriptive, and with h2_unit findings so is the TOTAL row's threshold result: the "
+            "threshold test is the findings row of section 4.1.") in text
+    assert "TOTAL (all entries, descriptive with h2_unit findings): k/n = " in text
+    assert "| H2 threshold unit (study.yaml h2_unit) | findings (findings only; all entries descriptive) |" in text
+    assert ("H2 threshold test (h2_unit findings, section 4.1): the TOTAL row's finding_k / finding_judged and "
+            "finding_meets_threshold") in text
+    total = _register(root)["TOTAL"]
+    test = summary(root)["h2"]["test"]
+    assert (test["unit"], test["preregistered_unit"], test["unit_is_preregistered"]) == ("findings", "findings", True)
+    assert (test["k"], test["n"]) == (int(total["finding_k"]), int(total["finding_judged"]))
+    assert test["meets_threshold"] is (total["finding_meets_threshold"] == "yes") is True
+    assert int(total["k"]) < int(total["n"])                         # all entries: INV-01 is not k
+
+
+def test_the_h2_test_block_and_section_1_for_the_default_unit(tmp_path):
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.judge_all("H1", {"MON-02": ("N", "Y", "Y")})
+    root = builder.build()
+    assert run_agreement(root) == 0
+    total = _register(root)["TOTAL"]
+    test = summary(root)["h2"]["test"]
+    assert (test["unit"], test["k"], test["n"]) == ("all-entries", int(total["k"]), int(total["n"]))
+    assert test["meets_threshold"] is (total["meets_threshold"] == "yes")
+    assert (test["needed"], test["threshold"]) == (summary(root)["h2"]["total"]["needed"], 0.8)
+    text = out_file(root, "summary.md").read_text(encoding="utf-8")
+    assert "| H2 threshold unit (study.yaml h2_unit) | all-entries (every register entry) |" in text
+    assert "Per-host rows are descriptive; the threshold applies to the TOTAL row." in " ".join(text.split())
+    assert "H2 threshold test (h2_unit findings" not in text
+
+
+def test_a_sensitivity_run_with_another_h2_unit_names_the_preregistered_one(tmp_path):
+    """Verifier finding: a --config run with h2_unit findings, after the seal
+    opened with all-entries, called findings the pre-registered unit."""
+    builder = StudyBuilder(tmp_path / "study", hosts=("H1",))
+    builder.judge_all("H1")
+    root = builder.build()
+    assert run_agreement(root) == 0                                  # the seal opens with all-entries
+    other = root / "study-h2f.yaml"
+    other.write_text(yaml.safe_dump(dict(builder.config, h2_unit="findings"), sort_keys=False), encoding="utf-8")
+    assert record(root, "STUDY", "other", other, note="h2 unit sensitivity") == 0
+    assert run_agreement(root, "--config", str(other), "--out", str(root / "h2f")) == 3
+    md = " ".join((root / "h2f" / "summary.md").read_text(encoding="utf-8").split())
+    assert "Unit pre-registered for the threshold" not in md
+    assert ("Unit used for the threshold in this run (study-h2f.yaml h2_unit): findings; the pre-registered unit is "
+            "all-entries (") in md
+    assert "The findings row below is this run's threshold test;" in md
+    assert "Findings only (this run's threshold test, a sensitivity run): k/n = " in md
+    assert ("findings (findings only; all entries descriptive); the pre-registered unit is all-entries "
+            "(sensitivity run)") in md
+    data = json.loads((root / "h2f" / "summary.json").read_text(encoding="utf-8"))
+    assert (data["h2"]["test"]["unit"], data["h2"]["test"]["preregistered_unit"],
+            data["h2"]["test"]["unit_is_preregistered"]) == ("findings", "all-entries", False)
+
+
 def test_findings_only_studies_give_the_same_counts_in_both_units(tmp_path):
     """The StudyBuilder's own register has findings only (every input
     given): the split changes nothing in the old columns."""

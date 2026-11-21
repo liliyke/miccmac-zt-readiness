@@ -24,6 +24,7 @@ import json
 import pytest
 
 from miccmac.engine import enabled_check_ids, run_assessment
+from miccmac.metadata import load_register_metadata
 from miccmac.risk_register import build_risk_register
 from miccmac_study import ledger, register_sheet
 from miccmac_study.__main__ import main
@@ -553,8 +554,9 @@ def test_missing_data_entries_get_review_rows_with_the_new_columns(study, capsys
         assert row["entry_type"] == entry["entry_type"]
         assert row["recommended_fix"] == entry["sp800_30"]["response"]
         assert row["next_level"] == entry["next_level"]["text"]
-        assert (row["threat_source_type"], row["threat_event"], row["sp800_30_review"]) == (
-            entry["sp800_30"]["threat_source_type"], entry["sp800_30"]["threat_event"], entry["sp800_30"]["review"])
+        # A field the output leaves null (no threats: section) is a blank cell.
+        assert (row["threat_source_type"], row["threat_event"], row["sp800_30_review"]) == tuple(
+            entry["sp800_30"][key] or "" for key in ("threat_source_type", "threat_event", "review"))
         if entry["entry_type"] == "missing-data":
             assert row["rating_basis"] == "if the control is absent"
             assert (row["missing_data"], row["how_to_supply"]) == (entry["missing_data"]["what"],
@@ -603,7 +605,9 @@ def test_a_forced_sheet_shows_no_next_level_hint(study, capsys):
     assert _run(study, "--force-before-unseal", "--reason", "early look") == 0
     rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)
     assert rows and all(r["next_level"] == "" for r in rows)
-    assert all(r["threat_event"] for r in rows)
+    # Only the hint is left out: the threat event is shown as the file has it (blank without threats:).
+    events = {c: m.threat_event or "" for c, m in load_register_metadata().items()}
+    assert all(r["threat_event"] == events[r["check_id"]] for r in rows)
     _hash_worksheets(study, "H2")
     assert _run(study, "--overwrite") == 0
     rows = read_csv(_sheet(study, "H1"), REGISTER_REVIEW_COLUMNS)

@@ -4,7 +4,7 @@ Health check for sealed tool outputs and saved facts files (protocol section 5).
 
     python -m miccmac_study health [--expect-as-of YYYY-MM-DD] [--expect-commit SHA]
         [--list-checks FILE] [--pair] [--ledger FILE --host H] PATH [PATH ...]
-    python -m miccmac_study health --inputs [--as-of YYYY-MM-DD] [--allow-missing NAME ...] FILE [FILE ...]
+    python -m miccmac_study health --inputs [--as-of YYYY-MM-DD] [--allow-missing [H:]NAME ...] FILE [FILE ...]
 
 After each sealed tool run the operator needs to know that the run worked,
 without seeing any result. This command reads each file, works out whether
@@ -36,12 +36,17 @@ read from it is readable, and, for a file whose name gives its role
 (<H>-attestation.json, <H>-inventory-record.json), whether it gives every entry
 the checks read from such a file. A date the tool would report as ERROR is
 named with its field and value (INV-04, ASM-01 and ASM-02 write nothing else
-into such a detail). An absent attestation entry makes its check a
+into such a detail), and so is a date that this Python reads but that is not
+written YYYY-MM-DD (Python 3.11 and later also read forms such as 20261123,
+which 3.9 and 3.10 report as ERROR), so every supported Python gives the same
+verdicts on files that pass. An absent attestation entry makes its check a
 missing-data entry of the register, so it is a PROBLEM unless it is left out on
-purpose and named with --allow-missing; an absent inventory-record entry is
-scored as a finding by INV-01 or INV-04, and is a PROBLEM the same way. Names
-are the checks' fixed entry names. No other status, score or detail is ever
-printed.
+purpose and named with --allow-missing (H:NAME for host H's files only, NAME
+for every file); an absent inventory-record entry is scored as a finding by
+INV-01 or INV-04, and is a PROBLEM the same way, while an inventory-record
+file that holds no record (JSON null) leaves both checks unevaluated, as
+missing-data entries. Names are the checks' fixed entry names. No other
+status, score or detail is ever printed.
 
 It never prints a status value, score, level, level label, readiness tier,
 check name, detail string, register entry, or a count of statuses or
@@ -56,7 +61,8 @@ match a strict pattern.
 In this module, AI assistance covers, besides the rest, the methodology and
 file-name test, the --pair methodology test, and --inputs' entry check with
 --allow-missing (added with CMMI as the default lens and the register's
-missing-data entries).
+missing-data entries), its host-scoped H:NAME form, the null-record case and
+the YYYY-MM-DD test of the dates the checks read.
 """
 from __future__ import annotations
 
@@ -645,6 +651,74 @@ _STUB_TARGET = "input-check"
 # which entries the check of an -inventory-record.json file looks for.
 INVENTORY_ENTRIES = ("device_id", "tracked", "last_reviewed")
 _ROLE_WORDS = {ATTESTATION_ROLE: "an attestation", INVENTORY_ROLE: "an inventory record"}
+# Where INV-04, ASM-01 and ASM-02 read their dates in an input file (each file
+# runs as both inputs). From Python 3.11, date.fromisoformat also reads forms
+# such as 20261123 or 2026-W47-1, which 3.9 and 3.10 refuse (ERROR there), so
+# --inputs asks for YYYY-MM-DD: then every supported Python gives the same verdict.
+_DATE_FIELDS = (("INV-04", ("last_reviewed",)),
+                ("ASM-01", ("vulnerability_scanning", "last_scan")),
+                ("ASM-02", ("compliance_assessment", "last_assessment")))
+# An entry name for --allow-missing: a JSON key the checks read (no colon).
+_ENTRY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+# The input files' role suffixes (ledger.input_role), for the host code in a file name.
+_ROLE_SUFFIXES = ("-attestation.json", "-inventory-record.json")
+
+
+def _is_strict_date(value: str) -> bool:
+    """Exactly YYYY-MM-DD (ASCII digits) and a real calendar date, as
+    miccmac.clock.parse_as_of reads --as-of."""
+    from miccmac.clock import parse_as_of
+
+    try:
+        parse_as_of(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _loose_dates(value: object) -> List[Tuple[str, str, str]]:
+    """(check id, field, value) of each date INV-04, ASM-01 or ASM-02 reads
+    from this file that is a non-empty string not written YYYY-MM-DD."""
+    loose = []
+    for check_id, keys in _DATE_FIELDS:
+        node = value
+        for key in keys:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, str) and node and not _is_strict_date(node):
+            loose.append((check_id, ".".join(keys), node))
+    return loose
+
+
+def _allowances(allow_missing: Sequence[str]) -> List[Tuple[Optional[str], str]]:
+    """(host code or None, entry name) per --allow-missing value: H:NAME
+    allows NAME in host H's input files only, NAME in every file."""
+    parsed = []
+    for raw in allow_missing:
+        host, sep, name = raw.partition(":")
+        if not sep:
+            host, name = "", raw
+        if not _ENTRY_NAME_RE.fullmatch(name):
+            raise StudyError(f"--allow-missing {raw!r} is not an entry name (NAME, or H:NAME for one host)")
+        if sep:
+            validate_host_code(host)
+        parsed.append((host or None, name))
+    return parsed
+
+
+def _file_host(path: str) -> Optional[str]:
+    """The host code a role-named input file's name gives (H3 for
+    H3-attestation.json), or None."""
+    name = PureWindowsPath(path or "").name
+    for suffix in _ROLE_SUFFIXES:
+        if name.lower().endswith(suffix) and len(name) > len(suffix):
+            return name[:-len(suffix)]
+    return None
+
+
+def _allowed_in(path: str, allowances: Sequence[Tuple[Optional[str], str]]) -> List[str]:
+    """The entry names --allow-missing allows in this file."""
+    host = (_file_host(path) or "").upper()
+    return [name for scope, name in allowances if scope is None or scope.upper() == host]
 
 
 def _error_checks(assessment) -> List[Tuple[str, str]]:
@@ -673,15 +747,24 @@ def _absent_entries(role: str, value: object, assessment) -> List[str]:
     return absent
 
 
-def _entries_result(label: str, role: str, absent: Sequence[str], allowed: Sequence[str]) -> HealthResult:
+def _entries_result(label: str, role: str, absent: Sequence[str], allowed: Sequence[str],
+                    no_record: bool = False) -> HealthResult:
+    """``no_record``: an inventory-record file that holds no record (JSON
+    null), which INV-01 and INV-04 do not evaluate (missing-data entries)."""
     test = f"{label}: every entry the checks read from {_ROLE_WORDS[role]} is given"
     unexpected = [name for name in absent if name not in allowed]
     left_out = [name for name in absent if name in allowed]
     if unexpected:
-        how = ("the inventory checks count an absent entry against the device, not as missing data"
-               if role == INVENTORY_ROLE else "each leaves its check not evaluated, as missing data")
+        if no_record:
+            how = ("the file holds no record (JSON null), so INV-01 and INV-04 are not evaluated, as "
+                   "missing-data entries")
+        elif role == INVENTORY_ROLE:
+            how = "the inventory checks count an absent entry against the device, not as missing data"
+        else:
+            how = "each leaves its check not evaluated, as missing data"
         return HealthResult(test, False, f"no, absent: {', '.join(_token(n) for n in unexpected)} ({how}; add each "
-                                         "one, or name one left out on purpose with --allow-missing NAME)")
+                                         "one, or name one left out on purpose with --allow-missing NAME or "
+                                         "H:NAME)")
     if left_out:
         return HealthResult(f"{test}, apart from {', '.join(_token(n) for n in left_out)} (--allow-missing)", True)
     return HealthResult(test, True)
@@ -695,10 +778,12 @@ def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None,
     date the checks read from it is readable, or each check that reports
     ERROR. For a file whose name gives its role (ledger.input_role), also
     report whether it gives every entry the checks read from such a file
-    (_absent_entries); an absent entry named in ``allow_missing`` is reported
-    on the ok line instead of as a PROBLEM. The file is read the way miccmac
-    reads --attestation and --inventory-record. Nothing else of the run is
-    reported."""
+    (_absent_entries); an absent entry named in ``allow_missing`` (NAME, or
+    H:NAME for the files of host H only) is reported on the ok line instead
+    of as a PROBLEM. A date the checks read that this Python reads but that
+    is not written YYYY-MM-DD is a PROBLEM too (_loose_dates). The file is
+    read the way miccmac reads --attestation and --inventory-record. Nothing
+    else of the run is reported."""
     from miccmac.cli import _load_json_file  # the tool's own reader: accept exactly what the tool accepts
     from miccmac.config import Config, ConfigError
     from miccmac.engine import run_assessment
@@ -708,9 +793,7 @@ def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None,
         if not _is_iso_date(as_of):
             raise StudyError(f"--as-of {as_of!r} must be a YYYY-MM-DD date")
         base["as_of"] = dt.date.fromisoformat(as_of)
-    for name in allow_missing:
-        if not _TOKEN_RE.fullmatch(name):
-            raise StudyError(f"--allow-missing {name!r} is not an entry name")
+    allowances = _allowances(allow_missing)
     try:
         baseline: Set[str] = {check_id for check_id, _ in
                               _error_checks(run_assessment(_STUB_TARGET, context=dict(base), config=Config()))}
@@ -732,14 +815,22 @@ def check_input_files(paths: Sequence[PathLike], as_of: Optional[str] = None,
                                         f"{type(exc).__name__}: {exc}"))
             continue
         errors = [(check_id, detail) for check_id, detail in _error_checks(assessment) if check_id not in baseline]
-        if not errors:
+        loose = [item for item in _loose_dates(value) if item[0] not in {check_id for check_id, _ in errors}]
+        if not errors and not loose:
             results.append(HealthResult(f"{label}: every date the checks read is readable", True))
         for check_id, detail in errors:
             reason = detail if check_id in _DATE_DETAIL_CHECKS else "it cannot be evaluated with this file"
             results.append(HealthResult(f"{label}: {_token(check_id)} cannot read a date", False, reason))
+        for check_id, field_name, date in loose:
+            results.append(HealthResult(
+                f"{label}: {check_id} reads a date written YYYY-MM-DD", False,
+                f"{field_name} is {_token(date)}: Python 3.11 and later read it, 3.9 and 3.10 do not "
+                "(ERROR there); write it as YYYY-MM-DD"))
         role = input_role(str(raw))
         if role in _ROLE_WORDS:
-            results.append(_entries_result(label, role, _absent_entries(role, value, assessment), allow_missing))
+            no_record = role == INVENTORY_ROLE and value is None
+            results.append(_entries_result(label, role, _absent_entries(role, value, assessment),
+                                           _allowed_in(label, allowances), no_record=no_record))
     return results
 
 
@@ -856,10 +947,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
                              "report only whether every date the checks read from them is readable.")
     parser.add_argument("--as-of", default=None, metavar="YYYY-MM-DD",
                         help="With --inputs: the reference date to run the checks with (the session date).")
-    parser.add_argument("--allow-missing", action="append", default=[], metavar="NAME",
+    parser.add_argument("--allow-missing", action="append", default=[], metavar="[H:]NAME",
                         help="With --inputs: an entry the checks read that an input file leaves out on purpose "
-                             "(for example firmware_currency); it is reported on an ok line instead of as a "
-                             "PROBLEM. Repeat for more than one.")
+                             "(for example H3:firmware_currency); it is reported on an ok line instead of as a "
+                             "PROBLEM. H:NAME allows it in host H's files only (H3-attestation.json, "
+                             "H3-inventory-record.json), NAME in every file. Repeat for more than one.")
     parser.add_argument("paths", nargs="+", metavar="PATH",
                         help="Facts files and tool outputs to check (with --inputs: input files).")
 

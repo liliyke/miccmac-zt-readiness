@@ -68,6 +68,11 @@ missing-data entries (ERROR, or an input not supplied) separately as well;
 study.yaml's h2_unit names the pre-registered test (all-entries, the
 default, or findings). The review sheet's optional next_level_accurate and
 threat_plausible answers are counted descriptively and never enter k.
+Every place that states the threshold result follows h2_unit: summary
+section 4's lead and TOTAL line, section 4.1 (which names the pre-registered
+unit when a sensitivity run uses another), section 1's run information, the
+hand-check notes, and summary.json's h2.test block (the test on the unit in
+use, with the pre-registered unit).
 In this module, AI assistance covers, besides the rest, that split, h2_unit
 and the descriptive counts.
 
@@ -3408,11 +3413,41 @@ def _summary_json(study: Study, analysis: Analysis, register_records: Optional[L
     return payload
 
 
+def _preregistered_h2_unit(study: Study) -> str:
+    """The h2_unit of the pre-registered configuration: the run's own unless
+    the configuration used differs from the reference in h2_unit (a
+    sensitivity run, _config_differences: "h2_unit A -> B")."""
+    for item in study.config_differences:
+        match = re.fullmatch(r"h2_unit (\S+) -> (\S+)", item)
+        if match:
+            return match.group(1)
+    return study.config.h2_unit
+
+
+def _h2_test(study: Study, total: Dict[str, object]) -> Dict[str, object]:
+    """The H2 threshold test on the unit this run uses (study.yaml h2_unit):
+    all entries (the TOTAL row's k/n) or findings only (its finding_*
+    columns), with the pre-registered unit, so that a reader of summary.json
+    need not pick between total.meets_threshold and
+    total.finding_meets_threshold."""
+    unit = study.config.h2_unit
+    prefix = "finding_" if unit == H2_FINDINGS else ""
+    n_key = "finding_judged" if unit == H2_FINDINGS else "n"
+    preregistered = _preregistered_h2_unit(study)
+    return {"unit": unit, "preregistered_unit": preregistered, "unit_is_preregistered": unit == preregistered,
+            "k": total[prefix + "k"], "n": total[n_key], "rate": total[prefix + "rate"],
+            "wilson_low": total[prefix + "wilson_low"], "wilson_high": total[prefix + "wilson_high"],
+            "threshold": float(study.config.threshold), "needed": total.get(prefix + "needed"),
+            "meets_threshold": total.get(prefix + "meets_threshold"),
+            "boot_low": total.get(prefix + "boot_low"), "boot_high": total.get(prefix + "boot_high")}
+
+
 def _h2_json(study: Study, records: Optional[List[Dict[str, object]]]) -> Dict[str, object]:
     if records is None:
         return {"available": False, "reason": "no register review sheets in register/"}
     return {"available": True, "methodology": study.config.primary_methodology, "unit": "register entries",
-            "h2_unit": study.config.h2_unit, "total": records[-1], "per_host": records[:-1]}
+            "h2_unit": study.config.h2_unit, "test": _h2_test(study, records[-1]), "total": records[-1],
+            "per_host": records[:-1]}
 
 
 def _summary_md(study: Study, analysis: Analysis, register_records: Optional[List[Dict[str, object]]],
@@ -3441,6 +3476,17 @@ def _summary_md(study: Study, analysis: Analysis, register_records: Optional[Lis
                       f"### 6.{number} {methodology} (secondary): within-one-level agreement")
     out += _md_hand_check(study, analysis, files)
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+def _h2_unit_text(study: Study) -> str:
+    """The unit H2's threshold is tested on in this run, and the
+    pre-registered one when they differ."""
+    unit, preregistered = study.config.h2_unit, _preregistered_h2_unit(study)
+    text = {H2_ALL_ENTRIES: "all-entries (every register entry)",
+            H2_FINDINGS: "findings (findings only; all entries descriptive)"}.get(unit, unit)
+    if preregistered != unit:
+        text += f"; the pre-registered unit is {preregistered} (sensitivity run)"
+    return text
 
 
 def _md_run_information(study: Study, files: Sequence[str], generated_at: str) -> List[str]:
@@ -3485,6 +3531,7 @@ def _md_run_information(study: Study, files: Sequence[str], generated_at: str) -
         ("Withdrawn hosts (ledger withdraw; left out)", withdrawn),
         ("Hosts outside the configuration (left out)", ", ".join(study.extra_hosts) or "none"),
         ("Threshold", threshold),
+        ("H2 threshold unit (study.yaml h2_unit)", _h2_unit_text(study)),
         ("Sensitivity run (command-line overrides, configuration differences, post-hoc exclusions)", sensitivity),
         ("Primary methodology", config.primary_methodology),
         ("Secondary methodologies", ", ".join(config.secondary_methodologies) or "none"),
@@ -3560,13 +3607,17 @@ def _md_h2(study: Study, records: Optional[List[Dict[str, object]]]) -> List[str
     if records is None:
         return out + ["Not yet available: no register review sheets in register/.", ""]
     total = records[-1]
+    findings_unit = study.config.h2_unit == H2_FINDINGS
+    threshold_text = ("Per-host rows are descriptive, and with h2_unit findings so is the TOTAL row's threshold "
+                      "result: the threshold test is the findings row of section 4.1." if findings_unit else
+                      "Per-host rows are descriptive; the threshold applies to the TOTAL row.")
     out += [f"Unit: risk-register entries of the {study.config.primary_methodology} outputs (findings and "
             "missing-data entries). An entry is judged "
             "when accurate and actionable are both answered, or when either is N (it cannot count as k whatever "
             "the other answer). n = judged entries; k = entries with accurate = Y and actionable = Y. An entry "
             "with Y and a blank, or two blanks, is not judged: a CRITICAL integrity problem, because every entry "
             "must be judged before the final analysis; not-judged entries are left out of n and counted in the "
-            "Not judged column. Per-host rows are descriptive; the threshold applies to the TOTAL row.", "",
+            "Not judged column. " + threshold_text, "",
             "The Wilson interval treats the entries as independent, although entries from the same host may be "
             "correlated, so it can be too narrow. A host-cluster bootstrap interval, which resamples whole hosts, "
             "is reported below the table as a secondary check; it does not replace the protocol's Wilson "
@@ -3575,14 +3626,15 @@ def _md_h2(study: Study, records: Optional[List[Dict[str, object]]]) -> List[str
               _fmt(r["rate"]) or "n/a", _ci(r)) for r in records]
     out += _md_table(("Host", "Entries", "Judged", "Not judged", "Accurate Y", "Actionable Y", "k/n", "Rate",
                       "Wilson 95% CI"), table)
+    label = "TOTAL (all entries, descriptive with h2_unit findings)" if findings_unit else "TOTAL"
     if total["n"]:
-        out += [f"TOTAL: k/n = {_kn(total)}, rate {_fmt(total['rate'])}, Wilson 95% CI {_ci(total)}, threshold "
+        out += [f"{label}: k/n = {_kn(total)}, rate {_fmt(total['rate'])}, Wilson 95% CI {_ci(total)}, threshold "
                 f"{_threshold_text(study.config.threshold)}, needs at least {total['needed']} of {total['n']}, "
                 f"meets threshold: {_yes_no(total['meets_threshold'])}.", "",
                 f"Secondary: host-cluster bootstrap 95% CI {_ci(total, 'boot_low', 'boot_high')} "
                 f"({_boot_text(total, 'hosts with judged entries')}).", ""]
     else:
-        out += ["TOTAL: no judged entries yet.", ""]
+        out += [f"{label}: no judged entries yet.", ""]
     if total["not_judged"]:
         out += [f"{total['not_judged']} entries are not judged and are left out of n (CRITICAL: every entry must "
                 "be judged before the final analysis; see section 2).", ""]
@@ -3594,11 +3646,19 @@ def _md_h2_by_type(study: Study, records: List[Dict[str, object]]) -> List[str]:
     (study.yaml h2_unit) and the optional descriptive judgments."""
     total = records[-1]
     unit = study.config.h2_unit
+    preregistered = _preregistered_h2_unit(study)
+    if unit == preregistered:
+        lead = f"Unit pre-registered for the threshold (study.yaml h2_unit): {unit}. "
+        test = "the H2 test"
+    else:
+        lead = (f"Unit used for the threshold in this run ({study.config_path.name} h2_unit): {unit}; the "
+                f"pre-registered unit is {preregistered} ({study.config_reference}), so this run is a "
+                "sensitivity run. ")
+        test = "this run's threshold test"
     out = ["### 4.1 By entry type", "",
-           f"Unit pre-registered for the threshold (study.yaml h2_unit): {unit}. "
-           + ("The threshold result above (TOTAL, all entries) is the H2 test; the findings row below is "
-              "descriptive." if unit == H2_ALL_ENTRIES else
-              "The findings row below is the H2 test; the TOTAL row above (all entries) is descriptive."),
+           lead + (f"The threshold result above (TOTAL, all entries) is {test}; the findings row below is "
+                   "descriptive." if unit == H2_ALL_ENTRIES else
+                   f"The findings row below is {test}; the TOTAL row above (all entries) is descriptive."),
            "",
            "Findings are FAIL or PARTIAL checks; missing-data entries are checks the tool could not evaluate "
            "(ERROR, or an organizational input not supplied).", ""]
@@ -3608,7 +3668,8 @@ def _md_h2_by_type(study: Study, records: List[Dict[str, object]]) -> List[str]:
               f"{r['missing_data_k']}/{r['missing_data_judged']}") for r in records]
     out += _md_table(("Host", "Findings", "Judged", "Findings k/n", "Rate", "Wilson 95% CI", "Missing-data entries",
                       "Judged", "Missing-data k/n"), table)
-    role = "the pre-registered H2 test" if unit == H2_FINDINGS else "descriptive"
+    role = ("descriptive" if unit != H2_FINDINGS else "the pre-registered H2 test" if unit == preregistered
+            else "this run's threshold test, a sensitivity run")
     if total["finding_judged"]:
         out += [f"Findings only ({role}): k/n = {total['finding_k']}/{total['finding_judged']}, rate "
                 f"{_fmt(total['finding_rate'])}, Wilson 95% CI {_ci(total, 'finding_wilson_low', 'finding_wilson_high')}"
@@ -3834,6 +3895,10 @@ def _md_hand_check(study: Study, analysis: Analysis, files: Sequence[str]) -> Li
                    "(accurate and actionable both answered, or either answered N), k = entries with accurate = Y "
                    "and actionable = Y, not_judged = the other entries (left out of n); the per-host rows add up "
                    "to the TOTAL row.")
+        if study.config.h2_unit == H2_FINDINGS:
+            out.append("- H2 threshold test (h2_unit findings, section 4.1): the TOTAL row's finding_k / "
+                       "finding_judged and finding_meets_threshold (its meets_threshold column is the "
+                       "descriptive all-entries result); summary.json h2.test holds the same numbers.")
         out.append(f"- Prioritization (5.7): in {name['register_h2.csv']}, prioritization_k = prioritized_y and "
                    "prioritization_n = prioritized_y + prioritized_n; UNSURE answers are left out of n.")
         out.append(f"- By entry type (4.1): in {name['register_h2.csv']}, finding_k/finding_judged and "
