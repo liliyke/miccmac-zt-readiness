@@ -129,7 +129,8 @@ your review and are still drafts:
     threat-source types and threat events it shows were drafted ...");
   - docs/methodology.md section 9: the opening note, the `threats:`
     paragraphs under "Metadata", the two "drafted, pending review" notes in
-    the SP 800-30 table, and the last two sentences of "Provenance";
+    the SP 800-30 table, and the last sentence of "Provenance" (the one
+    before it, on the 2026-08-29 review, stays);
   - miccmac_study/README.md: the paragraph after the freeze commands, the
     "drafted with AI assistance" item of "Analysis defaults to confirm before
     the freeze", and the notes on `threat_source_type`, `threat_event`,
