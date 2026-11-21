@@ -465,7 +465,11 @@ def test_health_inputs_finds_every_date_readable(pipeline, monkeypatch):
     assert [line for line in out.splitlines() if line.startswith("PROBLEM")] == [
         "PROBLEM inputs/H3-attestation.json: every entry the checks read from an attestation is given: no, absent: "
         "firmware_currency (each leaves its check not evaluated, as missing data; add each one, or name one left out "
-        "on purpose with --allow-missing NAME)"]
+        "on purpose with --allow-missing NAME or H:NAME)"]
+    # The host-scoped form the guide now uses allows the entry in H3's files only.
+    code, out, _ = _run(main, ["health", "--inputs", "--as-of", SESSION, "--allow-missing", "H3:firmware_currency",
+                               *files])
+    assert code == 0 and out.splitlines() == expected, out
 
 
 def test_h3s_missing_firmware_entry_runs_through_the_register_and_h2(pipeline):
@@ -678,7 +682,8 @@ def test_blank_worksheets_contain_no_tool_derived_text(pipeline):
     forbidden.update(m.remediation for m in metadata.values())
     forbidden.update(["IG1", "IG2", "IG3", "LOW", "MEDIUM", "HIGH", "UNRATED", "MODERATE", "CRITICAL"])
     # The SP 800-30 fields of the register: threat events, source types, review states.
-    forbidden.update(m.threat_event for m in load_register_metadata().values())
+    # (None when the threats: section is dropped, docs/sp800-30-review.md)
+    forbidden.update(m.threat_event for m in load_register_metadata().values() if m.threat_event)
     forbidden.update(["adversarial", "accidental", "structural", "environmental", "drafted", "missing-data",
                       "if the control is absent", "threat_source_type", "threat_event", "next_level"])
     # Tool statuses only: UNASSESSED is an assessor's option, named in the sheet's own instructions.
@@ -982,7 +987,7 @@ class GuideStudy:
         with_inputs = list(hosts if inputs_for is None else inputs_for)
         inputs = [path for host in with_inputs for path in self.write_inputs(host)]
         # The kit's H3 attestation leaves firmware_currency out on purpose (a missing-data entry).
-        self.ok(self.study(["health", "--inputs", "--as-of", SESSION, "--allow-missing", "firmware_currency",
+        self.ok(self.study(["health", "--inputs", "--as-of", SESSION, "--allow-missing", "H3:firmware_currency",
                             *inputs]))
         self.record("STUDY", "list-checks", "inputs/list-checks.json")
         self.ok(self.study(["ledger", "record", "--ledger", "ledger.csv", "--host", "STUDY", "--kind", "other",

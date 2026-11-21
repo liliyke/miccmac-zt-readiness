@@ -263,7 +263,8 @@ def test_output_never_reveals_results(study, capsys):
         assert value not in output
     for word in ("adversarial", "accidental", "structural", "environmental", "drafted", "missing-data"):
         assert word not in output
-    threat_events = {m.threat_event for m in load_register_metadata().values()}
+    # (None when the threats: section is dropped, docs/sp800-30-review.md)
+    threat_events = {m.threat_event for m in load_register_metadata().values() if m.threat_event}
     assert [e for e in threat_events if e in output] == []
     remediations = {m.remediation for m in load_check_metadata().values()}
     assert [r for r in remediations if r in output] == []
@@ -1004,7 +1005,7 @@ def test_an_absent_attestation_entry_is_a_problem_unless_allowed(tmp_path, capsy
     assert _problems(lines) == [
         f"PROBLEM {att}: every entry the checks read from an attestation is given: no, absent: firmware_currency "
         "(each leaves its check not evaluated, as missing data; add each one, or name one left out on purpose with "
-        "--allow-missing NAME)"]
+        "--allow-missing NAME or H:NAME)"]
     rc, lines = _health(capsys, "--inputs", "--allow-missing", "firmware_currency", att)
     assert rc == 0
     assert lines[-1] == (f"ok      {att}: every entry the checks read from an attestation is given, apart from "
@@ -1029,7 +1030,7 @@ def test_an_absent_inventory_entry_is_a_problem_too(tmp_path, capsys):
     assert _problems(lines) == [
         f"PROBLEM {inv}: every entry the checks read from an inventory record is given: no, absent: tracked, "
         "last_reviewed (the inventory checks count an absent entry against the device, not as missing data; add "
-        "each one, or name one left out on purpose with --allow-missing NAME)"]
+        "each one, or name one left out on purpose with --allow-missing NAME or H:NAME)"]
 
 
 def test_allow_missing_is_only_for_inputs_and_takes_an_entry_name(study, tmp_path, capsys):
@@ -1050,3 +1051,77 @@ def test_inputs_report_a_broken_mappings_file_as_an_error(tmp_path, capsys, monk
     att = _input_file(tmp_path, "H1-attestation.json", ATTESTATION)
     assert main(["health", "--inputs", str(att)]) == 2
     assert capsys.readouterr().err.startswith("error: miccmac cannot run its checks here: data/control-mappings.yaml")
+
+
+# ---------- --inputs: fixes of the verification round (null record, H:NAME, YYYY-MM-DD) ----------
+# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+
+def test_a_null_inventory_record_is_reported_as_missing_data(tmp_path, capsys):
+    """Verifier finding: for a record file holding JSON null the line said the
+    checks count the absent entries against the device; the tool makes INV-01
+    and INV-04 missing-data entries instead."""
+    inv = _input_file(tmp_path, "H5-inventory-record.json", "null")
+    rc, lines = _health(capsys, "--inputs", inv)
+    assert rc == 1
+    assert _problems(lines) == [
+        f"PROBLEM {inv}: every entry the checks read from an inventory record is given: no, absent: device_id, "
+        "tracked, last_reviewed (the file holds no record (JSON null), so INV-01 and INV-04 are not evaluated, as "
+        "missing-data entries; add each one, or name one left out on purpose with --allow-missing NAME or H:NAME)"]
+    checks = {c.check_id: c for p in run_assessment("x", context={"facts": {}, "inventory_record": None}).properties
+              for c in p.checks}
+    assert all(checks[c].missing_data is not None for c in ("INV-01", "INV-04"))     # what the line says
+
+
+def test_allow_missing_can_name_one_host(tmp_path, capsys):
+    """Verifier finding: an allowance meant for one host also hid the same
+    omission in every other host's file."""
+    h3 = _input_file(tmp_path, "H3-attestation.json", ATTESTATION)
+    h4 = _input_file(tmp_path, "H4-attestation.json", ATTESTATION)
+    rc, lines = _health(capsys, "--inputs", "--allow-missing", "H3:firmware_currency", h3, h4)
+    assert rc == 1
+    assert (f"ok      {h3}: every entry the checks read from an attestation is given, apart from firmware_currency "
+            "(--allow-missing)") in lines
+    assert _problems(lines) == [
+        f"PROBLEM {h4}: every entry the checks read from an attestation is given: no, absent: firmware_currency "
+        "(each leaves its check not evaluated, as missing data; add each one, or name one left out on purpose with "
+        "--allow-missing NAME or H:NAME)"]
+    rc, lines = _health(capsys, "--inputs", "--allow-missing", "h3:firmware_currency", h3)   # any letter case
+    assert rc == 0
+    rc, lines = _health(capsys, "--inputs", "--allow-missing", "firmware_currency", h3, h4)  # every file
+    assert rc == 0
+
+
+@pytest.mark.parametrize("value", ["H3:", ":firmware_currency", "H 3:firmware_currency", "H3:a:b"])
+def test_a_malformed_host_allowance_is_refused(tmp_path, capsys, value):
+    att = _input_file(tmp_path, "H3-attestation.json", ATTESTATION)
+    assert main(["health", "--inputs", "--allow-missing", value, str(att)]) == 2
+    err = capsys.readouterr().err
+    assert "is not an entry name" in err or "invalid host code" in err
+
+
+@pytest.mark.parametrize("date", ["20261101", "2026-W44-7"])
+def test_a_date_only_newer_pythons_read_is_a_problem(tmp_path, capsys, date):
+    """Verifier finding: from Python 3.11 date.fromisoformat also reads
+    compact and week dates, which 3.9 and 3.10 report as ERROR; --inputs asks
+    for YYYY-MM-DD so that every supported Python gives the same verdict."""
+    att = _input_file(tmp_path, "H1-attestation.json", dict(
+        ATTESTATION, firmware_currency={"current": True},
+        compliance_assessment={"performed": True, "last_assessment": date, "interval_days": 30}))
+    inv = _input_file(tmp_path, "H1-inventory-record.json", dict(INVENTORY, last_reviewed=date))
+    rc, lines = _health(capsys, "--inputs", "--as-of", AS_OF, att, inv)
+    assert rc == 1
+    problems = _problems(lines)
+    tail = ": Python 3.11 and later read it, 3.9 and 3.10 do not (ERROR there); write it as YYYY-MM-DD"
+    readable_here = True
+    try:
+        dt.date.fromisoformat(date)
+    except ValueError:
+        readable_here = False
+    if readable_here:     # Python 3.11 and later
+        assert problems == [
+            f"PROBLEM {att}: ASM-02 reads a date written YYYY-MM-DD: compliance_assessment.last_assessment is "
+            f"{date}{tail}",
+            f"PROBLEM {inv}: INV-04 reads a date written YYYY-MM-DD: last_reviewed is {date}{tail}"]
+    else:                 # Python 3.9 and 3.10: the checks report ERROR, named as before
+        assert [p.split(": ")[1] for p in problems] == ["ASM-02 cannot read a date", "INV-04 cannot read a date"]
+    assert not any(f"{att}: every date the checks read is readable" in line for line in lines)

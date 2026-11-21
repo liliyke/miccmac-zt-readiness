@@ -102,15 +102,22 @@ checks read from it:
 
 Use the first session's date for `--as-of`. Every line must start with
 `ok`. A PROBLEM names the field and your value: fix the file and run it
-again. `every entry the checks read from an attestation is given: no,
-absent: <names>` names entries the file leaves out: each would leave its
-check unevaluated, as a missing-data entry of the register that the H2
-reviewers then judge. Add them. Only an entry left out on purpose (a
-decision you record in the protocol log) is named with `--allow-missing
-<name>` (repeat it for each), which turns the PROBLEM into an ok line. For
-an inventory record the line names an absent `device_id`, `tracked` or
-`last_reviewed`, which INV-01 or INV-04 would count against the device.
-Then hash the fixed inputs:
+again. Write every date as YYYY-MM-DD: `reads a date written YYYY-MM-DD`
+names one that this Python reads but Python 3.9 and 3.10 would not (for
+example 20261123). `every entry the checks read from an attestation is
+given: no, absent: <names>` names entries the file leaves out: each would
+leave its check unevaluated, as a missing-data entry of the register that
+the H2 reviewers then judge. Add them. Only an entry left out on purpose
+(a decision you record in the protocol log) is named, with its host:
+`--allow-missing <H>:<name>`, for example `--allow-missing
+H3:firmware_currency` (repeat it for each). That turns this host's PROBLEM
+into an ok line that names the entry. A plain `--allow-missing <name>`
+would allow the name in every host's file, so the same omission made by
+mistake elsewhere would pass too. For an inventory record the line names
+an absent `device_id`, `tracked` or `last_reviewed`, which INV-01 or
+INV-04 would count against the device (a FAIL finding); a file that holds
+no record at all (JSON null) leaves both checks unevaluated, as
+missing-data entries, and the line says so. Then hash the fixed inputs:
 
     & $py -m miccmac_study ledger record --ledger ledger.csv --host STUDY --kind list-checks inputs\list-checks.json
     & $py -m miccmac_study ledger record --ledger ledger.csv --host STUDY --kind other --note "study configuration" study.yaml
@@ -151,16 +158,22 @@ section 2). New files count, so add them before you commit:
 
 The status line must print nothing. The last line prints the commit that
 step 8 checks (`$commit`). The study venv uses Python 3.12; any supported
-Python (3.9 or later) gives the same verdicts, including Windows CUR-01.
+Python (3.9 or later) gives the same verdicts, including Windows CUR-01,
+whose timestamps the tool normalizes, as long as the input files pass
+`health --inputs`: its YYYY-MM-DD test covers every date the checks read
+from them. CI runs the test suite on Python 3.9, 3.11 and 3.12 when the tool
+repository is pushed: check that the run for the frozen commit passed.
 
-The tool changed on 20 November 2026: CMMI became its default maturity
-lens, and the risk register gained missing-data entries, next-level hints
-and fields arranged after NIST SP 800-30 Rev. 1, whose drafted threat-source
-types and events await your review in `docs\sp800-30-review.md`. Confirm or
-correct them before this freeze, then run the test suite and the synthetic
-kit again (test checklist steps 1, 2 and 6); if the review cannot finish in
-time, that file says how to keep `data\` unchanged during the study. Never
-edit `miccmac\` or `data\` between this freeze and the last host's tool run.
+The tool changed on 20 November 2026 (version 0.2.0): CMMI became its
+default maturity lens, and the risk register gained missing-data entries,
+next-level hints and fields arranged after NIST SP 800-30 Rev. 1, whose
+drafted threat-source types and events await your review in
+`docs\sp800-30-review.md` (it lists five events redrafted after a
+verification pass: review those first). Confirm or correct them before
+this freeze, then run the test suite and the synthetic kit again (test
+checklist steps 1, 2 and 6); if the review cannot finish in time, that
+file says how to keep `data\` unchanged during the study. Never edit
+`miccmac\` or `data\` between this freeze and the last host's tool run.
 
 ## Per host
 
@@ -264,7 +277,7 @@ reports it).
   a facts file. A repeated command is refused before anything runs
   (`error: refusing to replace ...`): choose a new file name. `--overwrite`
   is for scratch files only, never `outputs\`. A later re-test goes to a
-  new folder, for example `retest-v0.2\`.
+  new folder, for example `retest-v0.3\`.
 - Step 8: every line should start with `ok`. These are expected:
   - `ok ... extended facts: N of M items collected (not collected: ...)`:
     some extended items need elevation; no check reads them.
@@ -453,7 +466,11 @@ before the freeze.
   way (summary section 4.1, `register_h2.csv`), so choose the pre-registered
   unit before the freeze. An entry for a missing input is close to
   automatically accurate when the input really is missing, so the split
-  matters for reading H2.
+  matters for reading H2. Summary section 1 shows the unit, section 4
+  says which row holds the threshold test, and `summary.json`'s `h2.test`
+  holds that test's k, n, interval and result. With `h2_unit: findings`,
+  the TOTAL row's `meets_threshold` in `register_h2.csv` is the
+  descriptive all-entries result; the test is `finding_meets_threshold`.
 - A tool ERROR now also has a missing-data register entry (it still counts as
   a disagreement and scores 0, as above).
 - The register's threat-source types and threat events are drafted with AI
@@ -464,9 +481,23 @@ before the freeze.
   them: an attestation entry given as null, ASM-01 or ASM-02 "performed" with
   no date or `interval_days` (PARTIAL), an inventory record without
   `device_id`, `tracked` or `last_reviewed` (FAIL). The one fix per check does
-  not always match a PARTIAL result (CTL-02 "no elevation path", ASM-01 and
-  ASM-02 "no date or interval"): a known limitation for the actionability
-  judgments.
+  not always match the result, a known limitation for the actionability
+  judgments: CTL-02 PARTIAL ("no elevation path"); CTL-02 FAIL (root not
+  locked, or the built-in Administrator enabled: the fix removes standing
+  administrator rights from routine accounts, and neither locks root nor
+  disables the account); MON-01 PARTIAL on Linux (journald active, no
+  syslog daemon: the fix names auditd); MON-04 PARTIAL on Windows (Event Log
+  running, Sysmon not: the fix's audit policy cannot make the check pass,
+  which needs Sysmon; likely on stock Windows hosts); ASM-01 and ASM-02
+  PARTIAL ("no date or interval"). Decide in protocol section 7 how such an
+  entry's `actionable` is judged.
+- Whether the tool's level cutoffs count as blinded. Since CMMI is the
+  default lens, a step-5 line cut right after `assess` or `$ip` prints the
+  stub report with the CMMI legend's score bands (no result; step 5's
+  notes). The bands are public in `docs\methodology.md` section 7, and the
+  worksheet leaves them out. Decide in the protocol whether seeing them
+  between blind passes matters; if it does, a cut line is a deviation for
+  the protocol log.
 - Prioritization rate = Y / (Y + N): UNSURE is left out of n and counted
   separately; no threshold.
 - The level rule (decision 4), in study.yaml:
@@ -537,7 +568,7 @@ step 2:
        Set-Location $env:TEMP\miccmac-check\synthetic
        & $py -m miccmac_study health --expect-as-of 2026-11-23 --list-checks inputs\list-checks.json (Get-ChildItem outputs\*.json).FullName
        foreach ($h in "H1","H2","H3","H4","H5") { & $py -m miccmac_study health --pair --ledger ledger.csv --host $h "outputs\$h-facts.json" "outputs\$h-cmmi.json" "outputs\$h-cisa-ztmm.json" }
-       & $py -m miccmac_study health --inputs --as-of 2026-11-23 --allow-missing firmware_currency (Get-ChildItem inputs\*-attestation.json, inputs\*-inventory-record.json).FullName
+       & $py -m miccmac_study health --inputs --as-of 2026-11-23 --allow-missing H3:firmware_currency (Get-ChildItem inputs\*-attestation.json, inputs\*-inventory-record.json).FullName
        & $py -m miccmac_study ledger verify --ledger ledger.csv
        & $py -m miccmac_study ledger status --ledger ledger.csv --hosts H1,H2,H3,H4,H5
 
@@ -548,8 +579,12 @@ step 2:
    show `(not collected: audit_policy)` on an ok line, as a Windows host
    without elevation would. The kit's H3 attestation leaves
    `firmware_currency` out on purpose, hence `--allow-missing
-   firmware_currency` (its ok line names it): H3's register has a CUR-03
-   missing-data row, and summary section 4.1 counts it. The `STUDY
+   H3:firmware_currency` (its ok line names it): H3's register has a CUR-03
+   missing-data row, and summary section 4.1 counts it. That is the only
+   kind of missing-data entry the kit shows (an attestation entry left
+   out); ERROR entries, unreadable values and entries for an inventory
+   record are covered by the unit tests (`tests\test_study_register_sheet.py`,
+   `tests\test_study_agreement.py`), not by the kit. The `STUDY
    protocol` row of `ledger status` is register-sheet's seal opening while
    the kit was built.
 3. Blank worksheet (10 min). Open `blank-worksheets\H1-worksheet.csv` in
@@ -629,6 +664,11 @@ step 2:
      `foreach` lines.
    - Inputs: copy the synthetic ones (their `"synthetic": true` key is read
      by no check): `Copy-Item "$syn\inputs\H1-*.json", "$syn\inputs\H2-*.json", "$syn\inputs\H3-*.json" inputs\`
+   - Setup's `health --inputs` line: add `--allow-missing
+     H3:firmware_currency`, because the kit's H3 attestation leaves that
+     entry out on purpose (step 2); without it the line prints `PROBLEM
+     ...H3-attestation.json: every entry ... is given: no, absent:
+     firmware_currency`.
    - Per host, for H1 and H2 only: `$day = "2026-11-23"` and
      `$commit = git -C $repo rev-parse HEAD`.
    - Step 2: fake values. First type one level that does not follow your
