@@ -205,35 +205,37 @@ checks:
 # docs/sp800-30-review.md, as was done for cis_ig/fair_* on 2026-08-29.
 #
 # threat_source_type: the SP 800-30 Appendix D threat-source type most likely
-#   to exploit a failure of this check: adversarial, accidental, structural or
-#   environmental. A judgment per check, not an analysis of any organization's
+#   to exploit or trigger a failure of this check: adversarial, accidental,
+#   structural or environmental. A judgment per check, not an analysis of any organization's
 #   threats.
 # threat_event: a short, generic threat event for the check (not threat
 #   intelligence).
 # The other SP 800-30 elements come from existing fields (likelihood =
 # fair_frequency, impact = fair_magnitude, risk = the matrix rating): see
 # docs/methodology.md section 9. The FAIR bands were rated for how often
-# adversaries exploit the failure in the wild, so on an accidental or
-# structural row they stand in for likelihood and impact.
+# adversaries exploit the failure in the wild, so on an accidental,
+# structural or environmental row they stand in for likelihood and impact.
 #
 # This section is read only for the risk register: list-checks, an assessment
 # without --risk-register and the study's worksheet and input checks read
-# 'checks:' alone. When present it must cover every check of 'checks:'.
+# 'checks:' alone, so a wrong value here stops only register runs. A YAML
+# syntax error anywhere in this file (an unbalanced quote, for example) stops
+# every command. When present it must cover every check of 'checks:'.
 threats:
   - { check_id: MON-01, threat_source_type: adversarial, review: drafted, threat_event: "An intruder acts on the device without leaving a security-log record, so the compromise is neither detected nor investigated." }
   - { check_id: MON-02, threat_source_type: adversarial, review: drafted, threat_event: "An intruder deletes or alters the device's local logs to hide a compromise, and no copy of them exists off the device." }
-  - { check_id: MON-03, threat_source_type: adversarial, review: drafted, threat_event: "Malware runs on the device and spreads, with no endpoint telemetry agent to detect or contain it." }
+  - { check_id: MON-03, threat_source_type: adversarial, review: drafted, threat_event: "Malware runs on the device and spreads, with no endpoint telemetry agent to detect or investigate it." }
   - { check_id: MON-04, threat_source_type: adversarial, review: drafted, threat_event: "An attacker logs on with stolen credentials or escalates privileges, and those logons, privilege use and processes are not audited." }
   - { check_id: INV-01, threat_source_type: adversarial, review: drafted, threat_event: "An attacker targets a device the organization does not know it has, which therefore misses patching, monitoring and policy." }
-  - { check_id: INV-02, threat_source_type: adversarial, review: drafted, threat_event: "A device is stolen or its hardware swapped, and the change cannot be traced because its make, model and serial are not recorded." }
+  - { check_id: INV-02, threat_source_type: adversarial, review: drafted, threat_event: "An attacker substitutes or clones a device, and the change goes unnoticed because the device's make, model and serial are not recorded to match it against." }
   - { check_id: INV-03, threat_source_type: adversarial, review: drafted, threat_event: "An attacker exploits vulnerable or unauthorized software the organization cannot see on the device, so it is never patched or removed." }
   - { check_id: INV-04, threat_source_type: accidental, review: drafted, threat_event: "Administrators act on an out-of-date asset record, so changes to the device's owner, role or configuration go unnoticed." }
   - { check_id: CTL-01, threat_source_type: adversarial, review: drafted, threat_event: "An attacker exploits an insecure local setting that no central configuration-management system enforces or corrects." }
-  - { check_id: CTL-02, threat_source_type: adversarial, review: drafted, threat_event: "An attacker who compromises a routine account, or logs on directly as root or the built-in Administrator, gains full control of the device." }
+  - { check_id: CTL-02, threat_source_type: adversarial, review: drafted, threat_event: "An attacker who obtains the root or built-in Administrator password logs on to that account directly, gaining full control of the device with no named-account audit trail." }
   - { check_id: CTL-03, threat_source_type: adversarial, review: drafted, threat_event: "An attacker with stolen credentials reaches the device's resources from an untrusted context, because access is not checked against identity-aware policy." }
   - { check_id: CTL-04, threat_source_type: accidental, review: drafted, threat_event: "A change by an administrator or user moves the device away from its secure baseline, and the drift is neither detected nor reverted." }
-  - { check_id: CLM-01, threat_source_type: accidental, review: drafted, threat_event: "Decisions about the device's risks, such as fixes, exceptions or retirement, are never made, because no accountable business owner is on record." }
-  - { check_id: CLM-02, threat_source_type: accidental, review: drafted, threat_event: "Security alerts, patches and incidents for the device go unhandled, because no responsible administrator or team is identified." }
+  - { check_id: CLM-01, threat_source_type: accidental, review: drafted, threat_event: "A person without authority over the device accepts one of its risks, such as an exception to a security fix, because no accountable business owner is on record to decide it." }
+  - { check_id: CLM-02, threat_source_type: accidental, review: drafted, threat_event: "An administrator who does not know they are responsible for the device leaves a security alert or patch for it unactioned, because no responsible administrator or team is identified." }
   - { check_id: CLM-03, threat_source_type: accidental, review: drafted, threat_event: "Sensitive data on the device is handled without the protection its classification calls for, because its purpose and classification are not documented." }
   - { check_id: MIN-01, threat_source_type: adversarial, review: drafted, threat_event: "An attacker exploits a legacy or unneeded network service running on the device, such as telnet, rsh, FTP or SNMP." }
   - { check_id: MIN-02, threat_source_type: adversarial, review: drafted, threat_event: "An attacker exploits a flaw in legacy or unneeded software, or in an enabled legacy feature such as SMBv1, on the device." }

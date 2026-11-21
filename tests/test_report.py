@@ -83,3 +83,20 @@ def test_the_legend_explains_a_missing_input_only_when_a_check_lacks_one():
         "or not evaluated")
     stub = run_assessment("x")
     assert line not in to_text(stub) and line not in to_markdown(stub)
+
+
+def test_cisa_ztmm_levels_are_shown_as_stages_and_cmmi_levels_as_levels():
+    """Verifier finding (fix round; drafted with AI assistance for the
+    researcher's review): a CISA ZTMM scorecard said 'Level 2/4' while the
+    register's hints in the same output say 'CISA ZTMM stage 2'."""
+    prop = PropertyResult(key="monitored", letter="M", title="Monitored", score=50.0)
+    assessment = Assessment(target="x", properties=[prop], overall_score=50.0, readiness_tier="Developing")
+    assessment.methodology = apply_methodology(assessment, "cisa-ztmm")
+    for out in (to_text(assessment), to_markdown(assessment)):
+        assert "Stage 2/4 - Initial (33.3%)" in out and "Level 2/4" not in out
+        assert "Stage 1 Traditional" in out and "Level 1 Traditional" not in out
+        assert "maturity stages" in out
+    assessment.methodology = apply_methodology(assessment, "cmmi")
+    for out in (to_text(assessment), to_markdown(assessment)):
+        assert "Level 3/5 - Defined (50.0%)" in out and "Stage" not in out
+        assert "maturity levels" in out

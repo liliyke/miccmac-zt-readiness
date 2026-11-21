@@ -7,7 +7,9 @@ function of statuses alone, which the risk register's next-level hints use
 to score a property as if checks were fixed) and the handling of the
 missing-data marker (CheckResult.missing_data): it is cleared on excluded
 checks and on any status other than NOT_APPLICABLE or ERROR, and a custom
-check that sets something other than a MissingData is refused.
+check that sets something other than a MissingData is refused. It also
+covers the refusal of a plugin whose run_checks() returns more than one
+result for a check id.
 """
 from __future__ import annotations
 
@@ -157,7 +159,15 @@ def run_assessment(
 
         for plugin in plugins_by_property.get(module.KEY, []):
             plugin_checks = plugin.run_checks(target, context)
-            returned_ids = {c.check_id for c in plugin_checks}
+            returned = [c.check_id for c in plugin_checks]
+            returned_ids = set(returned)
+            duplicates = sorted(cid for cid in returned_ids if returned.count(cid) > 1)
+            if duplicates:
+                # One result per check id: the register and its next-level hints key checks by id.
+                raise ConfigError(
+                    f"custom check plugin {plugin.module_name!r}: run_checks() returned more than one "
+                    f"result for {duplicates}; return exactly one per id in CHECK_IDS"
+                )
             if returned_ids != set(plugin.check_ids):
                 raise ConfigError(
                     f"custom check plugin {plugin.module_name!r} declared "

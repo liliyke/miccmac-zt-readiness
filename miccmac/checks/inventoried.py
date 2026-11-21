@@ -21,8 +21,9 @@ cross-platform facts["system_info"] key on both platforms.
 
 When no connector was used at all (context has no "facts" key -- the
 scaffold/default invocation), all four checks fall back to the original
-NOT_IMPLEMENTED stub behavior so `miccmac assess <target>` with no flags is
-unchanged from the Alpha scaffold.
+NOT_IMPLEMENTED stub behavior, so the check results of `miccmac assess
+<target>` with no flags are unchanged from the Alpha scaffold (the report
+itself now adds the default CMMI lens, every level Unassessed).
 
 INV-04 counts the age of the last review against miccmac.clock's reference
 date: the --as-of date when one was given (context["as_of"]), otherwise
@@ -32,7 +33,8 @@ In this module, AI assistance covers the --as-of reference date of INV-04
 (the today and as_of_label parameters and the " (as of ...)" detail suffix),
 and the missing-data markers (CheckResult.missing_data) of INV-01 and INV-04:
 no inventory record supplied (NOT_APPLICABLE), and INV-04's unreadable
-last_reviewed date (ERROR). Detail strings are unchanged.
+last_reviewed date (ERROR), with the whole record as each marker's example.
+Detail strings are unchanged.
 """
 from __future__ import annotations
 
@@ -59,9 +61,13 @@ _CONTROL_REFS = {
 
 # What valid inventory-record data looks like, for the risk register's
 # missing-data entries (upper-case placeholders, no <> or |, which markdown
-# would hide or split).
-INV01_EXPECTED = '{"device_id": "ASSET ID", "tracked": true or false}'
-INV04_EXPECTED = '{"last_reviewed": "YYYY-MM-DD"}'
+# would hide or split). INV-01 and INV-04 read one shared record, and an
+# entry absent from a supplied record counts against the device (a FAIL), so
+# each check's example gives the whole record: following one entry's example
+# must not turn the other check into a finding.
+INVENTORY_RECORD_EXPECTED = '{"device_id": "ASSET ID", "tracked": true or false, "last_reviewed": "YYYY-MM-DD"}'
+INV01_EXPECTED = INVENTORY_RECORD_EXPECTED
+INV04_EXPECTED = INVENTORY_RECORD_EXPECTED
 DATE_EXPECTED = "a YYYY-MM-DD date"
 
 _NAMES = {
