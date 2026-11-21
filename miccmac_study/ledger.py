@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-SHA-256 ledger of study files (protocol section 5), and the seal that keeps
+"""SHA-256 ledger of study files (protocol section 5), and the seal that keeps
 tool results hidden until every host's worksheet is hashed.
 
     python -m miccmac_study ledger record --ledger FILE --host H --kind KIND [--note TEXT]
@@ -1455,8 +1453,7 @@ def _kind_mismatch(path: Path, kind: str) -> str:
     a tool output named <H>-<methodology>.json must hold that methodology
     (formats.methodology_name_problem: CMMI is the tool's default lens, so a
     command that lost its --methodology writes CMMI levels under another
-    name). The last check was drafted with AI assistance (Claude Code,
-    Anthropic) for the researcher's review, with the default lens."""
+    name)."""
     if kind in (FACTS_KIND, TOOL_OUTPUT_KIND):
         try:
             with open(path, "rb") as fh:

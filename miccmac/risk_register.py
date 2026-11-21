@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Risk register: one entry per check that needs attention, joined with that
+"""Risk register: one entry per check that needs attention, joined with that
 check's CIS Implementation Group + FAIR-inspired risk metadata (from
 miccmac.metadata), in priority order.
 
@@ -55,11 +53,6 @@ Each entry also carries:
   This is not an SP 800-30 risk assessment: there is no
   organization-specific threat analysis, no SP 800-30 assessment scale or
   table, and no quantitative estimate.
-
-In this module, AI assistance covers the whole module as it now stands: the
-missing-data entries, the next-level hints, the SP 800-30 fields, the order
-and the text and markdown rendering. The 3x3 matrix and the CIS IG/FAIR
-legend text are unchanged.
 """
 from __future__ import annotations
 
@@ -648,7 +641,7 @@ _QUALITATIVE_TEXT = "Qualitative throughout: no quantitative (FAIR/Monte Carlo) 
 _STAND_IN_TEXT = ("The FAIR bands were rated for how often adversaries exploit the failure in the wild; on an "
                   "accidental, structural or environmental row they stand in for likelihood and impact and were "
                   "not rated for that threat source.")
-_DRAFTED_TEXT = ("(drafted) marks a threat source type and event drafted with AI assistance for the researcher's "
+_DRAFTED_TEXT = ("(drafted) marks a threat source type and event drafted for the researcher's "
                  "review and not yet confirmed (docs/sp800-30-review.md).")
 _LEVELS_CAVEAT = ("Levels and stages are this tool's score bands under CMMI or CISA ZTMM names "
                   "(docs/methodology.md section 7), not a CMMI appraisal or a CISA assessment; the top band "

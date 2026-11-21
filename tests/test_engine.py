@@ -155,8 +155,7 @@ def run_checks(target, context):
 
 
 def test_custom_check_returning_two_results_for_one_id_raises_configerror(tmp_path):
-    """Verifier finding (fix round, drafted with AI assistance for the
-    researcher's review): a plugin that returned DD-01 twice passed the id
+    """Verifier finding (fix round): a plugin that returned DD-01 twice passed the id
     check (a set) and later crashed the register's next-level hint (KeyError)."""
     plugin_src = '''
 from miccmac.model import CheckResult, Status

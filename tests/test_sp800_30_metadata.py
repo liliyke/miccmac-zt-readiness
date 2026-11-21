@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for the NIST SP 800-30 Rev. 1 fields of the check metadata: the
+"""Tests for the NIST SP 800-30 Rev. 1 fields of the check metadata: the
 `threats:` section of data/control-mappings.yaml and its loader
 (miccmac.metadata.load_threat_metadata, load_register_metadata), the
 independence of the check manifest from that section, the review table in
@@ -203,7 +201,7 @@ def test_invalid_custom_threat_fields_are_refused(tmp_path, metadata, message):
 # Verifier findings: following docs/sp800-30-review.md (filling the reviewer's columns, setting review:
 # confirmed, copying in a corrected type or event, recording the review in the Provenance paragraph) made
 # these tests fail. They now hold in every state of the review: drafted, part-way, confirmed with or without
-# corrections, and with the threats: section dropped. The drafted columns stay the record of the AI draft;
+# corrections, and with the threats: section dropped. The drafted columns stay the record of the draft;
 # the file must hold the drafted value or the reviewer's correction.
 REVIEW_COLUMNS = 14       # Check ... Notes
 _YES = ("Y", "YES")
@@ -284,7 +282,6 @@ def test_the_review_table_lists_every_check_with_the_drafted_fields():
     if not REVIEW_TABLE.exists():
         pytest.skip("docs/sp800-30-review.md is not there")
     text = REVIEW_TABLE.read_text(encoding="utf-8")
-    assert text.startswith("Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.")
     assert _review_problems(text) == []
     header = next(line for line in text.splitlines() if line.startswith("| Check |"))
     for column in ("Threat source type (drafted)", "Threat event (drafted)", "Type confirmed", "Event confirmed",

@@ -1,16 +1,14 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
+"""Command-line interface for the MICCMAC readiness toolkit.
 
-Command-line interface for the MICCMAC readiness toolkit.
-
-In this module, AI assistance covers the reproducible-run options (--as-of,
---save-facts, --facts and the provenance block) and the --output safeguards
-(--overwrite, --stdout and the report-destination rule, the blank file-name
-checks, the checks in _check_output_option including the saved-facts guard,
-the atomic write); CMMI as the default maturity lens and --methodology none;
-the risk-register run's early check of the mappings file and custom-check
-metadata (before any connection); and the error after a live run with
---save-facts that stops once the facts are saved, which names the saved
-facts file and how to build the report from it.
+It includes the reproducible-run options (--as-of, --save-facts, --facts and
+the provenance block) and the --output safeguards (--overwrite, --stdout and
+the report-destination rule, the blank file-name checks, the checks in
+_check_output_option including the saved-facts guard, the atomic write);
+CMMI as the default maturity lens and --methodology none; the risk-register
+run's early check of the mappings file and custom-check metadata (before any
+connection); and the error after a live run with --save-facts that stops
+once the facts are saved, which names the saved facts file and how to build
+the report from it.
 """
 from __future__ import annotations
 

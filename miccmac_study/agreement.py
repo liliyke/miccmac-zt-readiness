@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Agreement analysis (protocol section 8): ``python -m miccmac_study agreement``.
+"""Agreement analysis (protocol section 8): ``python -m miccmac_study agreement``.
 
     python -m miccmac_study agreement --study-dir DIR [--config FILE]
         [--threshold X] [--tool-side-rule RULE] [--overall-rule RULE]
@@ -73,8 +71,6 @@ section 4's lead and TOTAL line, section 4.1 (which names the pre-registered
 unit when a sensitivity run uses another), section 1's run information, the
 hand-check notes, and summary.json's h2.test block (the test on the unit in
 use, with the pre-registered unit).
-In this module, AI assistance covers, besides the rest, that split, h2_unit
-and the descriptive counts.
 
 Nothing here fills a judgment field: root causes, actions, assessor-error
 notes and every interpretation are left blank for the researcher.

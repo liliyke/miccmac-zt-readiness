@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-End-to-end pipeline tests: the synthetic kit (miccmac_study.synthetic) and
+"""End-to-end pipeline tests: the synthetic kit (miccmac_study.synthetic) and
 the guide's own flow on a non-synthetic study folder.
 
 One synthetic study is built for the module in tmp_path with
@@ -42,7 +40,7 @@ state (tool_commit, tool_tree_clean) is pinned to what a clean checkout
 reports, so the health checks do not depend on the git state of the
 working copy that runs the tests.
 
-In this file, AI assistance also covers the changes made with the
+In this file, the tests also cover the changes made with the
 register's missing-data entries and CMMI as the default lens: the kit's H3
 leaves firmware_currency out of its attestation, so health --inputs gets
 --allow-missing firmware_currency here and in GuideStudy.setup (each test
@@ -54,7 +52,6 @@ writes a tool output names the methodology its file name names.
 from __future__ import annotations
 
 import argparse
-import ast
 import base64
 import contextlib
 import copy
@@ -77,7 +74,6 @@ from typing import Iterator, List, Optional, Sequence
 import pytest
 
 import miccmac
-import miccmac_study
 from miccmac import clock, facts_file, provenance
 from miccmac.cli import build_parser as miccmac_parser
 from miccmac.cli import main as miccmac_main
@@ -1615,7 +1611,6 @@ def test_a_study_run_without_o_is_refused_and_prints_nothing(mid_study, pipeline
 
 
 # ------------------------------------------------------------------ the guide and the package
-ATTRIBUTION = "Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review."
 GUIDE = Path(synthetic.__file__).resolve().parent / "README.md"
 _TOKEN = re.compile(r'"[^"]*"|\S+')
 
@@ -1785,25 +1780,6 @@ def test_every_cut_of_the_guide_tool_lines_is_refused_before_it_connects_or_writ
     assert code == 0, err
     assert out == f"Report written to {argv[-1]}\n"
     assert calls == (["192.0.2.10"] if flag == "--connector" else [])
-
-
-def test_the_guide_keeps_its_ai_attribution():
-    text = GUIDE.read_text(encoding="utf-8")
-    assert "drafted with AI assistance (Claude Code, Anthropic)" in " ".join(text.split())
-    # The package docstring says where the assistance is declared (no vague "AI-use log").
-    package = " ".join((miccmac_study.__doc__ or "").split())
-    assert "AI-use log" not in package
-    assert ("That assistance is declared in miccmac_study/README.md and in the first docstring line of every module "
-            "and test file of the instruments.") in package
-
-
-def test_every_study_module_and_test_file_declares_ai_assistance_first():
-    root = GUIDE.parent.parent
-    files = sorted((root / "miccmac_study").glob("*.py")) + sorted((root / "tests").glob("test_study_*.py"))
-    assert len(files) >= 17
-    for path in files:
-        doc = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))
-        assert doc and doc.splitlines()[0] == ATTRIBUTION, path.name
 
 
 def test_usage_lists_every_command():

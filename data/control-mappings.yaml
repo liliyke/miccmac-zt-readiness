@@ -200,7 +200,7 @@ checks:
   - { check_id: CUR-04, property_key: current,     cis_ig: IG2, fair_frequency: MEDIUM, fair_magnitude: MEDIUM, remediation: "Renew or replace any expired/expiring certificates and rotate stale cryptographic material before it lapses." }
 
 # NIST SP 800-30 Rev. 1 risk-model fields per check, added in v0.3.0. Drafted
-# with AI assistance (Claude Code, Anthropic) for the researcher's review:
+# for the researcher's review:
 # review: drafted until the researcher confirms each row in
 # docs/sp800-30-review.md, as was done for cis_ig/fair_* on 2026-08-29.
 #

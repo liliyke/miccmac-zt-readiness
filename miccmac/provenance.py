@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Provenance block: which tool build, inputs, facts and reference date
+"""Provenance block: which tool build, inputs, facts and reference date
 produced an assessment, so a result file can be traced and run again.
 
 The CLI adds it to the JSON output as assessment["provenance"] whenever

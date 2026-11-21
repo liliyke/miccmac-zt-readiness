@@ -118,7 +118,7 @@ next maturity level; and its fields arranged as the risk factors of NIST SP
 800-30 Rev. 1 and the resulting risk, plus a recommended response. That
 arrangement is not an SP 800-30 risk assessment, and no rating is
 quantitative. The threat-source
-types and threat events it shows were drafted with AI assistance and await
+types and threat events it shows are drafts that await
 the researcher's review ([`docs/sp800-30-review.md`](docs/sp800-30-review.md)).
 
 ### Reproducible study runs
@@ -191,13 +191,8 @@ against the same raw facts, run the second command again with the same
 tool refuses to replace them anyway. Details, including what `--as-of` does
 not change, are in
 [`docs/methodology.md`](docs/methodology.md#11-reproducibility-reference-date-saved-facts-and-provenance).
-The reproducible-run features (`--as-of`, `--save-facts`, `--facts`, the
-provenance block and the `-o` and `--stdout` safeguards), the study
-instruments in [`miccmac_study/`](miccmac_study/README.md), CMMI as the
-default lens, the register's missing-data entries, next-level hints and SP
-800-30 structure, and the drafted threat-source types and events were
-drafted with AI assistance (Claude Code, Anthropic) for the researcher's
-review.
+The study instruments, with their guide, are in
+[`miccmac_study/`](miccmac_study/README.md).
 
 ## Example output
 

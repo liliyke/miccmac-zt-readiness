@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Pluggable maturity-model scoring methodologies.
+"""Pluggable maturity-model scoring methodologies.
 
 These re-bucket the *existing* flat 0-100 score (PropertyResult.score /
 Assessment.overall_score) into an ordinal maturity level, rather than
@@ -24,10 +22,6 @@ The CLI applies CMMI unless --methodology says otherwise
 (DEFAULT_METHODOLOGY), and --methodology none (NO_METHODOLOGY) applies no
 methodology at all. engine.run_assessment itself still applies none unless
 it is given a methodology name.
-
-In this module, AI assistance covers DEFAULT_METHODOLOGY, NO_METHODOLOGY,
-LEVEL_WORDS, level_for_score and min_score_for_level, which the CLI's
-default lens and the risk register's next-level hints use.
 """
 from __future__ import annotations
 

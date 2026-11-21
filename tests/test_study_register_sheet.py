@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.register_sheet: risk-register review sheets that
+"""Tests for miccmac_study.register_sheet: risk-register review sheets that
 stay sealed (ledger.seal_status) until every host's worksheet is hashed,
 whatever --config lists, unless the host was withdrawn in the ledger, and
 the one seal-opening ledger row each run that writes sheets appends.
@@ -8,14 +6,7 @@ the one seal-opening ledger row each run that writes sheets appends.
 Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts with a provenance block per the miccmac-provenance/1 spec and
 the register from miccmac.risk_register.build_risk_register. Everything is
-synthetic and lives under tmp_path.
-
-In this file, AI assistance also covers the tests added with missing-data
-entries, next-level hints and the SP 800-30 fields: the new review-sheet
-columns, missing-data and ERROR rows, an output written before those fields
-existed, a malformed nested field, and a forced sheet without next-level
-hints (test_forced_run_records_the_reason_in_the_ledger_first was updated for
-the note that says so)."""
+synthetic and lives under tmp_path."""
 from __future__ import annotations
 
 import csv
@@ -522,7 +513,6 @@ def test_library_entry_point_returns_paths(study):
 
 
 # ---------- missing-data entries, hints and the SP 800-30 columns ----------
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 def _write_output_with_inputs(study, host, attestation, inventory_record, methodology="cmmi"):
     """A tool output whose register has missing-data entries."""

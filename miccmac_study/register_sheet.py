@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Risk-register review sheets (protocol section 7), generated only after
+"""Risk-register review sheets (protocol section 7), generated only after
 every manual worksheet is hashed.
 
     python -m miccmac_study register-sheet --study-dir DIR [--config FILE]
@@ -48,10 +46,6 @@ the ledger row of the override says so.
 
 It prints only the paths written, and never replaces a sheet in which any
 judgment cell has been filled in.
-
-In this module, AI assistance covers, besides the rest, the columns added
-with missing-data entries, next-level hints and the SP 800-30 fields, and
-the blank next_level cells of a forced sheet.
 """
 from __future__ import annotations
 

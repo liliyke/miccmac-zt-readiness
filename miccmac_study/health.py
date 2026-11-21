@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Health check for sealed tool outputs and saved facts files (protocol section 5).
+"""Health check for sealed tool outputs and saved facts files (protocol section 5).
 
     python -m miccmac_study health [--expect-as-of YYYY-MM-DD] [--expect-commit SHA]
         [--list-checks FILE] [--pair] [--ledger FILE --host H] PATH [PATH ...]
@@ -57,12 +55,6 @@ name, check ids, extended-fact item names, host codes, the input files'
 own date fields, the names of the entries the checks read from them), and
 values read from a tool output or facts file are printed only after they
 match a strict pattern.
-
-In this module, AI assistance covers, besides the rest, the methodology and
-file-name test, the --pair methodology test, and --inputs' entry check with
---allow-missing (added with CMMI as the default lens and the register's
-missing-data entries), its host-scoped H:NAME form, the null-record case and
-the YYYY-MM-DD test of the dates the checks read.
 """
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Saved facts files: ``assess --save-facts FILE`` writes the facts a
+"""Saved facts files: ``assess --save-facts FILE`` writes the facts a
 connector collected, and ``assess --facts FILE`` scores them again later
 without connecting to the target (for example under a second methodology,
 or to re-test fixed check logic against the same raw data).

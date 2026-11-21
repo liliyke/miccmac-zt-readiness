@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-SSH + osquery connector: runs osqueryi.exe over SSH against a remote
+"""SSH + osquery connector: runs osqueryi.exe over SSH against a remote
 Windows target and returns its facts, in the Windows-flavored counterpart to
 miccmac/connectors/ssh_osquery.py's Linux facts. Same realistic pattern: the
 tool runs on the assessor's machine, not on every target.
@@ -16,9 +14,6 @@ generically need no Windows-specific branch. Tables/data that differ by OS
 (services vs systemd units, installed programs vs deb packages, registry-
 based hardening vs sysctls) get their own Windows-specific keys, consumed by
 each check module's platform branch.
-
-In this module, AI assistance covers the extended facts (EXTRA_QUERIES, the
-three extended commands and the methods that collect them).
 """
 from __future__ import annotations
 

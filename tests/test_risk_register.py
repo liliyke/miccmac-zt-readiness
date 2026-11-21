@@ -1,19 +1,11 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac.risk_register: which checks get an entry (findings for
+"""Tests for miccmac.risk_register: which checks get an entry (findings for
 FAIL/PARTIAL, missing-data entries for ERROR and for NOT_APPLICABLE with a
 missing-data marker), the CIS IG / FAIR-inspired rating, the order
 (findings first, then missing-data entries, each by rating, CIS IG and check
 id), the missing-data texts for every source and problem, the SP 800-30
 fields, and the text, markdown and JSON renderings. All tests construct
 Assessment/PropertyResult/CheckResult objects directly or run the engine on
-fake facts -- no target, osquery, or network dependency.
-
-In this file, AI assistance covers every test: the original ones (the
-matrix, UNRATED, the sort, custom metadata, the renderers) were kept, with
-test_only_fail_and_partial_checks_are_included renamed and extended to the
-new entry rule (deliberately changed: an ERROR now gets an entry) and the
-empty-register test updated to the new empty text."""
+fake facts -- no target, osquery, or network dependency."""
 import json
 
 import pytest
@@ -456,7 +448,7 @@ def _own_entries(tmp_path, *check_ids):
 
 
 def test_the_drafted_note_appears_only_for_drafted_fields(tmp_path):
-    note = "(drafted) marks a threat source type and event drafted with AI assistance"
+    note = "(drafted) marks a threat source type and event drafted for the researcher's review"
     drafted = " ".join(render(_own_entries(tmp_path, "MON-01", "MON-02"), "text").split())
     assert note in drafted and "threat source type adversarial (drafted); threat event: An intruder hides." in drafted
     assert "threat source type accidental; threat event: A log is lost." in drafted      # confirmed: no mark

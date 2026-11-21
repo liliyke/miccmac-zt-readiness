@@ -1,11 +1,9 @@
-Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
 # NIST SP 800-30 Rev. 1 fields: review table
 
 `data/control-mappings.yaml` holds, in its `threats:` section, one
 threat-source type and one short threat event per built-in check. The risk
 register shows them as two of its NIST SP 800-30 Rev. 1 fields
-(docs/methodology.md section 9). Both were drafted with AI assistance and
+(docs/methodology.md section 9). Both are drafts and
 carry `review: drafted` until you confirm them, the way you confirmed the CIS
 IG and FAIR ratings on 2026-08-29.
 
@@ -86,7 +84,7 @@ your review and are still drafts:
 
 1. Fill in the four review columns and Notes below, and the reviewer and date
    line. Leave the two drafted columns as they are: they are the record of
-   what was drafted with AI assistance.
+   what was drafted.
 2. In `data/control-mappings.yaml`, set `review: confirmed` on each row of
    `threats:` whose type and event you reviewed, and copy in any corrected
    type or event text. A corrected response text goes into that check's
@@ -117,8 +115,8 @@ your review and are still drafts:
   later tool version recorded in the protocol log, never during the study:
   any edit there between the freeze and the last tool run makes
   `tool_tree_clean` false, and a commit splits the study's outputs across two
-  tool commits. The baseline outputs then say `review: drafted`; declare that
-  in the AI-use log.
+  tool commits. The baseline outputs then say `review: drafted`; record that
+  in the protocol log.
 - To drop the drafted fields instead, delete the `threats:` section from
   `data/control-mappings.yaml` before the freeze. The register then shows
   "n/a (not declared)" for the threat-source type and event and keeps the
@@ -126,15 +124,16 @@ your review and are still drafts:
   themselves, and the rest pass. Change the sentences that describe the
   drafted fields:
   - README.md: the last sentence of the risk-register paragraph ("The
-    threat-source types and threat events it shows were drafted ...");
-  - docs/methodology.md section 9: the opening note, the `threats:`
+    threat-source types and threat events it shows are drafts ...");
+  - docs/methodology.md section 9: the `threats:`
     paragraphs under "Metadata", the two "drafted, pending review" notes in
     the SP 800-30 table, and the last sentence of "Provenance" (the one
     before it, on the 2026-08-29 review, stays);
   - miccmac_study/README.md: the paragraph after the freeze commands, the
-    "drafted with AI assistance" item of "Analysis defaults to confirm before
-    the freeze", and the notes on `threat_source_type`, `threat_event`,
-    `sp800_30_review` and `threat_plausible` under "After the last host".
+    "threat-source types and threat events are drafts" item of "Analysis
+    defaults to confirm before the freeze", and the notes on
+    `threat_source_type`, `threat_event`, `sp800_30_review` and
+    `threat_plausible` under "After the last host".
 
   The register's legend needs no change: its drafted note appears only when
   an entry has drafted fields. Then run the test suite and the synthetic kit

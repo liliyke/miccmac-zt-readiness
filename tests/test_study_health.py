@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.health: the sealed-output health check, its
+"""Tests for miccmac_study.health: the sealed-output health check, its
 comparison with a host's ledger rows (--ledger/--host: input files in their
 own roles and the versions the assessor had, facts file, worksheet hashed
 before the run) and the pre-study check of the input files' dates (--inputs).
@@ -9,13 +7,7 @@ Tool outputs are built by running miccmac.engine.run_assessment on fake
 Windows facts (in the style of tests/test_windows_checks.py), with a
 provenance block per the miccmac-provenance/1 spec and the register from
 miccmac.risk_register.build_risk_register. Everything is synthetic and lives
-under tmp_path; nothing connects anywhere.
-
-In this file, AI assistance also covers the tests added with CMMI as the
-tool's default lens and the register's missing-data entries: the
-methodology and file-name test, --pair's methodology test, --inputs' entry
-check with --allow-missing, and the new register texts in the blinding test.
-Two existing tests were updated for the new lines (each says so)."""
+under tmp_path; nothing connects anywhere."""
 from __future__ import annotations
 
 import csv
@@ -946,7 +938,6 @@ def test_inputs_library_function(tmp_path):
 
 
 # ---------- the methodology and the file name (CMMI is the tool's default lens) ----------
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 def test_a_cmmi_output_saved_under_the_cisa_ztmm_name_is_a_problem(study, capsys):
     """Critique: step 6 without --methodology now gives CMMI levels (the
@@ -1054,7 +1045,6 @@ def test_inputs_report_a_broken_mappings_file_as_an_error(tmp_path, capsys, monk
 
 
 # ---------- --inputs: fixes of the verification round (null record, H:NAME, YYYY-MM-DD) ----------
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 def test_a_null_inventory_record_is_reported_as_missing_data(tmp_path, capsys):
     """Verifier finding: for a record file holding JSON null the line said the

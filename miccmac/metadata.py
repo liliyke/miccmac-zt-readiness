@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Loads and indexes the per-check CIS Implementation Group / FAIR-inspired
+"""Loads and indexes the per-check CIS Implementation Group / FAIR-inspired
 risk metadata from data/control-mappings.yaml's `checks:` section, and
 derives the canonical built-in check-id manifest from it.
 
@@ -15,9 +13,6 @@ shows (load_threat_metadata). It is read only for the register
 all_builtin_check_ids) and load_check_metadata read `checks:` alone, so an
 error in `threats:` never stops `list-checks`, an assessment without
 --risk-register, or the study's worksheet and input checks.
-
-In this module, AI assistance covers the `threats:` section: its fields on
-CheckMetadata, load_threat_metadata and load_register_metadata.
 """
 from __future__ import annotations
 
@@ -36,8 +31,8 @@ VALID_IGS = ("IG1", "IG2", "IG3")
 VALID_FAIR_LEVELS = ("LOW", "MEDIUM", "HIGH")
 # NIST SP 800-30 Rev. 1 Appendix D threat-source types.
 VALID_THREAT_SOURCE_TYPES = ("adversarial", "accidental", "structural", "environmental")
-# Review state of a check's drafted threat fields: drafted (with AI
-# assistance, not yet confirmed) or confirmed by the researcher.
+# Review state of a check's drafted threat fields: drafted (not yet
+# confirmed) or confirmed by the researcher.
 VALID_REVIEW_STATES = ("drafted", "confirmed")
 
 

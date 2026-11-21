@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Blank per-host manual worksheets (protocol sections 5 and 6).
+"""Blank per-host manual worksheets (protocol sections 5 and 6).
 
     python -m miccmac_study worksheet --list-checks FILE --hosts H1,H2,... --out DIR
         [--miccmac-config FILE] [--study-config FILE]

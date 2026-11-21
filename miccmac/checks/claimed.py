@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-MICCMAC property: Claimed (C).
+"""MICCMAC property: Claimed (C).
 
 Intent: The device has a known, accountable owner and administrator, and a documented business purpose.
 
@@ -21,10 +19,9 @@ real logic, and each check reports NOT_APPLICABLE for itself if its specific
 attestation key is missing, rather than blanket NOT_IMPLEMENTED for checks
 that were, in fact, evaluated.
 
-In this module, AI assistance covers the missing-data marker
-(CheckResult.missing_data) each NOT_APPLICABLE result carries: the
-attestation was not supplied, or it has no entry for the check's key. Detail
-strings are unchanged.
+Each NOT_APPLICABLE result carries a missing-data marker
+(CheckResult.missing_data): the attestation was not supplied, or it has no
+entry for the check's key.
 """
 from __future__ import annotations
 

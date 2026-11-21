@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for --save-facts and --facts.
+"""Tests for --save-facts and --facts.
 
 The required property: a live run through a fake connector and a replay of
 the facts it saved, with the same as_of, inputs, config and methodology,
@@ -244,8 +242,7 @@ def test_facts_are_saved_before_the_checks_run(study, set_clock, monkeypatch, ca
 
 
 def test_a_register_failure_after_the_save_names_the_saved_facts(study, set_clock, monkeypatch, capsys):
-    """Drafted with AI assistance (Claude Code, Anthropic): critique round of
-    the register change. A failure inside the new register code after
+    """Critique round of the register change. A failure inside the new register code after
     --save-facts saved the facts says how to rebuild the report; a replay
     with --facts (no save) still raises as before."""
     def crash(*args, **kwargs):
@@ -263,8 +260,8 @@ def test_a_register_failure_after_the_save_names_the_saved_facts(study, set_cloc
 
 
 def test_a_register_run_checks_the_mappings_before_it_connects(study, set_clock, monkeypatch, capsys):
-    """Drafted with AI assistance (Claude Code, Anthropic): a broken mappings
-    file stops a --risk-register run before anything is collected or saved."""
+    """A broken mappings file stops a --risk-register run before anything is
+    collected or saved."""
     from miccmac.metadata import MappingsError
 
     def broken(*args, **kwargs):
@@ -530,7 +527,6 @@ def test_replay_of_windows_facts(tmp_path, monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------- the risk register in a replay
-# Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
 
 def test_a_replay_reproduces_a_register_with_missing_data_entries(study, set_clock, capsys):
     """An attestation without business_purpose (CLM-03 not supplied) and with

@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Tests for miccmac_study.worksheet: blank per-host manual worksheets.
+"""Tests for miccmac_study.worksheet: blank per-host manual worksheets.
 
 Covers the sheet layout and its instructions, the level ranges (full, or
 the study's manual_max_level with --study-config), the note when the study

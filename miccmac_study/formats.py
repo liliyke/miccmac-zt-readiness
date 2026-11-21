@@ -1,6 +1,4 @@
-"""Drafted with AI assistance (Claude Code, Anthropic) for the researcher's review.
-
-Shared formats for the study instruments: folder layout, file names, CSV
+"""Shared formats for the study instruments: folder layout, file names, CSV
 columns, the study configuration, the tool-output loader, and lenient parsing
 of what a person types into a spreadsheet.
 

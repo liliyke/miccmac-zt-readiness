@@ -1,10 +1,6 @@
 """Tests for miccmac.report: text/markdown/json rendering, including the
 methodology display fix (assessment.methodology was computed but never
-shown outside --format json before this).
-
-In this file, AI assistance (Claude Code, Anthropic) covers
-test_the_legend_explains_a_missing_input_only_when_a_check_lacks_one, drafted
-for the researcher's review."""
+shown outside --format json before this)."""
 from miccmac.methodology import apply_methodology
 from miccmac.model import Assessment, PropertyResult
 from miccmac.report import to_json, to_markdown, to_text
@@ -86,8 +82,7 @@ def test_the_legend_explains_a_missing_input_only_when_a_check_lacks_one():
 
 
 def test_cisa_ztmm_levels_are_shown_as_stages_and_cmmi_levels_as_levels():
-    """Verifier finding (fix round; drafted with AI assistance for the
-    researcher's review): a CISA ZTMM scorecard said 'Level 2/4' while the
+    """Verifier finding (fix round): a CISA ZTMM scorecard said 'Level 2/4' while the
     register's hints in the same output say 'CISA ZTMM stage 2'."""
     prop = PropertyResult(key="monitored", letter="M", title="Monitored", score=50.0)
     assessment = Assessment(target="x", properties=[prop], overall_score=50.0, readiness_tier="Developing")
