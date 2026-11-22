@@ -87,8 +87,10 @@ properties:
       The device has a known, accountable owner and administrator, and a
       documented business purpose and data classification.
     nist_800_207:
-      - "Subjects and assets must be identifiable and accountable for trust
-         decisions to be meaningful."
+      - "Tenet 4: Policy is the set of access rules based on attributes that an
+         organization assigns to a subject, data asset, or application."
+      - "Tenet 4: Resource access and action permission policies can vary based
+         on the sensitivity of the resource/data."
     nist_800_53:
       - "CM-8  System Component Inventory (ownership attributes)"
       - "PS-2  Position Risk Designation"
@@ -137,8 +139,13 @@ properties:
       The device is kept in its most secure state: patched, updated, and free
       of expired cryptographic material.
     nist_800_207:
-      - "Assets are kept in their most secure state consistent with their
-         function; patching maintains asset trustworthiness."
+      - "Tenet 5: An enterprise implementing a ZTA should establish a continuous
+         diagnostics and mitigation (CDM) or similar system to monitor the state
+         of devices and applications and should apply patches/fixes as needed."
+      - "Tenet 5: Assets that are discovered to be subverted, have known
+         vulnerabilities, and/or are not managed by the enterprise may be treated
+         differently ... than devices owned by or associated with the enterprise
+         that are deemed to be in their most secure state."
     nist_800_53:
       - "SI-2   Flaw Remediation"
       - "MA-2   Controlled Maintenance"
