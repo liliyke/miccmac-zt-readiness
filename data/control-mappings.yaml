@@ -48,8 +48,12 @@ properties:
       The device is known to the organization and tracked in an authoritative
       hardware and software inventory.
     nist_800_207:
-      - "An asset cannot be protected or have policy applied to it unless it is
-         identified; resource identification underpins the policy engine."
+      - "Section 7.3.2: As mentioned in Section 2.1, one of the key requirements
+         of ZTA is the ability to identify and manage devices."
+      - "Section 7.3.2: The ability to manage enterprise assets is key to the
+         successful deployment of ZTA. This includes hardware components (e.g.,
+         laptops, phones, IoT devices) and digital artifacts (e.g., user
+         accounts, applications, digital certificates)."
     nist_800_53:
       - "CM-8  System Component Inventory"
       - "PM-5  System Inventory"
@@ -106,8 +110,10 @@ properties:
       The device's attack surface is reduced to the minimum required for its
       documented purpose.
     nist_800_207:
-      - "Reduce implicit trust zones and minimize the attack surface available
-         to an adversary that reaches the asset."
+      - "Section 2: To allow the PDP/PEP to be as specific as possible, the
+         implicit trust zone must be as small as possible."
+      - "Tenet 4: Least privilege principles are applied to restrict both
+         visibility and accessibility."
     nist_800_53:
       - "CM-7  Least Functionality"
       - "AC-6  Least Privilege"

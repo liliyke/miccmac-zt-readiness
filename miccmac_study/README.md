@@ -175,15 +175,19 @@ marked `drafted` (decided 21 November; record it in the protocol log):
 review them in that file only, and apply the review to `data\` after the
 last host's tool run, as a later tool version, as that file describes.
 
-It changed again on 21 November 2026, before the freeze: six `cis_ig`
-values were corrected to the Implementation Group of the Safeguard each
-check cites (docs\methodology.md section 9), which changes the review
-sheet's `cis_ig` column and the order of entries within a rating band;
-the Controlled property's SP 800-207 label now names tenet 3; and every
-`--connector` run now needs `-o` or `--stdout`. After it, run the test
-suite and the synthetic kit again (test checklist steps 1, 2 and 6) and
-record the change in the protocol log. Never edit `miccmac\` or `data\`
-between this freeze and the last host's tool run.
+It changed again on 21 and 22 November 2026, before the freeze: six
+`cis_ig` values were corrected to the Implementation Group of the
+Safeguard each check cites (docs\methodology.md section 9), which changes
+the review sheet's `cis_ig` column and the order of entries within a
+rating band; the Controlled property's SP 800-207 label now names tenet 3;
+the SP 800-207 lines of the Claimed and Current properties (21 November)
+and of the Inventoried and Minimized properties (22 November) now quote
+SP 800-207 word for word, which changes no output, since no code reads
+them; and every `--connector` run now needs `-o` or `--stdout`. After
+these changes, run the test suite and the synthetic kit again (test
+checklist steps 1, 2 and 6) and record them in the protocol log. Never
+edit `miccmac\` or `data\` between this freeze and the last host's tool
+run.
 
 ## Per host
 
@@ -560,8 +564,8 @@ folder, and never share a key. The analysis CSVs contain none of these
 
 Work in scratch folders under `$env:TEMP\miccmac-check`, outside the
 repository and the study folder, in a window started with the Setup line.
-After the tool changes of 20 and 21 November, repeat at least steps 1, 2
-and 6 (and step 9, if you rehearsed it before 21 November).
+After the tool changes of 20 to 22 November, repeat at least steps 1, 2
+and 6 (and step 9, if you rehearsed it before 22 November).
 The synthetic outputs show the tool's detail strings, which name its policy
 limits; they describe no study host. To repeat the checklist, close Excel,
 remove the old scratch folders from outside them, and start again at
