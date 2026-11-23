@@ -179,15 +179,13 @@ It changed again on 21 and 22 November 2026, before the freeze: six
 `cis_ig` values were corrected to the Implementation Group of the
 Safeguard each check cites (docs\methodology.md section 9), which changes
 the review sheet's `cis_ig` column and the order of entries within a
-rating band; the Controlled property's SP 800-207 label now names tenet 3;
-the SP 800-207 lines of the Claimed and Current properties (21 November)
-and of the Inventoried and Minimized properties (22 November) now quote
-SP 800-207 word for word, which changes no output, since no code reads
-them; and every `--connector` run now needs `-o` or `--stdout`. After
-these changes, run the test suite and the synthetic kit again (test
-checklist steps 1, 2 and 6) and record them in the protocol log. Never
-edit `miccmac\` or `data\` between this freeze and the last host's tool
-run.
+rating band; the Controlled property's SP 800-207 label now names tenet 3,
+and every property's SP 800-207 lines now quote SP 800-207 word for word,
+which changes no output, since no code reads them; and every `--connector`
+run now needs `-o` or `--stdout`. After these changes, run the test suite
+and the synthetic kit again (test checklist steps 1, 2 and 6) and record
+them in the protocol log. Never edit `miccmac\` or `data\` between this
+freeze and the last host's tool run.
 
 ## Per host
 

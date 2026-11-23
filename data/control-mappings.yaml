@@ -3,7 +3,7 @@
 # Each of the seven MICCMAC properties (Monitored, Inventoried, Controlled,
 # Claimed, Minimized, Assessed, Current) is mapped to the recognized control
 # frameworks it draws on:
-#   - NIST SP 800-207  Zero Trust Architecture (tenets / logical components)
+#   - NIST SP 800-207  Zero Trust Architecture (its tenets and sections, quoted word for word)
 #   - NIST SP 800-53 Rev 5  Security and Privacy Controls
 #   - CIS Critical Security Controls v8
 #
@@ -31,7 +31,9 @@ properties:
     nist_800_207:
       - "Tenet 5: The enterprise monitors and measures the integrity and
          security posture of all owned and associated assets."
-      - "Continuous diagnostics and mitigation (CDM) feeds the policy engine."
+      - "Section 3, Continuous diagnostics and mitigation (CDM) system: An
+         enterprise CDM system provides the policy engine with the information
+         about the asset making an access request ..."
     nist_800_53:
       - "AU-2  Event Logging"
       - "AU-6  Audit Record Review, Analysis, and Reporting"
@@ -68,11 +70,15 @@ properties:
       Configuration and access to the device are centrally governed by
       enforced policy, not left to local discretion.
     nist_800_207:
-      - "Tenet 4: Access to resources is determined by dynamic policy."
+      - "Tenet 4: Access to resources is determined by dynamic policy—including
+         the observable state of client identity, application/service, and the
+         requesting asset—and may include other behavioral and environmental
+         attributes."
       - "Tenet 3: Access to individual enterprise resources is granted on a
          per-session basis."
-      - "The Policy Enforcement Point (PEP) enables, monitors and terminates
-         connections between a subject and an enterprise resource."
+      - "Section 3, Policy enforcement point (PEP): This system is responsible
+         for enabling, monitoring, and eventually terminating connections
+         between a subject and an enterprise resource."
     nist_800_53:
       - "AC-3  Access Enforcement"
       - "AC-6  Least Privilege"
@@ -129,8 +135,13 @@ properties:
       The device is regularly and authoritatively assessed for vulnerabilities
       and configuration weakness.
     nist_800_207:
-      - "Continuous diagnostics and mitigation continuously evaluate asset
-         posture and feed the policy engine."
+      - "Section 3, Continuous diagnostics and mitigation (CDM) system: An
+         enterprise CDM system provides the policy engine with the information
+         about the asset making an access request, such as whether
+         it is running the appropriate patched operating system (OS), the
+         integrity of enterprise-approved software components or presence of
+         non-approved components and whether the asset has any known
+         vulnerabilities."
     nist_800_53:
       - "RA-5  Vulnerability Monitoring and Scanning"
       - "CA-2  Control Assessments"
